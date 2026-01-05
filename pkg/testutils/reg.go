@@ -61,11 +61,16 @@ func Registry(extra ...func(*asm.Registry)) (*asm.Registry, func()) {
 	// Use a random /16 within 10.0.0.0/8 to avoid conflicts with parallel tests.
 	// Each test gets its own netdb, so we need different base subnets to prevent
 	// IP address collisions when multiple tests run concurrently.
-	secondOctet, err := rand.Int(rand.Reader, big.NewInt(256))
+	// We exclude 10 to avoid overlap with service-prefixes (10.10.0.0/16 below).
+	secondOctet, err := rand.Int(rand.Reader, big.NewInt(255))
 	if err != nil {
 		panic(err)
 	}
-	megaSubnet := fmt.Sprintf("10.%d.0.0/16", secondOctet.Int64())
+	octet := secondOctet.Int64()
+	if octet >= 10 {
+		octet++ // Skip 10 to avoid collision with service-prefixes
+	}
+	megaSubnet := fmt.Sprintf("10.%d.0.0/16", octet)
 
 	mega, err := ndb.Subnet(megaSubnet)
 	if err != nil {
