@@ -788,6 +788,9 @@ loop:
 		case "error":
 			err = cond.RemoteError(rs.Category, rs.Code, rs.Error)
 			break loop
+		case "panic":
+			err = cond.Panic(rs.Error)
+			break loop
 		default:
 			c.State.log.Error("rpc.callstream: unknown control stream request", "kind", rs.Kind)
 		}
