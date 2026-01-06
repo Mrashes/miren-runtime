@@ -229,6 +229,7 @@ func (d *DeploymentServer) UpdateDeploymentStatus(ctx context.Context, req *depl
 		"succeeded":   true,
 		"failed":      true,
 		"rolled_back": true,
+		"cancelled":   true,
 	}
 	if !validStatuses[newStatus] {
 		return cond.ValidationFailure("invalid-status",
@@ -581,6 +582,86 @@ func (d *DeploymentServer) GetActiveDeployment(ctx context.Context, req *deploym
 	deployment := deployments[0]
 	deploymentInfo := d.toDeploymentInfo(deployment)
 	results.SetDeployment(deploymentInfo)
+
+	return nil
+}
+
+func (d *DeploymentServer) CancelDeployment(ctx context.Context, req *deployment_v1alpha.DeploymentCancelDeployment) error {
+	args := req.Args()
+	results := req.Results()
+
+	// Validate required fields
+	if !args.HasDeploymentId() || args.DeploymentId() == "" {
+		results.SetError("deployment_id is required")
+		return nil
+	}
+
+	deploymentId := args.DeploymentId()
+	callerUserId := ""
+	if args.HasCallerUserId() {
+		callerUserId = args.CallerUserId()
+	}
+
+	// Get the deployment by ID
+	deploymentResp, err := d.EAC.Get(ctx, deploymentId)
+	if err != nil {
+		d.Log.Error("Failed to get deployment", "deployment_id", deploymentId, "error", err)
+		results.SetError("deployment not found")
+		return nil
+	}
+
+	// Decode to Deployment struct
+	var deployment core_v1alpha.Deployment
+	decodeEntity(deploymentResp.Entity(), &deployment)
+
+	// Verify deployment is in_progress
+	if deployment.Status != "in_progress" {
+		results.SetError(fmt.Sprintf("deployment is not in progress (status: %s)", deployment.Status))
+		return nil
+	}
+
+	// Check ownership if deployment has an owner
+	ownerUserId := deployment.DeployedBy.UserId
+	if ownerUserId != "" {
+		// Deployment has an owner  - require matching user
+		if callerUserId == "" {
+			results.SetError(fmt.Sprintf("deployment owned by %s - authentication required to cancel",
+				deployment.DeployedBy.UserEmail))
+			return nil
+		}
+		if callerUserId != ownerUserId {
+			results.SetError(fmt.Sprintf("deployment owned by %s - only the owner can cancel",
+				deployment.DeployedBy.UserEmail))
+			return nil
+		}
+	}
+	// If no owner (unregistered cluster), allow anyone
+
+	// Mark as cancelled
+	deployment.Status = "cancelled"
+	deployment.ErrorMessage = "Deployment cancelled by user"
+	deployment.CompletedAt = time.Now().Format(time.RFC3339)
+
+	// Update entity
+	updateAttrs := deployment.Encode()
+	updateEntity := &entityserver_v1alpha.Entity{}
+	updateEntity.SetId(deploymentId)
+	updateEntity.SetAttrs(updateAttrs)
+	updateEntity.SetRevision(deploymentResp.Entity().Revision())
+
+	_, err = d.EAC.Put(ctx, updateEntity)
+	if err != nil {
+		d.Log.Error("Failed to cancel deployment", "deployment_id", deploymentId, "error", err)
+		results.SetError("failed to cancel deployment")
+		return nil
+	}
+
+	results.SetSuccess(true)
+
+	d.Log.Info("Cancelled deployment",
+		"deployment_id", deploymentId,
+		"app", deployment.AppName,
+		"cancelled_by", callerUserId)
 
 	return nil
 }

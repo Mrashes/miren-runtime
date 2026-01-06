@@ -11,6 +11,7 @@ import (
 	deployment_v1alpha "miren.dev/runtime/api/deployment/deployment_v1alpha"
 	"miren.dev/runtime/pkg/entity/testutils"
 	"miren.dev/runtime/pkg/rpc"
+	"miren.dev/runtime/pkg/rpc/standard"
 )
 
 func TestCreateDeploymentWithGitInfo(t *testing.T) {
@@ -532,6 +533,283 @@ func indexString(s, substr string) int {
 		}
 	}
 	return -1
+}
+
+func TestCancelDeployment(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup in-memory entity server
+	inmem, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	// Create deployment server
+	logger := slog.Default()
+	server, err := NewDeploymentServer(logger, inmem.EAC)
+	if err != nil {
+		t.Fatalf("Failed to create deployment server: %v", err)
+	}
+
+	// Create RPC client
+	client := &deployment_v1alpha.DeploymentClient{
+		Client: rpc.LocalClient(deployment_v1alpha.AdaptDeployment(server)),
+	}
+
+	t.Run("empty deployment id returns error", func(t *testing.T) {
+		result, err := client.CancelDeployment(ctx, "", "")
+		if err != nil {
+			t.Fatalf("Unexpected RPC error: %v", err)
+		}
+		if !result.HasError() || result.Error() == "" {
+			t.Fatal("Expected error for empty deployment ID")
+		}
+		if result.Error() != "deployment_id is required" {
+			t.Errorf("Expected 'deployment_id is required', got '%s'", result.Error())
+		}
+	})
+
+	t.Run("non-existent deployment returns error", func(t *testing.T) {
+		result, err := client.CancelDeployment(ctx, "nonexistent-deployment-id", "")
+		if err != nil {
+			t.Fatalf("Unexpected RPC error: %v", err)
+		}
+		if !result.HasError() || result.Error() == "" {
+			t.Fatal("Expected error for non-existent deployment")
+		}
+		if result.Error() != "deployment not found" {
+			t.Errorf("Expected 'deployment not found', got '%s'", result.Error())
+		}
+	})
+
+	t.Run("cancel deployment not in progress returns error", func(t *testing.T) {
+		// Create a completed (active) deployment
+		deployment := &core_v1alpha.Deployment{
+			AppName:     "test-app-completed",
+			ClusterId:   "test-cluster",
+			AppVersion:  "v1.0.0",
+			Status:      "active",
+			CompletedAt: time.Now().Format(time.RFC3339),
+		}
+		deploymentId, err := inmem.Client.Create(ctx, "completed-deployment", deployment)
+		if err != nil {
+			t.Fatalf("Failed to create test deployment: %v", err)
+		}
+
+		result, err := client.CancelDeployment(ctx, string(deploymentId), "")
+		if err != nil {
+			t.Fatalf("Unexpected RPC error: %v", err)
+		}
+		if !result.HasError() || result.Error() == "" {
+			t.Fatal("Expected error for completed deployment")
+		}
+		if !containsString(result.Error(), "deployment is not in progress") {
+			t.Errorf("Expected error containing 'deployment is not in progress', got '%s'", result.Error())
+		}
+	})
+
+	t.Run("cancel in-progress deployment with no owner succeeds", func(t *testing.T) {
+		// Create an in-progress deployment with no owner (unregistered cluster scenario)
+		deployment := &core_v1alpha.Deployment{
+			AppName:    "test-app-no-owner",
+			ClusterId:  "test-cluster",
+			AppVersion: "v1.0.0",
+			Status:     "in_progress",
+			Phase:      "building",
+			DeployedBy: core_v1alpha.DeployedBy{
+				// No UserId set - simulates unregistered cluster
+				UserEmail: "",
+				Timestamp: time.Now().Format(time.RFC3339),
+			},
+		}
+		deploymentId, err := inmem.Client.Create(ctx, "no-owner-deployment", deployment)
+		if err != nil {
+			t.Fatalf("Failed to create test deployment: %v", err)
+		}
+
+		// Cancel without providing caller ID (should succeed for unregistered cluster)
+		result, err := client.CancelDeployment(ctx, string(deploymentId), "")
+		if err != nil {
+			t.Fatalf("Unexpected RPC error: %v", err)
+		}
+		if result.HasError() && result.Error() != "" {
+			t.Fatalf("Expected success, got error: %s", result.Error())
+		}
+		if !result.Success() {
+			t.Error("Expected Success() to be true")
+		}
+
+		// Verify deployment is now cancelled
+		getResult, err := client.GetDeploymentById(ctx, string(deploymentId))
+		if err != nil {
+			t.Fatalf("Failed to get deployment: %v", err)
+		}
+		if getResult.Deployment().Status() != "cancelled" {
+			t.Errorf("Expected status 'cancelled', got '%s'", getResult.Deployment().Status())
+		}
+	})
+
+	t.Run("cancel in-progress deployment as owner succeeds", func(t *testing.T) {
+		ownerId := "user-123"
+		ownerEmail := "owner@example.com"
+
+		// Create an in-progress deployment with an owner
+		deployment := &core_v1alpha.Deployment{
+			AppName:    "test-app-owned",
+			ClusterId:  "test-cluster",
+			AppVersion: "v1.0.0",
+			Status:     "in_progress",
+			Phase:      "building",
+			DeployedBy: core_v1alpha.DeployedBy{
+				UserId:    ownerId,
+				UserEmail: ownerEmail,
+				Timestamp: time.Now().Format(time.RFC3339),
+			},
+		}
+		deploymentId, err := inmem.Client.Create(ctx, "owned-deployment", deployment)
+		if err != nil {
+			t.Fatalf("Failed to create test deployment: %v", err)
+		}
+
+		// Cancel as owner (should succeed)
+		result, err := client.CancelDeployment(ctx, string(deploymentId), ownerId)
+		if err != nil {
+			t.Fatalf("Unexpected RPC error: %v", err)
+		}
+		if result.HasError() && result.Error() != "" {
+			t.Fatalf("Expected success, got error: %s", result.Error())
+		}
+		if !result.Success() {
+			t.Error("Expected Success() to be true")
+		}
+
+		// Verify deployment is now cancelled
+		getResult, err := client.GetDeploymentById(ctx, string(deploymentId))
+		if err != nil {
+			t.Fatalf("Failed to get deployment: %v", err)
+		}
+		if getResult.Deployment().Status() != "cancelled" {
+			t.Errorf("Expected status 'cancelled', got '%s'", getResult.Deployment().Status())
+		}
+	})
+
+	t.Run("cancel owned deployment without caller id returns error", func(t *testing.T) {
+		ownerId := "user-456"
+		ownerEmail := "owner2@example.com"
+
+		// Create an in-progress deployment with an owner
+		deployment := &core_v1alpha.Deployment{
+			AppName:    "test-app-owned-2",
+			ClusterId:  "test-cluster",
+			AppVersion: "v1.0.0",
+			Status:     "in_progress",
+			Phase:      "building",
+			DeployedBy: core_v1alpha.DeployedBy{
+				UserId:    ownerId,
+				UserEmail: ownerEmail,
+				Timestamp: time.Now().Format(time.RFC3339),
+			},
+		}
+		deploymentId, err := inmem.Client.Create(ctx, "owned-deployment-2", deployment)
+		if err != nil {
+			t.Fatalf("Failed to create test deployment: %v", err)
+		}
+
+		// Try to cancel without providing caller ID (should fail - auth required)
+		result, err := client.CancelDeployment(ctx, string(deploymentId), "")
+		if err != nil {
+			t.Fatalf("Unexpected RPC error: %v", err)
+		}
+		if !result.HasError() || result.Error() == "" {
+			t.Fatal("Expected error when cancelling owned deployment without auth")
+		}
+		if !containsString(result.Error(), "authentication required to cancel") {
+			t.Errorf("Expected error containing 'authentication required to cancel', got '%s'", result.Error())
+		}
+		if !containsString(result.Error(), ownerEmail) {
+			t.Errorf("Expected error to mention owner email '%s', got '%s'", ownerEmail, result.Error())
+		}
+	})
+
+	t.Run("cancel owned deployment as different user returns error", func(t *testing.T) {
+		ownerId := "user-789"
+		ownerEmail := "owner3@example.com"
+		differentUserId := "user-other"
+
+		// Create an in-progress deployment with an owner
+		deployment := &core_v1alpha.Deployment{
+			AppName:    "test-app-owned-3",
+			ClusterId:  "test-cluster",
+			AppVersion: "v1.0.0",
+			Status:     "in_progress",
+			Phase:      "building",
+			DeployedBy: core_v1alpha.DeployedBy{
+				UserId:    ownerId,
+				UserEmail: ownerEmail,
+				Timestamp: time.Now().Format(time.RFC3339),
+			},
+		}
+		deploymentId, err := inmem.Client.Create(ctx, "owned-deployment-3", deployment)
+		if err != nil {
+			t.Fatalf("Failed to create test deployment: %v", err)
+		}
+
+		// Try to cancel as different user (should fail)
+		result, err := client.CancelDeployment(ctx, string(deploymentId), differentUserId)
+		if err != nil {
+			t.Fatalf("Unexpected RPC error: %v", err)
+		}
+		if !result.HasError() || result.Error() == "" {
+			t.Fatal("Expected error when cancelling deployment owned by different user")
+		}
+		if !containsString(result.Error(), "only the owner can cancel") {
+			t.Errorf("Expected error containing 'only the owner can cancel', got '%s'", result.Error())
+		}
+		if !containsString(result.Error(), ownerEmail) {
+			t.Errorf("Expected error to mention owner email '%s', got '%s'", ownerEmail, result.Error())
+		}
+	})
+
+	t.Run("cancel sets correct fields on deployment", func(t *testing.T) {
+		// Create an in-progress deployment
+		deployment := &core_v1alpha.Deployment{
+			AppName:    "test-app-fields",
+			ClusterId:  "test-cluster",
+			AppVersion: "v1.0.0",
+			Status:     "in_progress",
+			Phase:      "activating",
+		}
+		deploymentId, err := inmem.Client.Create(ctx, "fields-deployment", deployment)
+		if err != nil {
+			t.Fatalf("Failed to create test deployment: %v", err)
+		}
+
+		result, err := client.CancelDeployment(ctx, string(deploymentId), "")
+		if err != nil {
+			t.Fatalf("Unexpected RPC error: %v", err)
+		}
+		if result.HasError() && result.Error() != "" {
+			t.Fatalf("Expected success, got error: %s", result.Error())
+		}
+
+		// Verify all fields are set correctly
+		getResult, err := client.GetDeploymentById(ctx, string(deploymentId))
+		if err != nil {
+			t.Fatalf("Failed to get deployment: %v", err)
+		}
+
+		dep := getResult.Deployment()
+		if dep.Status() != "cancelled" {
+			t.Errorf("Expected status 'cancelled', got '%s'", dep.Status())
+		}
+		if !dep.HasCompletedAt() {
+			t.Error("Expected CompletedAt to be set")
+		}
+
+		// Verify CompletedAt is recent (within last minute)
+		completedAt := standard.FromTimestamp(dep.CompletedAt())
+		if time.Since(completedAt) > time.Minute {
+			t.Errorf("CompletedAt (%v) should be recent", completedAt)
+		}
+	})
 }
 
 func TestUpdateDeploymentStatusToInProgress(t *testing.T) {
