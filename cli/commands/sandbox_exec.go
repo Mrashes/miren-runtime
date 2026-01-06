@@ -39,7 +39,8 @@ func SandboxExec(ctx *Context, opts struct {
 
 	opt.SetCommand(opts.Rest.Args)
 
-	if con := console.Current(); con != nil {
+	// Set up interactive console if available, otherwise use standard streams
+	if con, err := console.ConsoleFromFile(os.Stdin); err == nil {
 		in = con
 		out = con
 
