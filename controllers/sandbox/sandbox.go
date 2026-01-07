@@ -1972,9 +1972,18 @@ func (c *SandboxController) destroySubContainers(ctx context.Context, id entity.
 		}
 	}
 
-	// Phase 1: Send SIGTERM to all containers and collect their tasks
+	// Phase 1: Send SIGTERM to all containers and set up exit detection
 	startTime := time.Now()
-	var tasksToWait []containerShutdownInfo
+
+	// Channel for aggregated exit events
+	type exitEvent struct {
+		id     string
+		status containerd.ExitStatus
+	}
+	exitedChan := make(chan exitEvent, len(containers))
+
+	// Track containers waiting for shutdown
+	tasksByID := make(map[string]*containerShutdownInfo)
 
 	for i := range containers {
 		info := &containers[i]
@@ -1985,43 +1994,59 @@ func (c *SandboxController) destroySubContainers(ctx context.Context, id entity.
 		}
 		info.task = task
 
+		// Set up exit channel before sending SIGTERM
+		exitCh, err := task.Wait(ctx)
+		if err != nil {
+			c.Log.Debug("failed to get wait channel, process may already be gone", "id", info.id, "err", err)
+			continue
+		}
+
+		// Spawn goroutine to detect exit
+		go func(id string, ch <-chan containerd.ExitStatus) {
+			select {
+			case status := <-ch:
+				exitedChan <- exitEvent{id: id, status: status}
+			case <-ctx.Done():
+			}
+		}(info.id, exitCh)
+
 		if err := task.Kill(ctx, unix.SIGTERM); err != nil {
 			c.Log.Debug("failed to send SIGTERM", "id", info.id, "err", err)
 			continue
 		}
+
 		c.Log.Debug("sent SIGTERM to task", "id", info.id, "shutdown_timeout", info.timeout)
-		tasksToWait = append(tasksToWait, *info)
+		tasksByID[info.id] = info
 	}
 
-	// Phase 2: Poll for graceful exit, respecting per-container timeouts
+	// Phase 2: Wait for graceful exit, respecting per-container timeouts
 	ticker := time.NewTicker(shutdownPollInterval)
 	defer ticker.Stop()
 
-	for len(tasksToWait) > 0 {
+	for len(tasksByID) > 0 {
 		select {
 		case <-ctx.Done():
-			c.Log.Warn("context cancelled during graceful shutdown", "sandbox_id", id, "remaining", len(tasksToWait))
+			c.Log.Warn("context cancelled during graceful shutdown", "sandbox_id", id, "remaining", len(tasksByID))
 			goto forceKill
+
+		case ev := <-exitedChan:
+			info, ok := tasksByID[ev.id]
+			if !ok {
+				continue // Already processed
+			}
+			c.Log.Debug("task exited gracefully", "id", info.id, "exit_code", ev.status.ExitCode())
+			if _, err := info.task.Delete(ctx); err != nil {
+				c.Log.Debug("failed to delete exited task", "id", info.id, "err", err)
+			}
+			delete(tasksByID, ev.id)
+
 		case <-ticker.C:
-			var remaining []containerShutdownInfo
-
-			for _, info := range tasksToWait {
-				status, err := info.task.Status(ctx)
-				if err != nil || status.Status == containerd.Stopped {
-					c.Log.Debug("task exited gracefully", "id", info.id)
-					// Clean up the task
-					if _, err := info.task.Delete(ctx); err != nil {
-						c.Log.Debug("failed to delete exited task", "id", info.id, "err", err)
-					}
-					continue
-				}
-
-				// Check if this task's timeout has expired
-				elapsed := time.Since(startTime)
-				if elapsed >= info.timeout {
+			// Check timeouts for remaining tasks
+			for id, info := range tasksByID {
+				if time.Since(startTime) >= info.timeout {
 					c.Log.Info("shutdown timeout expired, force killing",
 						"id", info.id,
-						"elapsed", elapsed,
+						"elapsed", time.Since(startTime),
 						"timeout", info.timeout)
 					if err := info.task.Kill(ctx, unix.SIGKILL); err != nil {
 						c.Log.Debug("failed to send SIGKILL", "id", info.id, "err", err)
@@ -2029,12 +2054,9 @@ func (c *SandboxController) destroySubContainers(ctx context.Context, id entity.
 					if _, err := info.task.Delete(ctx, containerd.WithProcessKill); err != nil {
 						c.Log.Debug("failed to delete task after SIGKILL", "id", info.id, "err", err)
 					}
-					continue
+					delete(tasksByID, id)
 				}
-
-				remaining = append(remaining, info)
 			}
-			tasksToWait = remaining
 		}
 	}
 
@@ -2043,7 +2065,7 @@ func (c *SandboxController) destroySubContainers(ctx context.Context, id entity.
 
 forceKill:
 	// Force kill any remaining tasks
-	for _, info := range tasksToWait {
+	for _, info := range tasksByID {
 		c.Log.Info("force killing task", "id", info.id)
 		if err := info.task.Kill(ctx, unix.SIGKILL); err != nil {
 			c.Log.Debug("failed to send SIGKILL", "id", info.id, "err", err)
