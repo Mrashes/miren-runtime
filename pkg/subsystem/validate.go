@@ -3,6 +3,7 @@ package subsystem
 import (
 	"errors"
 	"fmt"
+	"reflect"
 )
 
 // ValidationError represents a missing or invalid configuration field.
@@ -63,22 +64,5 @@ func isZero(value any) bool {
 	if value == nil {
 		return true
 	}
-	switch v := value.(type) {
-	case string:
-		return v == ""
-	case int, int8, int16, int32, int64:
-		return v == 0
-	case uint, uint8, uint16, uint32, uint64:
-		return v == 0
-	case float32:
-		return v == 0
-	case float64:
-		return v == 0
-	case bool:
-		return !v
-	default:
-		// For pointers, interfaces, slices, maps, channels - check against nil
-		// This is a simplified check; reflect could be more thorough but adds overhead
-		return value == nil
-	}
+	return reflect.ValueOf(value).IsZero()
 }

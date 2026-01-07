@@ -117,7 +117,10 @@ func New(cfg Config, opts ...Option) (*Subsystem, error) {
 	return sub, nil
 }
 
-// Close is a no-op for observability subsystem (components don't need cleanup).
+// Close cleans up observability subsystem resources.
 func (s *Subsystem) Close() error {
+	if s.ResourcesMonitor != nil && s.ResourcesMonitor.Writer != nil {
+		return s.ResourcesMonitor.Writer.Close()
+	}
 	return nil
 }

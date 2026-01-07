@@ -143,12 +143,17 @@ func (s *ServerState) InitNetServ(log *slog.Logger) {
 }
 
 // InitSandboxMetrics creates the sandbox metrics if not already set.
+// Note: CPU and Mem should be initialized before calling this method.
 func (s *ServerState) InitSandboxMetrics(log *slog.Logger) {
 	if s.SandboxMetrics != nil {
 		return
 	}
 	s.SandboxMetrics = sandbox.NewMetrics()
 	s.SandboxMetrics.Log = log
-	s.SandboxMetrics.CPUUsage = s.CPU
-	s.SandboxMetrics.MemUsage = s.Mem
+	if s.CPU != nil {
+		s.SandboxMetrics.CPUUsage = s.CPU
+	}
+	if s.Mem != nil {
+		s.SandboxMetrics.MemUsage = s.Mem
+	}
 }

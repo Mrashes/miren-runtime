@@ -118,8 +118,6 @@ func TestServer(t *testing.T) error {
 	eac := entityserver_v1alpha.NewEntityAccessClient(client)
 	ec := entityserver.NewClient(log, eac)
 
-	_ = ec // Used for future operations
-
 	ipa := ipalloc.NewAllocator(log, testDeps.ServicePrefixes)
 	eg.Go(func() error {
 		defer t.Log("ipallocator watch complete")
@@ -128,8 +126,7 @@ func TestServer(t *testing.T) error {
 
 	aa := co.Activator()
 
-	spm := co.SandboxPoolManager()
-	_ = spm // Used for future operations
+	_ = co.SandboxPoolManager()
 
 	ingressConfig := httpingress.IngressConfig{
 		RequestTimeout: 60 * time.Second, // Default timeout for tests
@@ -149,8 +146,8 @@ func TestServer(t *testing.T) error {
 	statusMon := observability.NewStatusMonitor(log)
 	logsMaintainer := observability.NewLogsMaintainer()
 
-	// Use PersistentLogWriter so logs can be read back via VictoriaLogs
-	logWriter := observability.NewPersistentLogWriter("victorialogs:9428", 30*time.Second)
+	// Use testDeps.LogWriter (PersistentLogWriter) so logs can be read back via VictoriaLogs
+	logWriter := testDeps.LogWriter
 
 	// Create sandbox metrics
 	sbMetrics := sandbox.NewMetrics()

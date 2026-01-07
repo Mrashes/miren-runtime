@@ -135,6 +135,15 @@ func NewSandboxController(cfg SandboxControllerConfig) (*SandboxController, erro
 	if cfg.Namespace == "" {
 		return nil, fmt.Errorf("sandbox: Namespace is required")
 	}
+	if cfg.Subnet == nil {
+		return nil, fmt.Errorf("sandbox: Subnet is required")
+	}
+	if cfg.NetServ == nil {
+		return nil, fmt.Errorf("sandbox: NetServ is required")
+	}
+	if cfg.Metrics == nil {
+		return nil, fmt.Errorf("sandbox: Metrics is required")
+	}
 
 	return &SandboxController{
 		Log:            cfg.Log.With("module", "sandbox"),

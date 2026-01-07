@@ -169,6 +169,9 @@ type DebugLogWriter struct {
 
 // NewDebugLogWriter creates a new DebugLogWriter.
 func NewDebugLogWriter(log *slog.Logger) *DebugLogWriter {
+	if log == nil {
+		log = slog.Default()
+	}
 	return &DebugLogWriter{Log: log}
 }
 
