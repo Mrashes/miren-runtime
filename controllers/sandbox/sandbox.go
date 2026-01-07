@@ -56,22 +56,42 @@ type containerPorts struct {
 	Ports []observability.BoundPort
 }
 
+// SandboxControllerConfig holds required dependencies for SandboxController.
+type SandboxControllerConfig struct {
+	Log       *slog.Logger
+	CC        *containerd.Client
+	EAC       *entityserver_v1alpha.EntityAccessClient
+	Namespace string
+	NodeId    string
+	NetServ   *network.ServiceManager
+	Bridge    string
+	Subnet    *netdb.Subnet
+	DataPath  string
+	Tempdir   string
+
+	LogsMaintainer *observability.LogsMaintainer
+	LogWriter      observability.LogWriter
+	StatusMon      *observability.StatusMonitor
+	Resolver       netresolve.Resolver
+	Metrics        *Metrics
+}
+
 type SandboxController struct {
 	Log *slog.Logger
 	CC  *containerd.Client
 
 	EAC *entityserver_v1alpha.EntityAccessClient
 
-	Namespace string `asm:"namespace"`
-	NodeId    string `asm:"node-id"`
+	Namespace string
+	NodeId    string
 
 	NetServ *network.ServiceManager
 
-	Bridge string `asm:"bridge-iface"`
+	Bridge string
 	Subnet *netdb.Subnet
 
-	DataPath string `asm:"data-path"`
-	Tempdir  string `asm:"tempdir"`
+	DataPath string
+	Tempdir  string
 
 	LogsMaintainer *observability.LogsMaintainer
 	LogWriter      observability.LogWriter
@@ -101,9 +121,38 @@ type SandboxController struct {
 	writeTracker controller.WriteTracker
 }
 
-func (c *SandboxController) Populated() error {
-	c.Log = c.Log.With("module", "sandbox")
-	return nil
+// NewSandboxController creates a new SandboxController with validated dependencies.
+func NewSandboxController(cfg SandboxControllerConfig) (*SandboxController, error) {
+	if cfg.Log == nil {
+		return nil, fmt.Errorf("sandbox: Log is required")
+	}
+	if cfg.CC == nil {
+		return nil, fmt.Errorf("sandbox: containerd client is required")
+	}
+	if cfg.EAC == nil {
+		return nil, fmt.Errorf("sandbox: entity access client is required")
+	}
+	if cfg.Namespace == "" {
+		return nil, fmt.Errorf("sandbox: Namespace is required")
+	}
+
+	return &SandboxController{
+		Log:            cfg.Log.With("module", "sandbox"),
+		CC:             cfg.CC,
+		EAC:            cfg.EAC,
+		Namespace:      cfg.Namespace,
+		NodeId:         cfg.NodeId,
+		NetServ:        cfg.NetServ,
+		Bridge:         cfg.Bridge,
+		Subnet:         cfg.Subnet,
+		DataPath:       cfg.DataPath,
+		Tempdir:        cfg.Tempdir,
+		LogsMaintainer: cfg.LogsMaintainer,
+		LogWriter:      cfg.LogWriter,
+		StatusMon:      cfg.StatusMon,
+		Resolver:       cfg.Resolver,
+		Metrics:        cfg.Metrics,
+	}, nil
 }
 
 // SetWriteTracker sets the write tracker for recording manual entity writes

@@ -10,12 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
 	"miren.dev/runtime/components/coordinate"
-	"miren.dev/runtime/observability"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/entity/enttest"
 	"miren.dev/runtime/pkg/entity/types"
 	"miren.dev/runtime/pkg/rpc"
-	"miren.dev/runtime/pkg/testutils"
 
 	compute "miren.dev/runtime/api/compute/compute_v1alpha"
 )
@@ -24,13 +22,9 @@ func TestCoordinatorParse(t *testing.T) {
 	r := require.New(t)
 
 	// Setup logging
-	reg, cleanup := testutils.Registry(observability.TestInject)
-	defer cleanup()
-
-	var log *slog.Logger
-
-	err := reg.Init(&log)
-	r.NoError(err)
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
 
 	// Create temp directory for test data
 	tempDir := t.TempDir()
@@ -50,7 +44,7 @@ func TestCoordinatorParse(t *testing.T) {
 
 	// Start coordinator in background
 	coord := coordinate.NewCoordinator(log, coordCfg)
-	err = coord.Start(ctx)
+	err := coord.Start(ctx)
 	r.NoError(err)
 
 	// Wait for coordinator to start

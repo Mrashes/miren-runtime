@@ -3,10 +3,9 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"testing"
 	"time"
-
-	"log/slog"
 
 	containerd "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/pkg/namespaces"
@@ -15,8 +14,6 @@ import (
 
 	compute "miren.dev/runtime/api/compute/compute_v1alpha"
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
-	"miren.dev/runtime/image"
-	"miren.dev/runtime/observability"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/idgen"
 	"miren.dev/runtime/pkg/testutils"
@@ -29,20 +26,12 @@ func TestContainerWatchdog(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var (
-			cc  *containerd.Client
-			eac *entityserver_v1alpha.EntityAccessClient
-		)
-
-		err := reg.Init(&cc, &eac)
-		r.NoError(err)
-
-		var ii image.ImageImporter
-		err = reg.Populate(&ii)
-		r.NoError(err)
+		cc := testDeps.CC
+		eac := testDeps.EAC
+		ii := testDeps.NewImageImporter()
 
 		ctx = namespaces.WithNamespace(ctx, ii.Namespace)
 
@@ -58,7 +47,7 @@ func TestContainerWatchdog(t *testing.T) {
 		rpcE.SetAttrs(entity.New(
 			entity.DBId, sbID,
 			sb.Encode).Attrs())
-		_, err = eac.Put(ctx, &rpcE)
+		_, err := eac.Put(ctx, &rpcE)
 		r.NoError(err)
 
 		// Create a valid container (one that should be kept)
@@ -114,20 +103,12 @@ func TestContainerWatchdog(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var (
-			cc  *containerd.Client
-			eac *entityserver_v1alpha.EntityAccessClient
-		)
-
-		err := reg.Init(&cc, &eac)
-		r.NoError(err)
-
-		var ii image.ImageImporter
-		err = reg.Populate(&ii)
-		r.NoError(err)
+		cc := testDeps.CC
+		eac := testDeps.EAC
+		ii := testDeps.NewImageImporter()
 
 		ctx = namespaces.WithNamespace(ctx, ii.Namespace)
 
@@ -166,20 +147,12 @@ func TestContainerWatchdog(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var (
-			cc  *containerd.Client
-			eac *entityserver_v1alpha.EntityAccessClient
-		)
-
-		err := reg.Init(&cc, &eac)
-		r.NoError(err)
-
-		var ii image.ImageImporter
-		err = reg.Populate(&ii)
-		r.NoError(err)
+		cc := testDeps.CC
+		eac := testDeps.EAC
+		ii := testDeps.NewImageImporter()
 
 		ctx = namespaces.WithNamespace(ctx, ii.Namespace)
 
@@ -195,7 +168,7 @@ func TestContainerWatchdog(t *testing.T) {
 		rpcE.SetAttrs(entity.New(
 			entity.DBId, oldDeadSbID,
 			oldDeadSb.Encode).Attrs())
-		_, err = eac.Put(ctx, &rpcE)
+		_, err := eac.Put(ctx, &rpcE)
 		r.NoError(err)
 
 		// Wait for the sandbox to be "old" (> grace window)
@@ -245,20 +218,12 @@ func TestContainerWatchdog(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var (
-			cc  *containerd.Client
-			eac *entityserver_v1alpha.EntityAccessClient
-		)
-
-		err := reg.Init(&cc, &eac)
-		r.NoError(err)
-
-		var ii image.ImageImporter
-		err = reg.Populate(&ii)
-		r.NoError(err)
+		cc := testDeps.CC
+		eac := testDeps.EAC
+		ii := testDeps.NewImageImporter()
 
 		ctx = namespaces.WithNamespace(ctx, ii.Namespace)
 
@@ -274,7 +239,7 @@ func TestContainerWatchdog(t *testing.T) {
 		rpcE.SetAttrs(entity.New(
 			entity.DBId, recentDeadSbID,
 			recentDeadSb.Encode).Attrs())
-		_, err = eac.Put(ctx, &rpcE)
+		_, err := eac.Put(ctx, &rpcE)
 		r.NoError(err)
 
 		// DON'T wait - run cleanup immediately so it's within grace window
@@ -314,31 +279,19 @@ func TestContainerWatchdog(t *testing.T) {
 	})
 
 	t.Run("starts and stops gracefully", func(t *testing.T) {
-		r := require.New(t)
-
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var (
-			cc  *containerd.Client
-			eac *entityserver_v1alpha.EntityAccessClient
-		)
-
-		err := reg.Init(&cc, &eac)
-		r.NoError(err)
-
-		var ii image.ImageImporter
-		err = reg.Populate(&ii)
-		r.NoError(err)
+		ii := testDeps.NewImageImporter()
 
 		// Create the watchdog with a very short interval
 		watchdog := &ContainerWatchdog{
 			Log:           slog.Default(),
-			CC:            cc,
-			EAC:           eac,
+			CC:            testDeps.CC,
+			EAC:           testDeps.EAC,
 			Namespace:     ii.Namespace,
 			CheckInterval: 100 * time.Millisecond,
 		}

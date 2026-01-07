@@ -33,7 +33,7 @@ type LocalContainerEndpoint struct {
 	HTTP      HTTPEndpoint
 	Client    *containerd.Client
 	Namespace string
-	Dir       string `asm:"static_dir"`
+	Dir       string
 	Id        string
 }
 

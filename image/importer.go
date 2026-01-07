@@ -10,15 +10,20 @@ import (
 	"github.com/containerd/containerd/v2/pkg/namespaces"
 	"github.com/containerd/platforms"
 	_ "github.com/moby/buildkit/client/connhelper/dockercontainer"
-	"miren.dev/runtime/pkg/asm/autoreg"
 )
 
 type ImageImporter struct {
 	CC        *containerd.Client
-	Namespace string `asm:"namespace"`
+	Namespace string
 }
 
-var _ = autoreg.Register[ImageImporter]()
+// NewImageImporter creates a new ImageImporter.
+func NewImageImporter(cc *containerd.Client, namespace string) *ImageImporter {
+	return &ImageImporter{
+		CC:        cc,
+		Namespace: namespace,
+	}
+}
 
 func (i *ImageImporter) ImportImage(ctx context.Context, r io.Reader, indexName string) error {
 	ctx = namespaces.WithNamespace(ctx, i.Namespace)

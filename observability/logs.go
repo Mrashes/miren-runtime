@@ -12,8 +12,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	"miren.dev/runtime/pkg/asm/autoreg"
 )
 
 // normalizeBaseURL ensures the address has a scheme and no trailing slash
@@ -42,23 +40,24 @@ type LogEntry struct {
 }
 
 type PersistentLogWriter struct {
-	Address string        `asm:"victorialogs-address"`
-	Timeout time.Duration `asm:"victorialogs-timeout"`
+	Address string
+	Timeout time.Duration
 
 	client *http.Client
 }
 
-var _ = autoreg.Register[PersistentLogWriter]()
-
-func (l *PersistentLogWriter) Populated() error {
-	if l.Timeout == 0 {
-		l.Timeout = 30 * time.Second
+// NewPersistentLogWriter creates a new PersistentLogWriter.
+func NewPersistentLogWriter(address string, timeout time.Duration) *PersistentLogWriter {
+	if timeout == 0 {
+		timeout = 30 * time.Second
 	}
-
-	l.client = &http.Client{
-		Timeout: l.Timeout,
+	return &PersistentLogWriter{
+		Address: address,
+		Timeout: timeout,
+		client: &http.Client{
+			Timeout: timeout,
+		},
 	}
-	return nil
 }
 
 func (l *PersistentLogWriter) Client() *http.Client {
@@ -119,21 +118,24 @@ func (l *PersistentLogWriter) WriteEntry(entity string, le LogEntry) error {
 }
 
 type PersistentLogReader struct {
-	Address string        `asm:"victorialogs-address"`
-	Timeout time.Duration `asm:"victorialogs-timeout"`
+	Address string
+	Timeout time.Duration
 
 	client *http.Client
 }
 
-func (l *PersistentLogReader) Populated() error {
-	if l.Timeout == 0 {
-		l.Timeout = 30 * time.Second
+// NewPersistentLogReader creates a new PersistentLogReader.
+func NewPersistentLogReader(address string, timeout time.Duration) *PersistentLogReader {
+	if timeout == 0 {
+		timeout = 30 * time.Second
 	}
-
-	l.client = &http.Client{
-		Timeout: l.Timeout,
+	return &PersistentLogReader{
+		Address: address,
+		Timeout: timeout,
+		client: &http.Client{
+			Timeout: timeout,
+		},
 	}
-	return nil
 }
 
 func (l *PersistentLogReader) Read(ctx context.Context, id string) ([]LogEntry, error) {
@@ -147,7 +149,10 @@ func (l *PersistentLogReader) Read(ctx context.Context, id string) ([]LogEntry, 
 type LogsMaintainer struct {
 }
 
-var _ = autoreg.Register[LogsMaintainer]()
+// NewLogsMaintainer creates a new LogsMaintainer.
+func NewLogsMaintainer() *LogsMaintainer {
+	return &LogsMaintainer{}
+}
 
 func (m *LogsMaintainer) Setup(ctx context.Context) error {
 	// VictoriaLogs is schemaless, no setup needed
@@ -162,29 +167,35 @@ type DebugLogWriter struct {
 	Log *slog.Logger
 }
 
+// NewDebugLogWriter creates a new DebugLogWriter.
+func NewDebugLogWriter(log *slog.Logger) *DebugLogWriter {
+	return &DebugLogWriter{Log: log}
+}
+
 func (d *DebugLogWriter) WriteEntry(entity string, le LogEntry) error {
 	d.Log.Debug(le.Body, "stream", le.Stream, "entity", entity)
 	return nil
 }
 
 type LogReader struct {
-	Address string        `asm:"victorialogs-address"`
-	Timeout time.Duration `asm:"victorialogs-timeout"`
+	Address string
+	Timeout time.Duration
 
 	client *http.Client
 }
 
-var _ = autoreg.Register[LogReader]()
-
-func (l *LogReader) Populated() error {
-	if l.Timeout == 0 {
-		l.Timeout = 30 * time.Second
+// NewLogReader creates a new LogReader.
+func NewLogReader(address string, timeout time.Duration) *LogReader {
+	if timeout == 0 {
+		timeout = 30 * time.Second
 	}
-
-	l.client = &http.Client{
-		Timeout: l.Timeout,
+	return &LogReader{
+		Address: address,
+		Timeout: timeout,
+		client: &http.Client{
+			Timeout: timeout,
+		},
 	}
-	return nil
 }
 
 type logReadOpts struct {

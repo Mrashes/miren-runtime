@@ -40,9 +40,12 @@ type StatusMonitor struct {
 	entities map[string]*EntityStatus
 }
 
-func (s *StatusMonitor) Populated() error {
-	s.entities = make(map[string]*EntityStatus)
-	return nil
+// NewStatusMonitor creates a new StatusMonitor.
+func NewStatusMonitor(log *slog.Logger) *StatusMonitor {
+	return &StatusMonitor{
+		Log:      log,
+		entities: make(map[string]*EntityStatus),
+	}
 }
 
 func (s *StatusMonitor) SetPortStatus(entity string, port BoundPort, status PortStatus) {

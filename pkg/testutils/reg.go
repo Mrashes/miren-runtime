@@ -14,10 +14,11 @@ import (
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
 	"miren.dev/runtime/components/coordinate"
 	"miren.dev/runtime/components/netresolve"
+	"miren.dev/runtime/image"
 	"miren.dev/runtime/metrics"
 	"miren.dev/runtime/network"
-	"miren.dev/runtime/pkg/asm"
-	"miren.dev/runtime/pkg/asm/autoreg"
+	"miren.dev/runtime/observability"
+	build "miren.dev/runtime/pkg/buildkit"
 	"miren.dev/runtime/pkg/containerdx"
 	"miren.dev/runtime/pkg/idgen"
 	"miren.dev/runtime/pkg/netdb"
@@ -25,16 +26,70 @@ import (
 	"miren.dev/runtime/pkg/slogfmt"
 )
 
-func Registry(extra ...func(*asm.Registry)) (*asm.Registry, func()) {
-	var r asm.Registry
+// TestDeps holds all test dependencies explicitly for use in tests.
+type TestDeps struct {
+	// Containerd
+	CC        *containerd.Client
+	Namespace string
 
-	var usedClient *containerd.Client
-	var netServ *network.ServiceManager
+	// Network
+	Bridge          string
+	Subnet          *netdb.Subnet
+	IPv4Routable    netip.Prefix
+	ServicePrefixes []netip.Prefix
+	NetServ         *network.ServiceManager
+	Resolver        netresolve.Resolver
 
-	tempDir, err := os.MkdirTemp("", "miren-reg")
+	// Paths
+	DataPath string
+	TempDir  string
+
+	// Buildkit
+	Buildkit *build.Buildkit
+
+	// Metrics
+	Writer      *metrics.VictoriaMetricsWriter
+	Reader      *metrics.VictoriaMetricsReader
+	CPU         *metrics.CPUUsage
+	Mem         *metrics.MemoryUsage
+	HTTPMetrics *metrics.HTTPMetrics
+
+	// Observability
+	LogsMaintainer      *observability.LogsMaintainer
+	StatusMon           *observability.StatusMonitor
+	LogWriter           observability.LogWriter
+	PersistentLogReader *observability.PersistentLogReader
+	Logs                *observability.LogReader
+
+	// Coordinator and Entity Access
+	Coordinator *coordinate.Coordinator
+	EAC         *entityserver_v1alpha.EntityAccessClient
+	RPCState    *rpc.State
+
+	// Logger
+	Log *slog.Logger
+
+	// Context
+	Ctx    context.Context
+	Cancel context.CancelFunc
+
+	// Internal for cleanup
+	netdb       *netdb.NetDB
+	megaSubnet  *netdb.Subnet
+	bridgeIface string
+}
+
+// NewTestDeps creates a TestDeps with explicit dependencies.
+// This is the preferred way to set up test dependencies.
+func NewTestDeps() (*TestDeps, func()) {
+	tempDir, err := os.MkdirTemp("", "miren-test")
 	if err != nil {
 		panic(err)
 	}
+
+	log := slog.New(slogfmt.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
 
 	ndb, err := netdb.New(filepath.Join(tempDir, "net.db"))
 	if err != nil {
@@ -55,191 +110,143 @@ func Registry(extra ...func(*asm.Registry)) (*asm.Registry, func()) {
 	if err != nil {
 		panic(err)
 	}
-	r.Register("ip4-routable", subnet.Prefix())
 
-	subnets := []netip.Prefix{
-		netip.MustParsePrefix("10.10.0.0/16"),
-		netip.MustParsePrefix("fd47:cafe:d00d::/64"),
+	// Setup network bridge
+	_, err = network.SetupBridge(&network.BridgeConfig{
+		Name:      iface,
+		Addresses: []netip.Prefix{subnet.Router()},
+	})
+	if err != nil {
+		panic(err)
 	}
 
-	r.Register("node-id", "test")
-
-	r.Register("service-prefixes", subnets)
-
-	r.Register("data-path", tempDir)
-	r.Register("tempdir", tempDir)
-	r.Register("subnet", subnet)
-	r.Register("server_port", 10000)
-
-	var cancels []func()
-
-	r.ProvideName("bridge-iface", func() (string, error) {
-		_, err = network.SetupBridge(&network.BridgeConfig{
-			Name:      iface,
-			Addresses: []netip.Prefix{subnet.Router()},
-		})
-		if err != nil {
-			return "", err
-		}
-		cancels = append(cancels, func() {
-			network.TeardownBridge(iface)
-		})
-		return iface, nil
-	})
-
-	r.Provide(func() (*containerd.Client, error) {
-		cl, err := containerd.New(containerdx.DefaultSocket)
-		if err != nil {
-			return nil, err
-		}
-
-		usedClient = cl
-
-		return cl, nil
-	})
-
-	r.Provide(func(opts struct {
-		Log *slog.Logger
-	}) (*buildkit.Client, error) {
-		opts.Log.Debug("creating buildkit client for tests with default address")
-		client, err := buildkit.New(context.TODO(), "")
-		if err != nil {
-			opts.Log.Error("failed to create buildkit client for tests", "error", err)
-		} else {
-			opts.Log.Info("buildkit client created for tests")
-		}
-		return client, err
-	})
+	// Create containerd client
+	cc, err := containerd.New(containerdx.DefaultSocket)
+	if err != nil {
+		panic(err)
+	}
 
 	ts := time.Now()
-
 	namespace := fmt.Sprintf("miren-%d", ts.UnixNano())
-
-	r.Register("namespace", namespace)
-	r.Register("org_id", uint64(1))
-
-	log := slog.New(slogfmt.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	}))
-
-	r.Register("log", log)
-
-	r.Register("victorialogs-address", "victorialogs:9428")
-	r.Register("victorialogs-timeout", 30*time.Second)
-
-	res, hm := netresolve.NewLocalResolver()
-
-	r.Provide(func() netresolve.Resolver {
-		return res
-	})
-
-	r.Provide(func() netresolve.HostMapper {
-		return hm
-	})
-
-	var prefix string
-
-	r.ProvideName("etcd-prefix", func() string {
-		prefix = "/" + idgen.Gen("p")
-		return prefix
-	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	r.Provide(func(opts struct {
-		CPU    *metrics.CPUUsage
-		Mem    *metrics.MemoryUsage
-		Log    *slog.Logger
-		Prefix string `asm:"etcd-prefix"`
-	}) (*coordinate.Coordinator, error) {
-		co := coordinate.NewCoordinator(opts.Log, coordinate.CoordinatorConfig{
-			EtcdEndpoints: []string{"etcd:2379"},
-			Prefix:        opts.Prefix,
-			Resolver:      res,
-			TempDir:       tempDir,
-			DataPath:      filepath.Join(tempDir, "coordinator"),
-			Mem:           opts.Mem,
-			Cpu:           opts.CPU,
-			NoAuth:        true, // Disable authentication for tests
-		})
-
-		err = co.Start(ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		return co, nil
-	})
-
-	r.ProvideName("rpc-state", func() (*rpc.State, error) {
-		return rpc.NewState(ctx, rpc.WithSkipVerify)
-	})
-
-	r.Provide(func(opts struct {
-		State *rpc.State `asm:"rpc-state"`
-		Co    *coordinate.Coordinator
-	}) (*entityserver_v1alpha.EntityAccessClient, error) {
-		client, err := opts.State.Connect(opts.Co.ListenAddress(), "entities")
-		if err != nil {
-			return nil, err
-		}
-
-		eac := entityserver_v1alpha.NewEntityAccessClient(client)
-		return eac, nil
-	})
-
-	endpoint := "victoriametrics:8428"
-
-	// Provide a test VictoriaMetrics writer
-	r.ProvideName("victoriametrics-writer", func(opts struct {
-		Log *slog.Logger
-	}) *metrics.VictoriaMetricsWriter {
-		log := opts.Log
-		if log == nil {
-			log = slog.Default()
-		}
-		writer := metrics.NewVictoriaMetricsWriter(log, endpoint, 30*time.Second)
-		writer.Start()
-		return writer
-	})
-
-	// Provide a test VictoriaMetrics reader
-	r.ProvideName("victoriametrics-reader", func(opts struct {
-		Log *slog.Logger
-	}) *metrics.VictoriaMetricsReader {
-		log := opts.Log
-		if log == nil {
-			log = slog.Default()
-		}
-		return metrics.NewVictoriaMetricsReader(log, endpoint, 30*time.Second)
-	})
-
-	for _, f := range autoreg.All() {
-		r.Provide(f.Interface())
+	// Create buildkit client
+	bkClient, err := buildkit.New(ctx, "")
+	if err != nil {
+		panic(fmt.Errorf("failed to create buildkit client: %w", err))
+	}
+	bk := &build.Buildkit{
+		Client: bkClient,
+		Log:    log,
 	}
 
-	for _, fn := range extra {
-		fn(&r)
+	// Create network service manager and resolver
+	netServ := network.NewServiceManager(log, nil)
+	resolver, _ := netresolve.NewLocalResolver()
+
+	// Create metrics components
+	endpoint := "victoriametrics:8428"
+	writer := metrics.NewVictoriaMetricsWriter(log, endpoint, 30*time.Second)
+	writer.Start()
+	reader := metrics.NewVictoriaMetricsReader(log, endpoint, 30*time.Second)
+	cpu := metrics.NewCPUUsage(log, writer, reader)
+	mem := metrics.NewMemoryUsage(log, writer, reader)
+	httpMetrics := metrics.NewHTTPMetrics(log, writer, reader)
+
+	// Create observability components
+	logsMaintainer := observability.NewLogsMaintainer()
+	statusMon := observability.NewStatusMonitor(log)
+	// Use PersistentLogWriter to write to VictoriaLogs so logs can be read back in tests
+	logWriter := observability.NewPersistentLogWriter("victorialogs:9428", 30*time.Second)
+	persistentLogReader := observability.NewPersistentLogReader("victorialogs:9428", 30*time.Second)
+	logs := observability.NewLogReader("victorialogs:9428", 30*time.Second)
+
+	// Create coordinator
+	prefix := "/" + idgen.Gen("p")
+	coord := coordinate.NewCoordinator(log, coordinate.CoordinatorConfig{
+		EtcdEndpoints: []string{"etcd:2379"},
+		Prefix:        prefix,
+		Resolver:      resolver,
+		TempDir:       tempDir,
+		DataPath:      filepath.Join(tempDir, "coordinator"),
+		Mem:           mem,
+		Cpu:           cpu,
+		NoAuth:        true, // Disable authentication for tests
+	})
+
+	err = coord.Start(ctx)
+	if err != nil {
+		panic(fmt.Errorf("failed to start coordinator: %w", err))
+	}
+
+	// Create RPC state and entity access client
+	rpcState, err := rpc.NewState(ctx, rpc.WithSkipVerify)
+	if err != nil {
+		panic(fmt.Errorf("failed to create rpc state: %w", err))
+	}
+
+	client, err := rpcState.Connect(coord.ListenAddress(), "entities")
+	if err != nil {
+		panic(fmt.Errorf("failed to connect to entities: %w", err))
+	}
+
+	eac := entityserver_v1alpha.NewEntityAccessClient(client)
+
+	deps := &TestDeps{
+		CC:        cc,
+		Namespace: namespace,
+
+		Bridge:       iface,
+		Subnet:       subnet,
+		IPv4Routable: subnet.Prefix(),
+		ServicePrefixes: []netip.Prefix{
+			netip.MustParsePrefix("10.10.0.0/16"),
+			netip.MustParsePrefix("fd47:cafe:d00d::/64"),
+		},
+		NetServ:  netServ,
+		Resolver: resolver,
+
+		DataPath: tempDir,
+		TempDir:  tempDir,
+
+		Buildkit: bk,
+
+		Writer:      writer,
+		Reader:      reader,
+		CPU:         cpu,
+		Mem:         mem,
+		HTTPMetrics: httpMetrics,
+
+		LogsMaintainer:      logsMaintainer,
+		StatusMon:           statusMon,
+		LogWriter:           logWriter,
+		PersistentLogReader: persistentLogReader,
+		Logs:                logs,
+
+		Coordinator: coord,
+		EAC:         eac,
+		RPCState:    rpcState,
+
+		Log:    log,
+		Ctx:    ctx,
+		Cancel: cancel,
+
+		netdb:       ndb,
+		megaSubnet:  mega,
+		bridgeIface: iface,
 	}
 
 	cleanup := func() {
 		cancel()
 
-		// Try to get ServiceManager and shut it down before cleaning up containerd
-		// This is done lazily at cleanup time rather than during setup
-		if err := r.Populate(&netServ); err == nil && netServ != nil {
-			if err := netServ.ShutdownAll(); err != nil {
-				log.Error("failed to shutdown network services during test cleanup", "error", err)
-			}
+		if netServ != nil {
+			netServ.ShutdownAll()
 		}
 
-		if usedClient != nil {
-			NukeNamespace(usedClient, namespace)
-		}
+		NukeNamespace(cc, namespace)
 
-		for _, cancel := range cancels {
-			cancel()
-		}
+		network.TeardownBridge(iface)
 
 		ndb.ReleaseInterface(iface)
 		mega.ReleaseSubnet(subnet.Prefix())
@@ -249,5 +256,13 @@ func Registry(extra ...func(*asm.Registry)) (*asm.Registry, func()) {
 		os.RemoveAll(tempDir)
 	}
 
-	return &r, cleanup
+	return deps, cleanup
+}
+
+// NewImageImporter creates an ImageImporter using the test dependencies.
+func (d *TestDeps) NewImageImporter() image.ImageImporter {
+	return image.ImageImporter{
+		CC:        d.CC,
+		Namespace: d.Namespace,
+	}
 }

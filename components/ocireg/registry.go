@@ -22,15 +22,20 @@ import (
 
 // RegistryHandler processes all OCI registry requests
 type Registry struct {
-	RootDir string `asm:"data-path"`
+	RootDir string
 	Log     *slog.Logger
 	EC      *entityserver.Client
 
 	server *http.Server
 }
 
-func (r *Registry) Populated() error {
-	return nil
+// NewRegistry creates a new Registry.
+func NewRegistry(rootDir string, log *slog.Logger, ec *entityserver.Client) *Registry {
+	return &Registry{
+		RootDir: rootDir,
+		Log:     log,
+		EC:      ec,
+	}
 }
 
 func (r *Registry) Start(ctx context.Context, addr string) error {

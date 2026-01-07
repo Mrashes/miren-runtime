@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"miren.dev/runtime/pkg/rbac"
 )
 
@@ -60,22 +61,12 @@ func TestPolicyFetcher(t *testing.T) {
 
 		ctx := context.Background()
 		err := fetcher.fetchPolicy(ctx)
-		if err != nil {
-			t.Fatalf("failed to fetch policy: %v", err)
-		}
+		require.NoError(t, err, "failed to fetch policy")
 
 		policy := fetcher.GetPolicy()
-		if policy == nil {
-			t.Fatal("expected policy, got nil")
-		}
-
-		if len(policy.Rules) != 1 {
-			t.Errorf("expected 1 rule, got %d", len(policy.Rules))
-		}
-
-		if policy.Rules[0].Name != "Test Rule" {
-			t.Errorf("expected rule name 'Test Rule', got %s", policy.Rules[0].Name)
-		}
+		require.NotNil(t, policy, "expected policy")
+		require.Len(t, policy.Rules, 1, "expected 1 rule")
+		require.Equal(t, "Test Rule", policy.Rules[0].Name)
 	})
 
 	// Test periodic refresh

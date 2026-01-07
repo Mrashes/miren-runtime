@@ -12,24 +12,27 @@ import (
 	"time"
 
 	"github.com/oklog/ulid/v2"
-	"miren.dev/runtime/pkg/asm/autoreg"
 	"miren.dev/runtime/pkg/units"
 )
 
 type CPUUsage struct {
 	Log    *slog.Logger
-	Writer *VictoriaMetricsWriter `asm:"victoriametrics-writer"`
-	Reader *VictoriaMetricsReader `asm:"victoriametrics-reader"`
+	Writer *VictoriaMetricsWriter
+	Reader *VictoriaMetricsReader
 
 	mu         sync.Mutex
 	cpuSeconds map[string]float64
 	instance   string
 }
 
-var _ = autoreg.Register[CPUUsage]()
-
-func (m *CPUUsage) Populated() error {
-	return m.Setup()
+// NewCPUUsage creates a new CPUUsage with the given dependencies.
+// Writer and Reader can be nil for environments without metrics collection.
+func NewCPUUsage(log *slog.Logger, writer *VictoriaMetricsWriter, reader *VictoriaMetricsReader) *CPUUsage {
+	return &CPUUsage{
+		Log:    log,
+		Writer: writer,
+		Reader: reader,
+	}
 }
 
 func (m *CPUUsage) Setup() error {

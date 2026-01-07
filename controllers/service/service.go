@@ -23,13 +23,22 @@ import (
 	"miren.dev/runtime/pkg/set"
 )
 
+// ServiceControllerConfig holds required dependencies for ServiceController.
+type ServiceControllerConfig struct {
+	Log             *slog.Logger
+	EAC             *entityserver_v1alpha.EntityAccessClient
+	IPv4Routable    netip.Prefix
+	ServicePrefixes []netip.Prefix
+	DisableLocalNet bool
+}
+
 type ServiceController struct {
 	Log             *slog.Logger
 	EAC             *entityserver_v1alpha.EntityAccessClient
-	IPv4Routable    netip.Prefix   `asm:"ip4-routable"`
-	ServicePrefixes []netip.Prefix `asm:"service-prefixes"`
+	IPv4Routable    netip.Prefix
+	ServicePrefixes []netip.Prefix
 
-	DisableLocalNet bool `asm:"disable-localnet,optional"`
+	DisableLocalNet bool
 
 	routablePrefixes []netip.Prefix
 
@@ -38,6 +47,24 @@ type ServiceController struct {
 
 	mu             sync.Mutex
 	chainEndpoints map[string][]string
+}
+
+// NewServiceController creates a new ServiceController with validated dependencies.
+func NewServiceController(cfg ServiceControllerConfig) (*ServiceController, error) {
+	if cfg.Log == nil {
+		return nil, fmt.Errorf("service: Log is required")
+	}
+	if cfg.EAC == nil {
+		return nil, fmt.Errorf("service: entity access client is required")
+	}
+
+	return &ServiceController{
+		Log:             cfg.Log,
+		EAC:             cfg.EAC,
+		IPv4Routable:    cfg.IPv4Routable,
+		ServicePrefixes: cfg.ServicePrefixes,
+		DisableLocalNet: cfg.DisableLocalNet,
+	}, nil
 }
 
 func (s *ServiceController) UpdateEndpoints(ctx context.Context, event controller.Event) ([]entity.Attr, error) {

@@ -12,13 +12,21 @@ import (
 	"time"
 
 	"miren.dev/runtime/metrics"
-	"miren.dev/runtime/pkg/asm/autoreg"
 )
 
 type ResourcesMonitor struct {
-	Writer *metrics.VictoriaMetricsWriter `asm:"victoriametrics-writer"`
-	Reader *metrics.VictoriaMetricsReader `asm:"victoriametrics-reader"`
 	Log    *slog.Logger
+	Writer *metrics.VictoriaMetricsWriter
+	Reader *metrics.VictoriaMetricsReader
+}
+
+// NewResourcesMonitor creates a new ResourcesMonitor.
+func NewResourcesMonitor(log *slog.Logger, writer *metrics.VictoriaMetricsWriter, reader *metrics.VictoriaMetricsReader) *ResourcesMonitor {
+	return &ResourcesMonitor{
+		Log:    log,
+		Writer: writer,
+		Reader: reader,
+	}
 }
 
 func (m *ResourcesMonitor) Setup(ctx context.Context) error {
@@ -26,8 +34,6 @@ func (m *ResourcesMonitor) Setup(ctx context.Context) error {
 	m.Log.Info("resource monitor initialized with VictoriaMetrics backend")
 	return nil
 }
-
-var _ = autoreg.Register[ResourcesMonitor]()
 
 func CGroupPathForPid(pid uint32) (string, error) {
 	// read cgroup

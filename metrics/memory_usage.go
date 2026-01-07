@@ -9,22 +9,25 @@ import (
 	"time"
 
 	"github.com/oklog/ulid/v2"
-	"miren.dev/runtime/pkg/asm/autoreg"
 	"miren.dev/runtime/pkg/units"
 )
 
 type MemoryUsage struct {
 	Log    *slog.Logger
-	Writer *VictoriaMetricsWriter `asm:"victoriametrics-writer,optional"`
-	Reader *VictoriaMetricsReader `asm:"victoriametrics-reader,optional"`
+	Writer *VictoriaMetricsWriter
+	Reader *VictoriaMetricsReader
 
 	instance string
 }
 
-var _ = autoreg.Register[MemoryUsage]()
-
-func (m *MemoryUsage) Populated() error {
-	return m.Setup()
+// NewMemoryUsage creates a new MemoryUsage with the given dependencies.
+// Writer and Reader can be nil for environments without metrics collection.
+func NewMemoryUsage(log *slog.Logger, writer *VictoriaMetricsWriter, reader *VictoriaMetricsReader) *MemoryUsage {
+	return &MemoryUsage{
+		Log:    log,
+		Writer: writer,
+		Reader: reader,
+	}
 }
 
 func (m *MemoryUsage) Setup() error {

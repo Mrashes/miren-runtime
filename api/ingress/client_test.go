@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"miren.dev/runtime/api/entityserver"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/entity/testutils"
@@ -35,17 +36,11 @@ func TestClientLookupCaseInsensitive(t *testing.T) {
 
 		// Set route with mixed case
 		route, err := client.SetRoute(ctx, originalHost, testAppID)
-		if err != nil {
-			t.Fatalf("failed to set route: %v", err)
-		}
-		if route == nil {
-			t.Fatal("expected route to be created, got nil")
-		}
+		require.NoError(t, err, "failed to set route")
+		require.NotNil(t, route, "expected route to be created")
 
 		// Verify the route was stored with lowercase host
-		if route.Host != "example.com" {
-			t.Errorf("expected host to be stored as 'example.com', got %q", route.Host)
-		}
+		require.Equal(t, "example.com", route.Host, "expected host to be stored as lowercase")
 
 		// Test lookup with exact case as stored (lowercase)
 		result, err := client.Lookup(ctx, "example.com")

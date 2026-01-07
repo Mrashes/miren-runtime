@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"time"
@@ -21,16 +22,19 @@ import (
 	"miren.dev/runtime/api/storage/storage_v1alpha"
 	"miren.dev/runtime/clientconfig"
 	"miren.dev/runtime/components/coordinate"
+	"miren.dev/runtime/components/netresolve"
 	"miren.dev/runtime/controllers/disk"
 	"miren.dev/runtime/controllers/ingress"
 	"miren.dev/runtime/controllers/sandbox"
 	"miren.dev/runtime/controllers/service"
-	"miren.dev/runtime/pkg/asm"
+	"miren.dev/runtime/network"
+	"miren.dev/runtime/observability"
 	"miren.dev/runtime/pkg/cloudauth"
 	"miren.dev/runtime/pkg/controller"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/entity/types"
 	"miren.dev/runtime/pkg/multierror"
+	"miren.dev/runtime/pkg/netdb"
 	"miren.dev/runtime/pkg/rpc"
 	"miren.dev/runtime/servers/exec"
 )
@@ -39,7 +43,7 @@ type RunnerConfig struct {
 	Id            string `json:"id" cbor:"id" yaml:"id"`
 	ListenAddress string `json:"listen_address" cbor:"listen_address" yaml:"listen_address"`
 	Workers       int    `json:"workers" cbor:"workers" yaml:"workers"`
-	DataPath      string `json:"data_path" cbor:"data_path" yaml:"data_path" asm:"data-path"`
+	DataPath      string `json:"data_path" cbor:"data_path" yaml:"data_path"`
 
 	// Optional RPC configuration for advanced setups
 	// If not provided, a default insecure connection will be used
@@ -50,11 +54,39 @@ type RunnerConfig struct {
 	CloudAuth *coordinate.CloudAuthConfig `json:"cloud_auth,omitempty" cbor:"cloud_auth,omitempty" yaml:"cloud_auth,omitempty"`
 }
 
+// RunnerDeps holds dependencies needed by the Runner to construct controllers.
+type RunnerDeps struct {
+	CC        *containerd.Client
+	Namespace string
+	Bridge    string
+	Tempdir   string
+	Subnet    *netdb.Subnet
+
+	// Network dependencies
+	NetServ *network.ServiceManager
+
+	// Observability dependencies
+	LogsMaintainer *observability.LogsMaintainer
+	LogWriter      observability.LogWriter
+	StatusMon      *observability.StatusMonitor
+
+	// Network config
+	IPv4Routable    netip.Prefix
+	ServicePrefixes []netip.Prefix
+	DisableLocalNet bool
+
+	// Resolver
+	Resolver netresolve.Resolver
+
+	// Sandbox metrics
+	SandboxMetrics *sandbox.Metrics
+}
+
 const (
 	DefaulWorkers = 3
 )
 
-func NewRunner(log *slog.Logger, reg *asm.Registry, cfg RunnerConfig) (*Runner, error) {
+func NewRunner(log *slog.Logger, deps RunnerDeps, cfg RunnerConfig) (*Runner, error) {
 	if cfg.DataPath == "" {
 		return nil, fmt.Errorf("data_path is required")
 	}
@@ -63,10 +95,14 @@ func NewRunner(log *slog.Logger, reg *asm.Registry, cfg RunnerConfig) (*Runner, 
 		return nil, fmt.Errorf("id is required")
 	}
 
+	if deps.CC == nil {
+		return nil, fmt.Errorf("containerd client is required")
+	}
+
 	return &Runner{
 		RunnerConfig: cfg,
 		Log:          log.With("module", "runner"),
-		reg:          reg,
+		deps:         deps,
 	}, nil
 }
 
@@ -75,7 +111,7 @@ type Runner struct {
 
 	Log *slog.Logger
 
-	reg *asm.Registry
+	deps RunnerDeps
 
 	cc *containerd.Client
 
@@ -223,13 +259,10 @@ func (r *Runner) Start(ctx context.Context) error {
 		return err
 	}
 
-	var es exec.Server
+	// Create exec server with explicit dependencies
+	execServer := exec.NewServer(r.Log, r.deps.CC, eas, r.deps.Namespace)
 
-	if err := r.reg.Populate(&es); err != nil {
-		return err
-	}
-
-	rs.Server().ExposeValue("dev.miren.runtime/exec", exec_v1alpha.AdaptSandboxExec(&es))
+	rs.Server().ExposeValue("dev.miren.runtime/exec", exec_v1alpha.AdaptSandboxExec(execServer))
 
 	r.Log.Info("Registered exec server")
 
@@ -288,28 +321,45 @@ func (r *Runner) SetupControllers(
 ) {
 	cm := controller.NewControllerManager()
 
-	r.reg.Register("entity-client", eas)
-	r.reg.Override("node-id", r.Id)
-
-	var sbc sandbox.SandboxController
-	if err := r.reg.Populate(&sbc); err != nil {
-		return nil, err
+	// Create sandbox controller with explicit dependencies
+	sbc, err := sandbox.NewSandboxController(sandbox.SandboxControllerConfig{
+		Log:            r.Log,
+		CC:             r.deps.CC,
+		EAC:            eas,
+		Namespace:      r.deps.Namespace,
+		NodeId:         r.Id,
+		NetServ:        r.deps.NetServ,
+		Bridge:         r.deps.Bridge,
+		Subnet:         r.deps.Subnet,
+		DataPath:       r.DataPath,
+		Tempdir:        r.deps.Tempdir,
+		LogsMaintainer: r.deps.LogsMaintainer,
+		LogWriter:      r.deps.LogWriter,
+		StatusMon:      r.deps.StatusMon,
+		Resolver:       r.deps.Resolver,
+		Metrics:        r.deps.SandboxMetrics,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create sandbox controller: %w", err)
 	}
-	sbc.Log = sbc.Log.With("module", "sandbox", "runner_id", r.Id)
 
-	r.closers = append(r.closers, &sbc)
+	r.closers = append(r.closers, sbc)
 
 	rs.ExposeValue("dev.miren.runtime/sandbox.metrics", metric_v1alpha.AdaptSandboxMetrics(sbc.Metrics))
 
-	var serviceController service.ServiceController
-	if err := r.reg.Populate(&serviceController); err != nil {
-		return nil, err
+	// Create service controller with explicit dependencies
+	serviceController, err := service.NewServiceController(service.ServiceControllerConfig{
+		Log:             r.Log,
+		EAC:             eas,
+		IPv4Routable:    r.deps.IPv4Routable,
+		ServicePrefixes: r.deps.ServicePrefixes,
+		DisableLocalNet: r.deps.DisableLocalNet,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create service controller: %w", err)
 	}
 
-	var log *slog.Logger
-	if err := r.reg.Resolve(&log); err != nil {
-		return nil, err
-	}
+	log := r.Log
 
 	defaultRouteAppController := ingress.NewDefaultRouteAppController(log, eas)
 	defaultRouteController := ingress.NewDefaultRouteController(log, eas)
@@ -317,7 +367,7 @@ func (r *Runner) SetupControllers(
 	// Initialize disk controllers
 	// Create LSVD client for disk operations
 	dataPath := filepath.Join(r.DataPath, "disk-data")
-	err := os.MkdirAll(dataPath, 0700)
+	err = os.MkdirAll(dataPath, 0700)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create disk data path: %w", err)
 	}
@@ -380,7 +430,7 @@ func (r *Runner) SetupControllers(
 
 	r.cc = sbc.CC
 	r.namespace = sbc.Namespace
-	r.sbController = &sbc
+	r.sbController = sbc
 
 	workers := r.Workers
 	if workers <= 0 {
@@ -392,7 +442,7 @@ func (r *Runner) SetupControllers(
 		log,
 		compute_v1alpha.Index(compute_v1alpha.KindSandbox, entity.Id("node/"+r.Id)),
 		eas,
-		controller.AdaptController(&sbc),
+		controller.AdaptController(sbc),
 		time.Minute,
 		workers,
 	)
@@ -412,7 +462,7 @@ func (r *Runner) SetupControllers(
 			log,
 			entity.Ref(entity.EntityKind, network_v1alpha.KindService),
 			eas,
-			controller.AdaptController(&serviceController),
+			controller.AdaptController(serviceController),
 			time.Minute,
 			workers,
 		),

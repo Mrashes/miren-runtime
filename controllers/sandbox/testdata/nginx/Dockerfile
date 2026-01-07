@@ -1,3 +1,4 @@
-FROM nginx
+FROM nginx:alpine
 
-RUN apt update && apt install -y iproute2 tcpdump procps busybox
+# Alpine-based nginx doesn't need apt - use apk if needed
+# But for tests, the base image should be sufficient

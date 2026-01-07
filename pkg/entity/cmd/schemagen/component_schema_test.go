@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"miren.dev/runtime/pkg/entity"
 )
 
@@ -127,17 +128,9 @@ func TestComponentFieldSchemaPopulated(t *testing.T) {
 		}
 	}
 
-	if configField == nil {
-		t.Fatal("Expected to find 'config' field in service schema")
-	}
-
-	if configField.Type != "component" {
-		t.Errorf("Expected config field to have type 'component', got %s", configField.Type)
-	}
-
-	if configField.Component == nil {
-		t.Error("REGRESSION: config field's Component schema is nil - this would cause a panic during encoding")
-	}
+	require.NotNil(t, configField, "Expected to find 'config' field in service schema")
+	require.Equal(t, "component", configField.Type, "Expected config field to have type 'component'")
+	require.NotNil(t, configField.Component, "REGRESSION: config field's Component schema is nil - this would cause a panic during encoding")
 
 	// Verify the Component schema is correct
 	if configField.Component != nil {
@@ -204,20 +197,13 @@ func TestMultipleComponentReferencesShareSchema(t *testing.T) {
 		}
 	}
 
-	if primaryField == nil || secondaryField == nil {
-		t.Fatal("Expected to find both 'primary' and 'secondary' fields")
-	}
+	require.NotNil(t, primaryField, "Expected to find 'primary' field")
+	require.NotNil(t, secondaryField, "Expected to find 'secondary' field")
 
 	// Both should have non-nil Component schemas
-	if primaryField.Component == nil {
-		t.Error("primary field's Component schema is nil")
-	}
-	if secondaryField.Component == nil {
-		t.Error("secondary field's Component schema is nil")
-	}
+	require.NotNil(t, primaryField.Component, "primary field's Component schema is nil")
+	require.NotNil(t, secondaryField.Component, "secondary field's Component schema is nil")
 
 	// Both should point to the same schema instance (shared)
-	if primaryField.Component != secondaryField.Component {
-		t.Error("Expected both fields to share the same Component schema instance")
-	}
+	require.Same(t, primaryField.Component, secondaryField.Component, "Expected both fields to share the same Component schema instance")
 }

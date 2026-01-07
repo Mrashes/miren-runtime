@@ -10,14 +10,13 @@ import (
 	"time"
 
 	"github.com/oklog/ulid/v2"
-	"miren.dev/runtime/pkg/asm/autoreg"
 )
 
 // HTTPMetrics tracks HTTP request metrics for applications using VictoriaMetrics
 type HTTPMetrics struct {
 	Log    *slog.Logger
-	Writer *VictoriaMetricsWriter `asm:"victoriametrics-writer,optional"`
-	Reader *VictoriaMetricsReader `asm:"victoriametrics-reader,optional"`
+	Writer *VictoriaMetricsWriter
+	Reader *VictoriaMetricsReader
 
 	mu       sync.Mutex
 	counters map[string]*counterState
@@ -30,10 +29,14 @@ type counterState struct {
 	durationCount float64
 }
 
-var _ = autoreg.Register[HTTPMetrics]()
-
-func (h *HTTPMetrics) Populated() error {
-	return h.Setup()
+// NewHTTPMetrics creates a new HTTPMetrics with the given dependencies.
+// Writer and Reader can be nil for environments without metrics collection.
+func NewHTTPMetrics(log *slog.Logger, writer *VictoriaMetricsWriter, reader *VictoriaMetricsReader) *HTTPMetrics {
+	return &HTTPMetrics{
+		Log:    log,
+		Writer: writer,
+		Reader: reader,
+	}
 }
 
 func (h *HTTPMetrics) Setup() error {

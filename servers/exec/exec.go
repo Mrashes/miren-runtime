@@ -23,7 +23,17 @@ type Server struct {
 
 	EAC *entityserver_v1alpha.EntityAccessClient
 
-	Namespace string `asm:"namespace"`
+	Namespace string
+}
+
+// NewServer creates a new exec Server.
+func NewServer(log *slog.Logger, cc *containerd.Client, eac *entityserver_v1alpha.EntityAccessClient, namespace string) *Server {
+	return &Server{
+		Log:       log,
+		CC:        cc,
+		EAC:       eac,
+		Namespace: namespace,
+	}
 }
 
 var _ exec_v1alpha.SandboxExec = (*Server)(nil)

@@ -56,17 +56,9 @@ func TestVictoriaLogsIntegration(t *testing.T) {
 		// Create writer and reader
 		address := vlComponent.HTTPEndpoint()
 
-		writer := &observability.PersistentLogWriter{
-			Address: address,
-			Timeout: 30 * time.Second,
-		}
-		writer.Populated()
+		writer := observability.NewPersistentLogWriter(address, 30*time.Second)
 
-		reader := &observability.LogReader{
-			Address: address,
-			Timeout: 30 * time.Second,
-		}
-		reader.Populated()
+		reader := observability.NewLogReader(address, 30*time.Second)
 
 		// Write some logs
 		entityID := identity.NewID()
@@ -172,17 +164,9 @@ func TestVictoriaLogsIntegration(t *testing.T) {
 
 		address := vlComponent.HTTPEndpoint()
 
-		writer := &observability.PersistentLogWriter{
-			Address: address,
-			Timeout: 30 * time.Second,
-		}
-		writer.Populated()
+		writer := observability.NewPersistentLogWriter(address, 30*time.Second)
 
-		reader := &observability.LogReader{
-			Address: address,
-			Timeout: 30 * time.Second,
-		}
-		reader.Populated()
+		reader := observability.NewLogReader(address, 30*time.Second)
 
 		entityID := identity.NewID()
 
@@ -243,17 +227,9 @@ func TestVictoriaLogsIntegration(t *testing.T) {
 
 		address := vlComponent.HTTPEndpoint()
 
-		writer := &observability.PersistentLogWriter{
-			Address: address,
-			Timeout: 30 * time.Second,
-		}
-		writer.Populated()
+		writer := observability.NewPersistentLogWriter(address, 30*time.Second)
 
-		reader := &observability.LogReader{
-			Address: address,
-			Timeout: 30 * time.Second,
-		}
-		reader.Populated()
+		reader := observability.NewLogReader(address, 30*time.Second)
 
 		entityID := identity.NewID()
 
