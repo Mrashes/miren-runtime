@@ -201,6 +201,7 @@ func buildServicesConfig(appConfig *appconfig.AppConfig, procfileServices map[st
 					NumInstances:        int64(serviceConfig.Concurrency.NumInstances),
 					RequestsPerInstance: int64(serviceConfig.Concurrency.RequestsPerInstance),
 					ScaleDownDelay:      serviceConfig.Concurrency.ScaleDownDelay,
+					ShutdownTimeout:     serviceConfig.Concurrency.ShutdownTimeout,
 				}
 			}
 
