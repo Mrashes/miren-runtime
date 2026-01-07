@@ -8,19 +8,17 @@ import (
 
 func DeployCancel(ctx *Context, opts struct {
 	ConfigCentric
-	Args struct {
-		DeploymentID string `positional-arg-name:"deployment-id" description:"ID of the deployment to cancel"`
-	} `positional-args:"yes" required:"yes"`
+	DeploymentID string `short:"d" long:"deployment" description:"ID of the deployment to cancel" required:"true"`
 }) error {
-	client, err := ctx.RPCClient("deployment")
+	client, err := ctx.RPCClient("dev.miren.runtime/deployment")
 	if err != nil {
 		return err
 	}
 	defer client.Close()
 
-	depClient := &deployment_v1alpha.DeploymentClient{Client: client}
+	depClient := deployment_v1alpha.NewDeploymentClient(client)
 
-	result, err := depClient.CancelDeployment(ctx, opts.Args.DeploymentID, "")
+	result, err := depClient.CancelDeployment(ctx, opts.DeploymentID, "")
 	if err != nil {
 		return err
 	}
@@ -29,6 +27,6 @@ func DeployCancel(ctx *Context, opts struct {
 		return errors.New(result.Error())
 	}
 
-	ctx.Printf("Cancelled deployment %s\n", opts.Args.DeploymentID)
+	ctx.Printf("Cancelled deployment %s\n", opts.DeploymentID)
 	return nil
 }

@@ -404,7 +404,10 @@ func (d *DeploymentServer) UpdateFailedDeployment(ctx context.Context, req *depl
 	decodeEntity(deploymentResp.Entity(), &deployment)
 
 	// Update deployment with failure information
-	deployment.Status = "failed"
+	// Don't overwrite cancelled status
+	if deployment.Status != "cancelled" {
+		deployment.Status = "failed"
+	}
 	deployment.ErrorMessage = errorMessage
 	deployment.BuildLogs = buildLogs
 	deployment.CompletedAt = time.Now().Format(time.RFC3339)
