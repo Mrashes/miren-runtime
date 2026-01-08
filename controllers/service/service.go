@@ -397,7 +397,7 @@ func (s *ServiceController) initNFT(table string, nc *nftCommands) error {
 
 func (s *ServiceController) Init(ctx context.Context) error {
 	s.chainEndpoints = make(map[string][]string)
-	s.routablePrefixes = []netip.Prefix{s.IPv4Routable}
+	s.routablePrefixes = append([]netip.Prefix{s.IPv4Routable}, s.ServicePrefixes...)
 
 	s.Log.Info("Initializing service controller")
 
