@@ -57,6 +57,9 @@ func NewServiceController(cfg ServiceControllerDeps) (*ServiceController, error)
 	if cfg.EAC == nil {
 		return nil, fmt.Errorf("service: entity access client is required")
 	}
+	if !cfg.IPv4Routable.IsValid() {
+		return nil, fmt.Errorf("service: IPv4Routable must be a valid prefix")
+	}
 
 	return &ServiceController{
 		Log:             cfg.Log,

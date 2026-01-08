@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -19,6 +20,7 @@ type VictoriaMetricsWriter struct {
 	Address string // e.g., "localhost:8428"
 	Timeout time.Duration
 
+	started   atomic.Bool
 	buffer    []MetricPoint
 	mu        sync.Mutex
 	flushCtx  context.Context
@@ -62,8 +64,11 @@ func NewVictoriaMetricsWriter(log *slog.Logger, address string, timeout time.Dur
 	return w
 }
 
-// Start begins the background flush routine
+// Start begins the background flush routine. It is idempotent and safe to call multiple times.
 func (w *VictoriaMetricsWriter) Start() {
+	if !w.started.CompareAndSwap(false, true) {
+		return
+	}
 	w.flushCtx, w.cancel = context.WithCancel(context.Background())
 	w.wg.Add(1)
 	go w.flushLoop()
