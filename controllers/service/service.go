@@ -23,8 +23,8 @@ import (
 	"miren.dev/runtime/pkg/set"
 )
 
-// ServiceControllerConfig holds required dependencies for ServiceController.
-type ServiceControllerConfig struct {
+// ServiceControllerDeps holds required dependencies for ServiceController.
+type ServiceControllerDeps struct {
 	Log             *slog.Logger
 	EAC             *entityserver_v1alpha.EntityAccessClient
 	IPv4Routable    netip.Prefix
@@ -50,7 +50,7 @@ type ServiceController struct {
 }
 
 // NewServiceController creates a new ServiceController with validated dependencies.
-func NewServiceController(cfg ServiceControllerConfig) (*ServiceController, error) {
+func NewServiceController(cfg ServiceControllerDeps) (*ServiceController, error) {
 	if cfg.Log == nil {
 		return nil, fmt.Errorf("service: Log is required")
 	}

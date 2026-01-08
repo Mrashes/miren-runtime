@@ -24,7 +24,7 @@ import (
 
 // newServiceController creates a ServiceController from TestDeps for testing.
 func newServiceController(d *testutils.TestDeps) (*ServiceController, error) {
-	cfg := ServiceControllerConfig{
+	cfg := ServiceControllerDeps{
 		Log:             d.Log,
 		EAC:             d.EAC,
 		IPv4Routable:    d.IPv4Routable,
@@ -40,7 +40,7 @@ func newSandboxController(d *testutils.TestDeps) (*sandbox.SandboxController, er
 	sbMetrics.Log = d.Log
 	sbMetrics.CPUUsage = d.CPU
 	sbMetrics.MemUsage = d.Mem
-	cfg := sandbox.SandboxControllerConfig{
+	cfg := sandbox.SandboxControllerDeps{
 		Log:            d.Log,
 		CC:             d.CC,
 		EAC:            d.EAC,

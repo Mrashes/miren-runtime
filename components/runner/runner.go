@@ -322,7 +322,7 @@ func (r *Runner) SetupControllers(
 	cm := controller.NewControllerManager()
 
 	// Create sandbox controller with explicit dependencies
-	sbc, err := sandbox.NewSandboxController(sandbox.SandboxControllerConfig{
+	sbc, err := sandbox.NewSandboxController(sandbox.SandboxControllerDeps{
 		Log:            r.Log,
 		CC:             r.deps.CC,
 		EAC:            eas,
@@ -348,7 +348,7 @@ func (r *Runner) SetupControllers(
 	rs.ExposeValue("dev.miren.runtime/sandbox.metrics", metric_v1alpha.AdaptSandboxMetrics(sbc.Metrics))
 
 	// Create service controller with explicit dependencies
-	serviceController, err := service.NewServiceController(service.ServiceControllerConfig{
+	serviceController, err := service.NewServiceController(service.ServiceControllerDeps{
 		Log:             r.Log,
 		EAC:             eas,
 		IPv4Routable:    r.deps.IPv4Routable,

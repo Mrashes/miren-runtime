@@ -40,7 +40,7 @@ func newSandboxController(d *testutils.TestDeps) (*SandboxController, error) {
 	sbMetrics.Log = d.Log
 	sbMetrics.CPUUsage = d.CPU
 	sbMetrics.MemUsage = d.Mem
-	cfg := SandboxControllerConfig{
+	cfg := SandboxControllerDeps{
 		Log:            d.Log,
 		CC:             d.CC,
 		EAC:            d.EAC,

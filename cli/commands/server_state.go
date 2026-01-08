@@ -62,27 +62,13 @@ type ServerState struct {
 
 // NewServerState creates a new ServerState with default values.
 func NewServerState() *ServerState {
-	// Read VictoriaLogs address from environment or use default
-	victoriaLogsAddr := os.Getenv("VICTORIALOGS_ADDR")
-	if victoriaLogsAddr == "" {
-		victoriaLogsAddr = "localhost:9428"
-	}
-
-	// Read VictoriaMetrics address from environment or use default
-	victoriaMetricsAddr := os.Getenv("VICTORIAMETRICS_ADDR")
-	if victoriaMetricsAddr == "" {
-		victoriaMetricsAddr = "localhost:8428"
-	}
-
 	return &ServerState{
 		ContainerdSocket:       containerdx.DefaultSocket,
 		Namespace:              "miren",
 		Bridge:                 "rt0",
 		DataPath:               "/var/lib/miren",
 		Tempdir:                os.TempDir(),
-		VictorialogsAddress:    victoriaLogsAddr,
 		VictorialogsTimeout:    30 * time.Second,
-		VictoriametricsAddress: victoriaMetricsAddr,
 		VictoriametricsTimeout: 30 * time.Second,
 	}
 }

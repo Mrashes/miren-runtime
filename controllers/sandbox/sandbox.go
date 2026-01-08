@@ -57,8 +57,8 @@ type containerPorts struct {
 	Ports []observability.BoundPort
 }
 
-// SandboxControllerConfig holds required dependencies for SandboxController.
-type SandboxControllerConfig struct {
+// SandboxControllerDeps holds required dependencies for SandboxController.
+type SandboxControllerDeps struct {
 	Log       *slog.Logger
 	CC        *containerd.Client
 	EAC       *entityserver_v1alpha.EntityAccessClient
@@ -123,7 +123,7 @@ type SandboxController struct {
 }
 
 // NewSandboxController creates a new SandboxController with validated dependencies.
-func NewSandboxController(cfg SandboxControllerConfig) (*SandboxController, error) {
+func NewSandboxController(cfg SandboxControllerDeps) (*SandboxController, error) {
 	if cfg.Log == nil {
 		return nil, fmt.Errorf("sandbox: Log is required")
 	}
@@ -135,6 +135,9 @@ func NewSandboxController(cfg SandboxControllerConfig) (*SandboxController, erro
 	}
 	if cfg.Namespace == "" {
 		return nil, fmt.Errorf("sandbox: Namespace is required")
+	}
+	if cfg.NodeId == "" {
+		return nil, fmt.Errorf("sandbox: NodeId is required")
 	}
 	if cfg.Subnet == nil {
 		return nil, fmt.Errorf("sandbox: Subnet is required")

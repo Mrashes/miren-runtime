@@ -319,8 +319,8 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 		}()
 	} else {
 		if cfg.Victorialogs.GetAddress() == "" {
-			ctx.Log.Error("victorialogs address specified but embedded victorialogs not started", "address", cfg.Victorialogs.GetAddress())
-			return fmt.Errorf("victorialogs address specified but embedded victorialogs not started")
+			ctx.Log.Error("victorialogs address not specified and embedded victorialogs not started")
+			return fmt.Errorf("victorialogs address not specified and embedded victorialogs not started")
 		}
 
 		// Update ServerState with external VictoriaLogs address
@@ -373,8 +373,8 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 		}()
 	} else {
 		if cfg.Victoriametrics.GetAddress() == "" {
-			ctx.Log.Error("victoriametrics address specified but embedded victorialogs not started", "address", cfg.Victorialogs.GetAddress())
-			return fmt.Errorf("victoriametrics address specified but embedded victorialogs not started")
+			ctx.Log.Error("victoriametrics address not specified and embedded victoriametrics not started")
+			return fmt.Errorf("victoriametrics address not specified and embedded victoriametrics not started")
 		}
 
 		// Update ServerState with external VictoriaMetrics address
