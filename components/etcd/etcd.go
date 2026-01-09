@@ -7,18 +7,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
-	"strconv"
-	"sync"
-	"time"
 
 	containerd "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/pkg/namespaces"
 	"github.com/containerd/containerd/v2/pkg/oci"
 	"github.com/opencontainers/runtime-spec/specs-go"
-	"golang.org/x/sys/unix"
+	"miren.dev/runtime/components/base"
 	"miren.dev/runtime/pkg/imagerefs"
 	"miren.dev/runtime/pkg/slogout"
 )
@@ -46,41 +42,44 @@ type EtcdConfig struct {
 }
 
 type EtcdComponent struct {
-	Log *slog.Logger
-	CC  *containerd.Client
+	*base.BaseComponent
 
-	Namespace string
-	DataPath  string
-
-	mu         sync.Mutex
-	container  containerd.Container
-	task       containerd.Task
-	running    bool
 	clientPort int
 	peerPort   int
-
-	// For exit monitoring and restart
-	stopMonitor   chan struct{}
-	monitorDone   chan struct{}
-	config        EtcdConfig
-	restartCount  int
-	lastRestartAt time.Time
+	config     EtcdConfig
 }
 
 func NewEtcdComponent(log *slog.Logger, cc *containerd.Client, namespace, dataPath string) *EtcdComponent {
-	return &EtcdComponent{
-		Log:       log,
-		CC:        cc,
-		Namespace: namespace,
-		DataPath:  dataPath,
+	bc := base.NewBaseComponent(log, cc, namespace, dataPath, "etcd")
+	// etcd uses 1s dial timeout and 1s interval for readiness checks
+	bc.ReadyConfig.DialTimeout = 1e9 // 1 second in nanoseconds
+	bc.ReadyConfig.Interval = 1e9    // 1 second in nanoseconds
+
+	e := &EtcdComponent{
+		BaseComponent: bc,
 	}
+
+	// Set up callbacks for the base component
+	bc.CreateTask = e.createTask
+	bc.GetReadyPort = e.getReadyPort
+
+	return e
+}
+
+func (e *EtcdComponent) createTask(ctx context.Context, container containerd.Container) (containerd.Task, error) {
+	return container.NewTask(ctx, slogout.WithLogger(e.Log, "etcd",
+		slogout.WithJSONParsing(), slogout.WithMaxLevel(slog.LevelInfo)))
+}
+
+func (e *EtcdComponent) getReadyPort() int {
+	return e.clientPort
 }
 
 func (e *EtcdComponent) Start(ctx context.Context, config EtcdConfig) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.LockOp()
+	defer e.UnlockOp()
 
-	if e.running {
+	if e.IsRunning() {
 		return fmt.Errorf("etcd component already running")
 	}
 
@@ -109,7 +108,7 @@ func (e *EtcdComponent) Start(ctx context.Context, config EtcdConfig) error {
 		}
 		// If restart failed (e.g., port mismatch), try deleting the container and creating fresh
 		e.Log.Warn("restart of existing container failed, recreating", "error", err)
-		e.cleanupExistingContainer(ctx, existingContainer)
+		e.CleanupExistingContainer(ctx, existingContainer)
 	}
 
 	// Set defaults
@@ -135,6 +134,7 @@ func (e *EtcdComponent) Start(ctx context.Context, config EtcdConfig) error {
 	// Store ports for later use
 	e.clientPort = config.ClientPort
 	e.peerPort = config.PeerPort
+	e.config = config
 
 	e.Log.Info("starting etcd with host networking", "client_port", config.ClientPort, "peer_port", config.PeerPort)
 
@@ -144,11 +144,10 @@ func (e *EtcdComponent) Start(ctx context.Context, config EtcdConfig) error {
 		return fmt.Errorf("failed to create etcd container: %w", err)
 	}
 
-	e.container = container
+	e.SetContainer(container)
 
 	// Start container with structured logging for JSON output
-	task, err := container.NewTask(ctx, slogout.WithLogger(e.Log, "etcd",
-		slogout.WithJSONParsing(), slogout.WithMaxLevel(slog.LevelInfo)))
+	task, err := e.createTask(ctx, container)
 	if err != nil {
 		container.Delete(ctx, containerd.WithSnapshotCleanup)
 		return fmt.Errorf("failed to create etcd task: %w", err)
@@ -161,172 +160,36 @@ func (e *EtcdComponent) Start(ctx context.Context, config EtcdConfig) error {
 		return fmt.Errorf("failed to start etcd task: %w", err)
 	}
 
-	e.task = task
-	e.running = true
-	e.config = config
+	e.SetTask(task)
 	e.Log.Info("etcd server started", "container_id", container.ID(), "client_port", config.ClientPort)
 
 	// Wait for etcd to be ready before returning
-	if err := e.waitForReady(ctx, "localhost", config.ClientPort); err != nil {
+	if err := e.WaitForReady(ctx, "localhost", config.ClientPort); err != nil {
 		e.Log.Warn("etcd readiness check failed, continuing anyway", "error", err)
 	}
 
 	// Start monitoring for unexpected exits
-	e.startExitMonitor(ctx)
+	e.StartExitMonitor(ctx)
 
 	return nil
-}
-
-func (e *EtcdComponent) Stop(ctx context.Context) error {
-	e.mu.Lock()
-
-	if !e.running {
-		e.mu.Unlock()
-		return nil
-	}
-
-	// Stop the exit monitor first
-	if e.stopMonitor != nil {
-		close(e.stopMonitor)
-		e.stopMonitor = nil
-	}
-	monitorDone := e.monitorDone
-	e.mu.Unlock()
-
-	// Wait for monitor to finish (outside the lock)
-	if monitorDone != nil {
-		<-monitorDone
-	}
-
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	ctx = namespaces.WithNamespace(ctx, e.Namespace)
-
-	if e.task != nil {
-		e.stopTask(ctx, e.task)
-		e.task = nil
-	}
-
-	if e.container != nil {
-		// Delete the container with retry logic
-		e.deleteContainerWithRetry(ctx)
-		e.container = nil
-	}
-
-	e.running = false
-	e.Log.Info("etcd server stopped")
-
-	return nil
-}
-
-func (e *EtcdComponent) stopTask(ctx context.Context, task containerd.Task) {
-	// Create a timeout context for graceful shutdown
-	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	// First attempt: graceful shutdown with SIGTERM
-	if err := task.Kill(shutdownCtx, unix.SIGTERM); err != nil {
-		e.Log.Error("failed to send SIGTERM to etcd task", "error", err)
-		return
-	}
-
-	// Wait for graceful exit with timeout
-	status, err := task.Wait(shutdownCtx)
-	if err == nil {
-		select {
-		case es := <-status:
-			e.Log.Info("etcd task exited", "code", es.ExitCode())
-
-		case <-shutdownCtx.Done():
-			// Timeout reached, escalate to SIGKILL
-			e.Log.Warn("etcd task did not exit gracefully, sending SIGKILL")
-			killCtx, killCancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer killCancel()
-
-			if err := task.Kill(killCtx, unix.SIGKILL); err != nil {
-				e.Log.Error("failed to send SIGKILL to etcd task", "error", err)
-			} else {
-				// Wait for forced exit
-				if _, waitErr := task.Wait(killCtx); waitErr != nil {
-					e.Log.Error("etcd task wait after SIGKILL failed", "error", waitErr)
-				}
-			}
-		}
-	}
-
-	// Delete the task
-	deleteCtx, deleteCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer deleteCancel()
-
-	if _, err := task.Delete(deleteCtx); err != nil {
-		e.Log.Error("failed to delete etcd task", "error", err)
-	}
-}
-
-func (e *EtcdComponent) deleteContainerWithRetry(ctx context.Context) {
-	const maxRetries = 3
-	const retryDelay = 2 * time.Second
-
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		deleteCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		err := e.container.Delete(deleteCtx, containerd.WithSnapshotCleanup)
-		cancel()
-
-		if err == nil {
-			e.Log.Info("etcd container deleted successfully")
-			return
-		}
-
-		e.Log.Error("failed to delete etcd container", "error", err, "attempt", attempt, "max_retries", maxRetries)
-
-		if attempt < maxRetries {
-			time.Sleep(retryDelay)
-		}
-	}
-
-	e.Log.Error("failed to delete etcd container after all retries, potential snapshot leak")
 }
 
 func (e *EtcdComponent) ClientEndpoint() string {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if !e.running {
+	if !e.IsRunning() {
 		return ""
 	}
 	return fmt.Sprintf("http://localhost:%d", e.clientPort)
 }
 
 func (e *EtcdComponent) PeerEndpoint() string {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if !e.running {
+	if !e.IsRunning() {
 		return ""
 	}
 	return fmt.Sprintf("http://localhost:%d", e.peerPort)
 }
 
-func (e *EtcdComponent) IsRunning() bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.running
-}
-
-func (e *EtcdComponent) cleanupExistingContainer(ctx context.Context, container containerd.Container) {
-	task, err := container.Task(ctx, nil)
-	if err == nil {
-		e.stopTask(ctx, task)
-	}
-
-	deleteCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	if err := container.Delete(deleteCtx, containerd.WithSnapshotCleanup); err != nil {
-		e.Log.Warn("failed to delete existing container during cleanup", "error", err)
-	}
-}
-
 func (e *EtcdComponent) restartExistingContainer(ctx context.Context, container containerd.Container, config EtcdConfig) error {
-	e.container = container
+	e.SetContainer(container)
 	e.config = config
 
 	// Store ports for later use
@@ -342,12 +205,11 @@ func (e *EtcdComponent) restartExistingContainer(ctx context.Context, container 
 			e.Log.Warn("failed to get task status", "error", err)
 		} else if status.Status == containerd.Running {
 			e.Log.Info("etcd container is already running")
-			e.task = task
-			e.running = true
-			if err := e.waitForReady(ctx, "localhost", config.ClientPort); err != nil {
+			e.SetTask(task)
+			if err := e.WaitForReady(ctx, "localhost", config.ClientPort); err != nil {
 				e.Log.Warn("etcd readiness check failed, continuing anyway", "error", err)
 			}
-			e.startExitMonitor(ctx)
+			e.StartExitMonitor(ctx)
 			return nil
 		}
 
@@ -355,13 +217,12 @@ func (e *EtcdComponent) restartExistingContainer(ctx context.Context, container 
 		e.Log.Info("starting existing etcd task")
 		err = task.Start(ctx)
 		if err == nil {
-			e.task = task
-			e.running = true
+			e.SetTask(task)
 			e.Log.Info("etcd server restarted", "container_id", container.ID(), "client_port", config.ClientPort)
-			if err := e.waitForReady(ctx, "localhost", config.ClientPort); err != nil {
+			if err := e.WaitForReady(ctx, "localhost", config.ClientPort); err != nil {
 				e.Log.Warn("etcd readiness check failed, continuing anyway", "error", err)
 			}
-			e.startExitMonitor(ctx)
+			e.StartExitMonitor(ctx)
 			return nil
 		}
 
@@ -372,8 +233,7 @@ func (e *EtcdComponent) restartExistingContainer(ctx context.Context, container 
 
 	// Create and start new task with structured logging for JSON output
 	e.Log.Info("creating new task for existing container")
-	task, err = container.NewTask(ctx, slogout.WithLogger(e.Log, "etcd",
-		slogout.WithJSONParsing(), slogout.WithMaxLevel(slog.LevelInfo)))
+	task, err = e.createTask(ctx, container)
 	if err != nil {
 		return fmt.Errorf("failed to create new task for existing container: %w", err)
 	}
@@ -384,17 +244,16 @@ func (e *EtcdComponent) restartExistingContainer(ctx context.Context, container 
 		return fmt.Errorf("failed to start new task for existing container: %w", err)
 	}
 
-	e.task = task
-	e.running = true
+	e.SetTask(task)
 	e.Log.Info("etcd server restarted with new task", "container_id", container.ID(), "client_port", config.ClientPort)
 
 	// Wait for etcd to be ready
-	if err := e.waitForReady(ctx, "localhost", config.ClientPort); err != nil {
+	if err := e.WaitForReady(ctx, "localhost", config.ClientPort); err != nil {
 		e.Log.Warn("etcd readiness check failed, continuing anyway", "error", err)
 	}
 
 	// Start monitoring for unexpected exits
-	e.startExitMonitor(ctx)
+	e.StartExitMonitor(ctx)
 
 	return nil
 }
@@ -452,153 +311,4 @@ func (e *EtcdComponent) createContainer(ctx context.Context, image containerd.Im
 	}
 
 	return container, nil
-}
-
-func (e *EtcdComponent) waitForReady(ctx context.Context, host string, port int) error {
-	endpoint := net.JoinHostPort(host, strconv.Itoa(port))
-
-	for i := 0; i < 30; i++ {
-		conn, err := net.DialTimeout("tcp", endpoint, 1*time.Second)
-		if err == nil {
-			conn.Close()
-			e.Log.Info("etcd server is ready", "endpoint", endpoint)
-			return nil
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(1 * time.Second):
-			continue
-		}
-	}
-
-	e.Log.Warn("etcd server readiness check timed out", "endpoint", endpoint)
-	return fmt.Errorf("etcd readiness check timed out after 30 seconds")
-}
-
-func (e *EtcdComponent) startExitMonitor(ctx context.Context) {
-	e.stopMonitor = make(chan struct{})
-	e.monitorDone = make(chan struct{})
-
-	ctx = namespaces.WithNamespace(ctx, e.Namespace)
-
-	exitCh, err := e.task.Wait(ctx)
-	if err != nil {
-		e.Log.Error("failed to get exit channel for etcd task", "error", err)
-		close(e.monitorDone)
-		return
-	}
-
-	go e.monitorExit(ctx, exitCh)
-}
-
-func (e *EtcdComponent) monitorExit(ctx context.Context, exitCh <-chan containerd.ExitStatus) {
-	defer close(e.monitorDone)
-
-	for {
-		select {
-		case <-e.stopMonitor:
-			e.Log.Debug("etcd exit monitor stopped")
-			return
-
-		case exitStatus := <-exitCh:
-			e.Log.Warn("etcd process exited unexpectedly",
-				"exit_code", exitStatus.ExitCode(),
-				"exit_time", exitStatus.ExitTime(),
-			)
-
-			// Attempt restart
-			if err := e.handleRestart(ctx); err != nil {
-				e.Log.Error("failed to restart etcd", "error", err)
-				return
-			}
-
-			// Get new exit channel for the restarted task
-			e.mu.Lock()
-			if e.task == nil {
-				e.mu.Unlock()
-				return
-			}
-			newExitCh, err := e.task.Wait(ctx)
-			e.mu.Unlock()
-			if err != nil {
-				e.Log.Error("failed to get exit channel after restart", "error", err)
-				return
-			}
-			exitCh = newExitCh
-		}
-	}
-}
-
-func (e *EtcdComponent) handleRestart(ctx context.Context) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	// Apply exponential backoff for restarts
-	const maxRestarts = 5
-	const backoffBase = 2 * time.Second
-	const backoffMax = 60 * time.Second
-	const resetWindow = 5 * time.Minute
-
-	// Reset restart count if enough time has passed
-	if time.Since(e.lastRestartAt) > resetWindow {
-		e.restartCount = 0
-	}
-
-	e.restartCount++
-	if e.restartCount > maxRestarts {
-		return fmt.Errorf("exceeded maximum restart attempts (%d)", maxRestarts)
-	}
-
-	// Calculate backoff
-	backoff := backoffBase * time.Duration(1<<(e.restartCount-1))
-	if backoff > backoffMax {
-		backoff = backoffMax
-	}
-
-	e.Log.Info("restarting etcd after backoff",
-		"restart_count", e.restartCount,
-		"backoff", backoff,
-	)
-
-	select {
-	case <-time.After(backoff):
-	case <-e.stopMonitor:
-		return fmt.Errorf("restart cancelled")
-	}
-
-	e.lastRestartAt = time.Now()
-
-	ctx = namespaces.WithNamespace(ctx, e.Namespace)
-
-	// Clean up old task
-	if e.task != nil {
-		deleteCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		e.task.Delete(deleteCtx)
-		cancel()
-		e.task = nil
-	}
-
-	// Create and start new task
-	task, err := e.container.NewTask(ctx, slogout.WithLogger(e.Log, "etcd",
-		slogout.WithJSONParsing(), slogout.WithMaxLevel(slog.LevelInfo)))
-	if err != nil {
-		return fmt.Errorf("failed to create new etcd task: %w", err)
-	}
-
-	if err := task.Start(ctx); err != nil {
-		task.Delete(ctx)
-		return fmt.Errorf("failed to start new etcd task: %w", err)
-	}
-
-	e.task = task
-
-	// Wait for etcd to be ready
-	if err := e.waitForReady(ctx, "localhost", e.config.ClientPort); err != nil {
-		e.Log.Warn("etcd readiness check failed after restart", "error", err)
-	}
-
-	e.Log.Info("etcd restarted successfully", "restart_count", e.restartCount)
-	return nil
 }

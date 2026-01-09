@@ -6,17 +6,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
-	"sync"
-	"time"
 
 	containerd "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/pkg/namespaces"
 	"github.com/containerd/containerd/v2/pkg/oci"
 	"github.com/opencontainers/runtime-spec/specs-go"
-	"golang.org/x/sys/unix"
+	"miren.dev/runtime/components/base"
 	"miren.dev/runtime/pkg/imagerefs"
 	"miren.dev/runtime/pkg/slogout"
 )
@@ -37,40 +34,39 @@ type VictoriaLogsConfig struct {
 }
 
 type VictoriaLogsComponent struct {
-	Log *slog.Logger
-	CC  *containerd.Client
+	*base.BaseComponent
 
-	Namespace string
-	DataPath  string
-
-	mu        sync.Mutex
-	container containerd.Container
-	task      containerd.Task
-	running   bool
-	httpPort  int
-
-	// For exit monitoring and restart
-	stopMonitor   chan struct{}
-	monitorDone   chan struct{}
-	config        VictoriaLogsConfig
-	restartCount  int
-	lastRestartAt time.Time
+	httpPort int
+	config   VictoriaLogsConfig
 }
 
 func NewVictoriaLogsComponent(log *slog.Logger, cc *containerd.Client, namespace, dataPath string) *VictoriaLogsComponent {
-	return &VictoriaLogsComponent{
-		Log:       log,
-		CC:        cc,
-		Namespace: namespace,
-		DataPath:  dataPath,
+	bc := base.NewBaseComponent(log, cc, namespace, dataPath, "victorialogs")
+
+	c := &VictoriaLogsComponent{
+		BaseComponent: bc,
 	}
+
+	// Set up callbacks for the base component
+	bc.CreateTask = c.createTask
+	bc.GetReadyPort = c.getReadyPort
+
+	return c
+}
+
+func (c *VictoriaLogsComponent) createTask(ctx context.Context, container containerd.Container) (containerd.Task, error) {
+	return container.NewTask(ctx, slogout.WithLogger(c.Log, "victorialogs"))
+}
+
+func (c *VictoriaLogsComponent) getReadyPort() int {
+	return c.httpPort
 }
 
 func (c *VictoriaLogsComponent) Start(ctx context.Context, config VictoriaLogsConfig) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.LockOp()
+	defer c.UnlockOp()
 
-	if c.running {
+	if c.IsRunning() {
 		return fmt.Errorf("victorialogs component already running")
 	}
 
@@ -98,6 +94,7 @@ func (c *VictoriaLogsComponent) Start(ctx context.Context, config VictoriaLogsCo
 	}
 
 	c.httpPort = config.HTTPPort
+	c.config = config
 
 	// Check if container already exists
 	existingContainer, err := c.CC.LoadContainer(ctx, victoriaLogsContainerName)
@@ -109,7 +106,7 @@ func (c *VictoriaLogsComponent) Start(ctx context.Context, config VictoriaLogsCo
 		}
 		// If restart failed (e.g., port mismatch), try deleting the container and creating fresh
 		c.Log.Warn("restart of existing container failed, recreating", "error", err)
-		c.cleanupExistingContainer(ctx, existingContainer)
+		c.CleanupExistingContainer(ctx, existingContainer)
 	}
 
 	c.Log.Info("starting victorialogs with host networking", "http_port", config.HTTPPort)
@@ -120,10 +117,10 @@ func (c *VictoriaLogsComponent) Start(ctx context.Context, config VictoriaLogsCo
 		return fmt.Errorf("failed to create victorialogs container: %w", err)
 	}
 
-	c.container = container
+	c.SetContainer(container)
 
 	// Start container with structured logging
-	task, err := container.NewTask(ctx, slogout.WithLogger(c.Log, "victorialogs"))
+	task, err := c.createTask(ctx, container)
 	if err != nil {
 		container.Delete(ctx, containerd.WithSnapshotCleanup)
 		return fmt.Errorf("failed to create victorialogs task: %w", err)
@@ -137,157 +134,30 @@ func (c *VictoriaLogsComponent) Start(ctx context.Context, config VictoriaLogsCo
 	}
 
 	// Wait for VictoriaLogs to be ready
-	if err := c.waitForReady(ctx, "localhost", config.HTTPPort); err != nil {
+	if err := c.WaitForReady(ctx, "localhost", config.HTTPPort); err != nil {
 		task.Delete(ctx)
 		container.Delete(ctx, containerd.WithSnapshotCleanup)
 		return err
 	}
 
-	c.task = task
-	c.running = true
-	c.config = config
+	c.SetTask(task)
 	c.Log.Info("victorialogs server started", "container_id", container.ID(), "http_port", config.HTTPPort)
 
 	// Start monitoring for unexpected exits
-	c.startExitMonitor(ctx)
+	c.StartExitMonitor(ctx)
 
 	return nil
-}
-
-func (c *VictoriaLogsComponent) Stop(ctx context.Context) error {
-	c.mu.Lock()
-
-	if !c.running {
-		c.mu.Unlock()
-		return nil
-	}
-
-	// Stop the exit monitor first
-	if c.stopMonitor != nil {
-		close(c.stopMonitor)
-		c.stopMonitor = nil
-	}
-	monitorDone := c.monitorDone
-	c.mu.Unlock()
-
-	// Wait for monitor to finish (outside the lock)
-	if monitorDone != nil {
-		<-monitorDone
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	ctx = namespaces.WithNamespace(ctx, c.Namespace)
-
-	if c.task != nil {
-		c.stopTask(ctx, c.task)
-		c.task = nil
-	}
-
-	if c.container != nil {
-		c.deleteContainerWithRetry(ctx)
-		c.container = nil
-	}
-
-	c.running = false
-	c.Log.Info("victorialogs server stopped")
-
-	return nil
-}
-
-func (c *VictoriaLogsComponent) stopTask(ctx context.Context, task containerd.Task) {
-	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	if err := task.Kill(shutdownCtx, unix.SIGTERM); err != nil {
-		c.Log.Error("failed to send SIGTERM to victorialogs task", "error", err)
-		return
-	}
-
-	status, err := task.Wait(shutdownCtx)
-	if err == nil {
-		select {
-		case es := <-status:
-			c.Log.Info("victorialogs task exited", "code", es.ExitCode())
-
-		case <-shutdownCtx.Done():
-			c.Log.Warn("victorialogs task did not exit gracefully, sending SIGKILL")
-			killCtx, killCancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer killCancel()
-
-			if err := task.Kill(killCtx, unix.SIGKILL); err != nil {
-				c.Log.Error("failed to send SIGKILL to victorialogs task", "error", err)
-			} else {
-				if _, waitErr := task.Wait(killCtx); waitErr != nil {
-					c.Log.Error("victorialogs task wait after SIGKILL failed", "error", waitErr)
-				}
-			}
-		}
-	}
-
-	deleteCtx, deleteCancel := context.WithTimeout(ctx, 10*time.Second)
-	defer deleteCancel()
-
-	if _, err := task.Delete(deleteCtx); err != nil {
-		c.Log.Error("failed to delete victorialogs task", "error", err)
-	}
-}
-
-func (c *VictoriaLogsComponent) deleteContainerWithRetry(ctx context.Context) {
-	const maxRetries = 3
-	const retryDelay = 2 * time.Second
-
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		deleteCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		err := c.container.Delete(deleteCtx, containerd.WithSnapshotCleanup)
-		cancel()
-
-		if err == nil {
-			c.Log.Info("victorialogs container deleted successfully")
-			return
-		}
-
-		c.Log.Error("failed to delete victorialogs container", "error", err, "attempt", attempt, "max_retries", maxRetries)
-
-		if attempt < maxRetries {
-			time.Sleep(retryDelay)
-		}
-	}
-
-	c.Log.Error("failed to delete victorialogs container after all retries, potential snapshot leak")
 }
 
 func (c *VictoriaLogsComponent) HTTPEndpoint() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.running {
+	if !c.IsRunning() {
 		return ""
 	}
 	return fmt.Sprintf("localhost:%d", c.httpPort)
 }
 
-func (c *VictoriaLogsComponent) IsRunning() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.running
-}
-
-func (c *VictoriaLogsComponent) cleanupExistingContainer(ctx context.Context, container containerd.Container) {
-	task, err := container.Task(ctx, nil)
-	if err == nil {
-		c.stopTask(ctx, task)
-	}
-
-	deleteCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	if err := container.Delete(deleteCtx, containerd.WithSnapshotCleanup); err != nil {
-		c.Log.Warn("failed to delete existing container during cleanup", "error", err)
-	}
-}
-
 func (c *VictoriaLogsComponent) restartExistingContainer(ctx context.Context, container containerd.Container, config VictoriaLogsConfig) error {
-	c.container = container
+	c.SetContainer(container)
 	c.httpPort = config.HTTPPort
 	c.config = config
 
@@ -298,25 +168,23 @@ func (c *VictoriaLogsComponent) restartExistingContainer(ctx context.Context, co
 			c.Log.Warn("failed to get task status", "error", err)
 		} else if status.Status == containerd.Running {
 			c.Log.Info("victorialogs container is already running")
-			c.task = task
-			c.running = true
-			if err := c.waitForReady(ctx, "localhost", config.HTTPPort); err != nil {
+			c.SetTask(task)
+			if err := c.WaitForReady(ctx, "localhost", config.HTTPPort); err != nil {
 				return err
 			}
-			c.startExitMonitor(ctx)
+			c.StartExitMonitor(ctx)
 			return nil
 		}
 
 		c.Log.Info("starting existing victorialogs task")
 		err = task.Start(ctx)
 		if err == nil {
-			c.task = task
-			c.running = true
+			c.SetTask(task)
 			c.Log.Info("victorialogs server restarted", "container_id", container.ID(), "http_port", config.HTTPPort)
-			if err := c.waitForReady(ctx, "localhost", config.HTTPPort); err != nil {
+			if err := c.WaitForReady(ctx, "localhost", config.HTTPPort); err != nil {
 				return err
 			}
-			c.startExitMonitor(ctx)
+			c.StartExitMonitor(ctx)
 			return nil
 		}
 
@@ -325,7 +193,7 @@ func (c *VictoriaLogsComponent) restartExistingContainer(ctx context.Context, co
 	}
 
 	c.Log.Info("creating new task for existing container")
-	task, err = container.NewTask(ctx, slogout.WithLogger(c.Log, "victorialogs"))
+	task, err = c.createTask(ctx, container)
 	if err != nil {
 		return fmt.Errorf("failed to create new task for existing container: %w", err)
 	}
@@ -336,17 +204,16 @@ func (c *VictoriaLogsComponent) restartExistingContainer(ctx context.Context, co
 		return fmt.Errorf("failed to start new task for existing container: %w", err)
 	}
 
-	if err := c.waitForReady(ctx, "localhost", config.HTTPPort); err != nil {
+	if err := c.WaitForReady(ctx, "localhost", config.HTTPPort); err != nil {
 		task.Delete(ctx)
 		return err
 	}
 
-	c.task = task
-	c.running = true
+	c.SetTask(task)
 	c.Log.Info("victorialogs server restarted with new task", "container_id", container.ID(), "http_port", config.HTTPPort)
 
 	// Start monitoring for unexpected exits
-	c.startExitMonitor(ctx)
+	c.StartExitMonitor(ctx)
 
 	return nil
 }
@@ -389,152 +256,4 @@ func (c *VictoriaLogsComponent) createContainer(ctx context.Context, image conta
 	}
 
 	return container, nil
-}
-
-func (c *VictoriaLogsComponent) waitForReady(ctx context.Context, host string, port int) error {
-	endpoint := net.JoinHostPort(host, fmt.Sprintf("%d", port))
-
-	for i := 0; i < 30; i++ {
-		conn, err := net.DialTimeout("tcp", endpoint, 2*time.Second)
-		if err == nil {
-			conn.Close()
-			c.Log.Info("victorialogs server is ready", "endpoint", endpoint)
-			return nil
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(2 * time.Second):
-			continue
-		}
-	}
-
-	c.Log.Warn("victorialogs server readiness check timed out", "endpoint", endpoint)
-	return fmt.Errorf("victorialogs readiness check timed out after 30 seconds")
-}
-
-func (c *VictoriaLogsComponent) startExitMonitor(ctx context.Context) {
-	c.stopMonitor = make(chan struct{})
-	c.monitorDone = make(chan struct{})
-
-	ctx = namespaces.WithNamespace(ctx, c.Namespace)
-
-	exitCh, err := c.task.Wait(ctx)
-	if err != nil {
-		c.Log.Error("failed to get exit channel for victorialogs task", "error", err)
-		close(c.monitorDone)
-		return
-	}
-
-	go c.monitorExit(ctx, exitCh)
-}
-
-func (c *VictoriaLogsComponent) monitorExit(ctx context.Context, exitCh <-chan containerd.ExitStatus) {
-	defer close(c.monitorDone)
-
-	for {
-		select {
-		case <-c.stopMonitor:
-			c.Log.Debug("victorialogs exit monitor stopped")
-			return
-
-		case exitStatus := <-exitCh:
-			c.Log.Warn("victorialogs process exited unexpectedly",
-				"exit_code", exitStatus.ExitCode(),
-				"exit_time", exitStatus.ExitTime(),
-			)
-
-			// Attempt restart
-			if err := c.handleRestart(ctx); err != nil {
-				c.Log.Error("failed to restart victorialogs", "error", err)
-				return
-			}
-
-			// Get new exit channel for the restarted task
-			c.mu.Lock()
-			if c.task == nil {
-				c.mu.Unlock()
-				return
-			}
-			newExitCh, err := c.task.Wait(ctx)
-			c.mu.Unlock()
-			if err != nil {
-				c.Log.Error("failed to get exit channel after restart", "error", err)
-				return
-			}
-			exitCh = newExitCh
-		}
-	}
-}
-
-func (c *VictoriaLogsComponent) handleRestart(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Apply exponential backoff for restarts
-	const maxRestarts = 5
-	const backoffBase = 2 * time.Second
-	const backoffMax = 60 * time.Second
-	const resetWindow = 5 * time.Minute
-
-	// Reset restart count if enough time has passed
-	if time.Since(c.lastRestartAt) > resetWindow {
-		c.restartCount = 0
-	}
-
-	c.restartCount++
-	if c.restartCount > maxRestarts {
-		return fmt.Errorf("exceeded maximum restart attempts (%d)", maxRestarts)
-	}
-
-	// Calculate backoff
-	backoff := backoffBase * time.Duration(1<<(c.restartCount-1))
-	if backoff > backoffMax {
-		backoff = backoffMax
-	}
-
-	c.Log.Info("restarting victorialogs after backoff",
-		"restart_count", c.restartCount,
-		"backoff", backoff,
-	)
-
-	select {
-	case <-time.After(backoff):
-	case <-c.stopMonitor:
-		return fmt.Errorf("restart cancelled")
-	}
-
-	c.lastRestartAt = time.Now()
-
-	ctx = namespaces.WithNamespace(ctx, c.Namespace)
-
-	// Clean up old task
-	if c.task != nil {
-		deleteCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		c.task.Delete(deleteCtx)
-		cancel()
-		c.task = nil
-	}
-
-	// Create and start new task
-	task, err := c.container.NewTask(ctx, slogout.WithLogger(c.Log, "victorialogs"))
-	if err != nil {
-		return fmt.Errorf("failed to create new victorialogs task: %w", err)
-	}
-
-	if err := task.Start(ctx); err != nil {
-		task.Delete(ctx)
-		return fmt.Errorf("failed to start new victorialogs task: %w", err)
-	}
-
-	c.task = task
-
-	// Wait for victorialogs to be ready
-	if err := c.waitForReady(ctx, "localhost", c.config.HTTPPort); err != nil {
-		c.Log.Warn("victorialogs readiness check failed after restart", "error", err)
-	}
-
-	c.Log.Info("victorialogs restarted successfully", "restart_count", c.restartCount)
-	return nil
 }
