@@ -8,11 +8,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"sort"
 	"strings"
 	"time"
-
-	"github.com/shirou/gopsutil/v4/process"
 )
 
 const (
@@ -202,87 +199,15 @@ func gatherSystemInfo() []byte {
 	return buf.Bytes()
 }
 
-type processInfo struct {
-	pid     int32
-	name    string
-	state   string
-	ppid    int32
-	rssKB   uint64
-	cpuPct  float64
-	cmdline string
-}
-
 func gatherProcesses() ([]byte, error) {
-	procs, err := process.Processes()
+	// Use ps command which has a more efficient CPU percent calculator than
+	// iterating processes via /proc and calling CPUPercent() on each.
+	// Format: PID, COMM (name), STATE, PPID, %CPU, RSS (in KB), ARGS (cmdline)
+	output, err := runWithTimeout(cmdTimeoutShort, "ps", "-eo", "pid,comm,state,ppid,pcpu,rss,args", "--sort=pid")
 	if err != nil {
-		return nil, fmt.Errorf("listing processes: %w", err)
+		return nil, fmt.Errorf("running ps: %w", err)
 	}
-
-	var processes []processInfo
-
-	for _, p := range procs {
-		info := processInfo{pid: p.Pid}
-
-		// Get process name
-		if name, err := p.Name(); err == nil {
-			info.name = name
-		}
-
-		// Get process status
-		if status, err := p.Status(); err == nil && len(status) > 0 {
-			info.state = status[0]
-		}
-
-		// Get parent PID
-		if ppid, err := p.Ppid(); err == nil {
-			info.ppid = ppid
-		}
-
-		// Get memory info
-		if memInfo, err := p.MemoryInfo(); err == nil && memInfo != nil {
-			info.rssKB = memInfo.RSS / 1024
-		}
-
-		// Get CPU percentage (over a short interval)
-		if cpuPct, err := p.CPUPercent(); err == nil {
-			info.cpuPct = cpuPct
-		}
-
-		// Get command line
-		if cmdline, err := p.Cmdline(); err == nil {
-			info.cmdline = cmdline
-		}
-
-		processes = append(processes, info)
-	}
-
-	// Sort by PID
-	sort.Slice(processes, func(i, j int) bool {
-		return processes[i].pid < processes[j].pid
-	})
-
-	// Format output
-	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "%-8s %-20s %-6s %-8s %-8s %-12s %s\n", "PID", "NAME", "STATE", "PPID", "CPU%", "RSS(KB)", "CMDLINE")
-	fmt.Fprintf(&buf, "%s\n", strings.Repeat("-", 120))
-
-	for _, p := range processes {
-		cmdline := p.cmdline
-		if len(cmdline) > 50 {
-			cmdline = cmdline[:47] + "..."
-		}
-		fmt.Fprintf(&buf, "%-8d %-20s %-6s %-8d %-8.1f %-12d %s\n",
-			p.pid, truncate(p.name, 20), p.state, p.ppid, p.cpuPct, p.rssKB, cmdline)
-	}
-
-	return buf.Bytes(), nil
-}
-
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max-3] + "..."
+	return output, nil
 }
 
 // formatAge formats a duration as a human-readable age string like "2h ago" or "3d ago"
