@@ -33,7 +33,7 @@ func AppHistory(ctx *Context, opts struct {
 	AppCentric
 
 	Limit      int    `short:"n" long:"limit" description:"Maximum number of deployments to show" default:"10"`
-	All        bool   `short:"a" long:"all" description:"Show all deployments (ignore limit)"`
+	All        bool   `long:"all" description:"Show all deployments (ignore limit)"`
 	Status     string `short:"s" long:"status" description:"Filter by status (active, failed, rolled_back)"`
 	HideFailed bool   `long:"hide-failed" description:"Hide failed deployments"`
 	Detailed   bool   `long:"detailed" description:"Show all columns including git information"`
@@ -71,7 +71,7 @@ func AppHistory(ctx *Context, opts struct {
 		}
 	}
 
-	// Sort: active first, then by time (most recent first)
+	// Sort by time (most recent first)
 	sortDeployments(deployments)
 
 	// Print header
@@ -116,13 +116,7 @@ func filterDeployments(deps []*deployment_v1alpha.DeploymentInfo, keep func(*dep
 
 func sortDeployments(deployments []*deployment_v1alpha.DeploymentInfo) {
 	sort.Slice(deployments, func(i, j int) bool {
-		// Active deployments come first
-		iActive := deployments[i].Status() == "active"
-		jActive := deployments[j].Status() == "active"
-		if iActive != jActive {
-			return iActive
-		}
-		// Then sort by time (most recent first)
+		// Sort by time (most recent first)
 		var iTime, jTime int64
 		if deployments[i].HasDeployedAt() && deployments[i].DeployedAt() != nil {
 			iTime = deployments[i].DeployedAt().Seconds()
