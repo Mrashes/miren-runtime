@@ -154,6 +154,19 @@ func (b *BaseComponent) IsRunning() bool {
 	return b.running
 }
 
+// IfRunning executes the given function while holding the state lock, but only if
+// the component is currently running. Returns empty string if not running.
+// This is useful for safely reading component state that should only be accessed
+// when the component is running.
+func (b *BaseComponent) IfRunning(fn func() string) string {
+	b.stateMu.Lock()
+	defer b.stateMu.Unlock()
+	if !b.running {
+		return ""
+	}
+	return fn()
+}
+
 // Stop stops the component, including the exit monitor, task, and container.
 // This method acquires the operation mutex.
 func (b *BaseComponent) Stop(ctx context.Context) error {
@@ -464,6 +477,8 @@ func (b *BaseComponent) handleRestart(ctx context.Context, stopMonitor <-chan st
 	case <-time.After(backoff):
 	case <-stopMonitor:
 		return fmt.Errorf("restart cancelled")
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 
 	b.stateMu.Lock()

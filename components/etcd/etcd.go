@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	containerd "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/pkg/namespaces"
@@ -52,8 +53,8 @@ type EtcdComponent struct {
 func NewEtcdComponent(log *slog.Logger, cc *containerd.Client, namespace, dataPath string) *EtcdComponent {
 	bc := base.NewBaseComponent(log, cc, namespace, dataPath, "etcd")
 	// etcd uses 1s dial timeout and 1s interval for readiness checks
-	bc.ReadyConfig.DialTimeout = 1e9 // 1 second in nanoseconds
-	bc.ReadyConfig.Interval = 1e9    // 1 second in nanoseconds
+	bc.ReadyConfig.DialTimeout = 1 * time.Second
+	bc.ReadyConfig.Interval = 1 * time.Second
 
 	e := &EtcdComponent{
 		BaseComponent: bc,
@@ -175,17 +176,15 @@ func (e *EtcdComponent) Start(ctx context.Context, config EtcdConfig) error {
 }
 
 func (e *EtcdComponent) ClientEndpoint() string {
-	if !e.IsRunning() {
-		return ""
-	}
-	return fmt.Sprintf("http://localhost:%d", e.clientPort)
+	return e.IfRunning(func() string {
+		return fmt.Sprintf("http://localhost:%d", e.clientPort)
+	})
 }
 
 func (e *EtcdComponent) PeerEndpoint() string {
-	if !e.IsRunning() {
-		return ""
-	}
-	return fmt.Sprintf("http://localhost:%d", e.peerPort)
+	return e.IfRunning(func() string {
+		return fmt.Sprintf("http://localhost:%d", e.peerPort)
+	})
 }
 
 func (e *EtcdComponent) restartExistingContainer(ctx context.Context, container containerd.Container, config EtcdConfig) error {

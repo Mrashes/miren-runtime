@@ -150,10 +150,9 @@ func (c *VictoriaMetricsComponent) Start(ctx context.Context, config VictoriaMet
 }
 
 func (c *VictoriaMetricsComponent) HTTPEndpoint() string {
-	if !c.IsRunning() {
-		return ""
-	}
-	return fmt.Sprintf("localhost:%d", c.httpPort)
+	return c.IfRunning(func() string {
+		return fmt.Sprintf("localhost:%d", c.httpPort)
+	})
 }
 
 func (c *VictoriaMetricsComponent) restartExistingContainer(ctx context.Context, container containerd.Container, config VictoriaMetricsConfig) error {
