@@ -19,19 +19,30 @@ import (
 
 // RestartPolicy configures the auto-restart behavior for a component.
 type RestartPolicy struct {
-	MaxRestarts int           // Maximum restart attempts before giving up (default: 5)
+	MaxRestarts int           // Maximum restart attempts before giving up (0 = unlimited)
 	BackoffBase time.Duration // Base delay for exponential backoff (default: 2s)
 	BackoffMax  time.Duration // Maximum backoff delay (default: 60s)
 	ResetWindow time.Duration // Time after which restart count resets (default: 5m)
 }
 
-// DefaultRestartPolicy returns the default restart policy.
+// DefaultRestartPolicy returns the default restart policy with unlimited restarts.
 func DefaultRestartPolicy() RestartPolicy {
 	return RestartPolicy{
-		MaxRestarts: 5,
+		MaxRestarts: 0, // Never give up
 		BackoffBase: 2 * time.Second,
 		BackoffMax:  60 * time.Second,
 		ResetWindow: 5 * time.Minute,
+	}
+}
+
+// AggressiveRestartPolicy returns a restart policy with shorter backoff times,
+// suitable for critical components like etcd that the system cannot run without.
+func AggressiveRestartPolicy() RestartPolicy {
+	return RestartPolicy{
+		MaxRestarts: 0, // Never give up
+		BackoffBase: 500 * time.Millisecond,
+		BackoffMax:  10 * time.Second,
+		ResetWindow: 2 * time.Minute,
 	}
 }
 
@@ -458,7 +469,7 @@ func (b *BaseComponent) handleRestart(ctx context.Context, stopMonitor <-chan st
 	}
 
 	restartCount++
-	if restartCount > policy.MaxRestarts {
+	if policy.MaxRestarts > 0 && restartCount > policy.MaxRestarts {
 		return fmt.Errorf("exceeded maximum restart attempts (%d)", policy.MaxRestarts)
 	}
 

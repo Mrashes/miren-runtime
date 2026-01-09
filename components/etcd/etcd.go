@@ -52,6 +52,8 @@ type EtcdComponent struct {
 
 func NewEtcdComponent(log *slog.Logger, cc *containerd.Client, namespace, dataPath string) *EtcdComponent {
 	bc := base.NewBaseComponent(log, cc, namespace, dataPath, "etcd")
+	// etcd is critical - the system cannot run without it, so use aggressive restart policy
+	bc.RestartPolicy = base.AggressiveRestartPolicy()
 	// etcd uses 1s dial timeout and 1s interval for readiness checks
 	bc.ReadyConfig.DialTimeout = 1 * time.Second
 	bc.ReadyConfig.Interval = 1 * time.Second
