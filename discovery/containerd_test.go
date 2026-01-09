@@ -15,13 +15,10 @@ func TestContainerd(t *testing.T) {
 	t.Run("can lookup an endpoint from containerd", func(t *testing.T) {
 		r := require.New(t)
 
-		reg, cleanup := testutils.Registry(TestInject)
+		deps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var cl Containerd
-
-		err := reg.Populate(&cl)
-		r.NoError(err)
+		cl := NewContainerd(deps.Log, deps.Namespace, deps.CC)
 
 		ctx := namespaces.WithNamespace(context.Background(), cl.Namespace)
 

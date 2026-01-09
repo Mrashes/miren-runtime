@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/netip"
 	"os"
@@ -11,32 +12,53 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
-
-	"log/slog"
-	"sync"
 
 	containerd "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/pkg/cio"
 	"github.com/containerd/containerd/v2/pkg/namespaces"
 	"github.com/containerd/containerd/v2/pkg/oci"
-	"github.com/stretchr/testify/require"
-
 	"github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/stretchr/testify/require"
 
 	compute "miren.dev/runtime/api/compute/compute_v1alpha"
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
-	"miren.dev/runtime/image"
 	"miren.dev/runtime/metrics"
 	"miren.dev/runtime/observability"
-	build "miren.dev/runtime/pkg/buildkit"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/entity/types"
 	"miren.dev/runtime/pkg/idgen"
 	"miren.dev/runtime/pkg/tarx"
 	"miren.dev/runtime/pkg/testutils"
 )
+
+// newSandboxController creates a SandboxController from TestDeps for testing.
+func newSandboxController(d *testutils.TestDeps) (*SandboxController, error) {
+	sbMetrics := NewMetrics()
+	sbMetrics.Log = d.Log
+	sbMetrics.CPUUsage = d.CPU
+	sbMetrics.MemUsage = d.Mem
+	cfg := SandboxControllerDeps{
+		Log:            d.Log,
+		CC:             d.CC,
+		EAC:            d.EAC,
+		Namespace:      d.Namespace,
+		NodeId:         "test-node",
+		NetServ:        d.NetServ,
+		Bridge:         d.Bridge,
+		Subnet:         d.Subnet,
+		DataPath:       d.DataPath,
+		Tempdir:        d.TempDir,
+		LogsMaintainer: d.LogsMaintainer,
+		LogWriter:      d.LogWriter,
+		StatusMon:      d.StatusMon,
+		Resolver:       d.Resolver,
+		Metrics:        sbMetrics,
+	}
+	return NewSandboxController(cfg)
+}
 
 func TestSandbox(t *testing.T) {
 
@@ -50,16 +72,11 @@ func TestSandbox(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject, build.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var (
-			cc  *containerd.Client
-			bkl *build.Buildkit
-		)
-
-		err := reg.Init(&cc, &bkl)
-		r.NoError(err)
+		cc := testDeps.CC
+		bkl := testDeps.Buildkit
 
 		dfr, err := tarx.MakeTar("testdata/nginx", nil)
 		r.NoError(err)
@@ -70,10 +87,7 @@ func TestSandbox(t *testing.T) {
 		o, _, err := bkl.Transform(ctx, datafs)
 		r.NoError(err)
 
-		var ii image.ImageImporter
-
-		err = reg.Populate(&ii)
-		r.NoError(err)
+		ii := testDeps.NewImageImporter()
 
 		err = ii.ImportImage(ctx, o, "mn-nginx:latest")
 		r.NoError(err)
@@ -83,9 +97,7 @@ func TestSandbox(t *testing.T) {
 		_, err = cc.GetImage(ctx, "mn-nginx:latest")
 		r.NoError(err)
 
-		var co SandboxController
-
-		err = reg.Populate(&co)
+		co, err := newSandboxController(testDeps)
 		r.NoError(err)
 
 		defer co.Close()
@@ -242,16 +254,11 @@ func TestSandbox(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject, build.TestInject, metrics.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var (
-			cc  *containerd.Client
-			bkl *build.Buildkit
-		)
-
-		err := reg.Init(&cc, &bkl)
-		r.NoError(err)
+		cc := testDeps.CC
+		bkl := testDeps.Buildkit
 
 		dfr, err := tarx.MakeTar("testdata/sort", nil)
 		r.NoError(err)
@@ -262,10 +269,7 @@ func TestSandbox(t *testing.T) {
 		o, _, err := bkl.Transform(ctx, datafs)
 		r.NoError(err)
 
-		var ii image.ImageImporter
-
-		err = reg.Populate(&ii)
-		r.NoError(err)
+		ii := testDeps.NewImageImporter()
 
 		err = ii.ImportImage(ctx, o, "mn-sort:latest")
 		r.NoError(err)
@@ -275,9 +279,7 @@ func TestSandbox(t *testing.T) {
 		_, err = cc.GetImage(ctx, "mn-sort:latest")
 		r.NoError(err)
 
-		var co SandboxController
-
-		err = reg.Populate(&co)
+		co, err := newSandboxController(testDeps)
 		r.NoError(err)
 
 		defer co.Close()
@@ -404,16 +406,11 @@ func TestSandbox(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject, build.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var (
-			cc  *containerd.Client
-			bkl *build.Buildkit
-		)
-
-		err := reg.Init(&cc, &bkl)
-		r.NoError(err)
+		cc := testDeps.CC
+		bkl := testDeps.Buildkit
 
 		dfr, err := tarx.MakeTar("testdata/nginx", nil)
 		r.NoError(err)
@@ -424,10 +421,7 @@ func TestSandbox(t *testing.T) {
 		o, _, err := bkl.Transform(ctx, datafs)
 		r.NoError(err)
 
-		var ii image.ImageImporter
-
-		err = reg.Populate(&ii)
-		r.NoError(err)
+		ii := testDeps.NewImageImporter()
 
 		err = ii.ImportImage(ctx, o, "mn-nginx:latest")
 		r.NoError(err)
@@ -437,9 +431,7 @@ func TestSandbox(t *testing.T) {
 		_, err = cc.GetImage(ctx, "mn-nginx:latest")
 		r.NoError(err)
 
-		var co SandboxController
-
-		err = reg.Populate(&co)
+		co, err := newSandboxController(testDeps)
 		r.NoError(err)
 
 		defer co.Close()
@@ -538,16 +530,11 @@ func TestSandbox(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject, build.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var (
-			cc  *containerd.Client
-			bkl *build.Buildkit
-		)
-
-		err := reg.Init(&cc, &bkl)
-		r.NoError(err)
+		cc := testDeps.CC
+		bkl := testDeps.Buildkit
 
 		dfr, err := tarx.MakeTar("testdata/nginx", nil)
 		r.NoError(err)
@@ -558,10 +545,7 @@ func TestSandbox(t *testing.T) {
 		o, _, err := bkl.Transform(ctx, datafs)
 		r.NoError(err)
 
-		var ii image.ImageImporter
-
-		err = reg.Populate(&ii)
-		r.NoError(err)
+		ii := testDeps.NewImageImporter()
 
 		err = ii.ImportImage(ctx, o, "mn-nginx:latest")
 		r.NoError(err)
@@ -571,9 +555,7 @@ func TestSandbox(t *testing.T) {
 		_, err = cc.GetImage(ctx, "mn-nginx:latest")
 		r.NoError(err)
 
-		var co SandboxController
-
-		err = reg.Populate(&co)
+		co, err := newSandboxController(testDeps)
 		r.NoError(err)
 
 		defer co.Close()
@@ -681,16 +663,11 @@ func TestSandbox(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject, build.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var (
-			cc  *containerd.Client
-			bkl *build.Buildkit
-		)
-
-		err := reg.Init(&cc, &bkl)
-		r.NoError(err)
+		cc := testDeps.CC
+		bkl := testDeps.Buildkit
 
 		dfr, err := tarx.MakeTar("testdata/nginx", nil)
 		r.NoError(err)
@@ -701,10 +678,7 @@ func TestSandbox(t *testing.T) {
 		o, _, err := bkl.Transform(ctx, datafs)
 		r.NoError(err)
 
-		var ii image.ImageImporter
-
-		err = reg.Populate(&ii)
-		r.NoError(err)
+		ii := testDeps.NewImageImporter()
 
 		err = ii.ImportImage(ctx, o, "mn-nginx:latest")
 		r.NoError(err)
@@ -714,9 +688,7 @@ func TestSandbox(t *testing.T) {
 		_, err = cc.GetImage(ctx, "mn-nginx:latest")
 		r.NoError(err)
 
-		var co SandboxController
-
-		err = reg.Populate(&co)
+		co, err := newSandboxController(testDeps)
 		r.NoError(err)
 
 		defer co.Close()
@@ -834,15 +806,13 @@ func TestSandbox(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject, build.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var sbc SandboxController
-
-		err := reg.Populate(&sbc)
+		sbc, err := newSandboxController(testDeps)
 		r.NoError(err)
 
-		defer checkClosed(t, &sbc)
+		defer checkClosed(t, sbc)
 
 		err = sbc.Init(ctx)
 		r.NoError(err)
@@ -953,18 +923,15 @@ func TestSandbox(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject, build.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var cc *containerd.Client
-		err := reg.Init(&cc)
+		_ = testDeps.CC // referenced for namespace access via co.Namespace
+
+		co, err := newSandboxController(testDeps)
 		r.NoError(err)
 
-		var co SandboxController
-		err = reg.Populate(&co)
-		r.NoError(err)
-
-		defer checkClosed(t, &co)
+		defer checkClosed(t, co)
 
 		r.NoError(co.Init(ctx))
 
@@ -1077,18 +1044,13 @@ func TestSandbox(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject, build.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var cc *containerd.Client
-		err := reg.Init(&cc)
+		co, err := newSandboxController(testDeps)
 		r.NoError(err)
 
-		var co SandboxController
-		err = reg.Populate(&co)
-		r.NoError(err)
-
-		defer checkClosed(t, &co)
+		defer checkClosed(t, co)
 
 		r.NoError(co.Init(ctx))
 
@@ -1264,20 +1226,14 @@ func TestSandbox(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject, build.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var (
-			cc *containerd.Client
-			lr *observability.LogReader
-		)
-
-		err := reg.Init(&cc, &lr)
-		r.NoError(err)
+		cc := testDeps.CC
+		lr := testDeps.Logs
 
 		// Create first controller instance
-		var co1 SandboxController
-		err = reg.Populate(&co1)
+		co1, err := newSandboxController(testDeps)
 		r.NoError(err)
 
 		r.NoError(co1.Init(ctx))
@@ -1506,16 +1462,11 @@ func TestSandbox(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject, build.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var (
-			cc  *containerd.Client
-			bkl *build.Buildkit
-		)
-
-		err := reg.Init(&cc, &bkl)
-		r.NoError(err)
+		cc := testDeps.CC
+		bkl := testDeps.Buildkit
 
 		dfr, err := tarx.MakeTar("testdata/nginx", nil)
 		r.NoError(err)
@@ -1526,10 +1477,7 @@ func TestSandbox(t *testing.T) {
 		o, _, err := bkl.Transform(ctx, datafs)
 		r.NoError(err)
 
-		var ii image.ImageImporter
-
-		err = reg.Populate(&ii)
-		r.NoError(err)
+		ii := testDeps.NewImageImporter()
 
 		err = ii.ImportImage(ctx, o, "mn-nginx:latest")
 		r.NoError(err)
@@ -1539,9 +1487,7 @@ func TestSandbox(t *testing.T) {
 		_, err = cc.GetImage(ctx, "mn-nginx:latest")
 		r.NoError(err)
 
-		var co SandboxController
-
-		err = reg.Populate(&co)
+		co, err := newSandboxController(testDeps)
 		r.NoError(err)
 
 		defer co.Close()

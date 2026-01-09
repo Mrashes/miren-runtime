@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
-	"miren.dev/runtime/pkg/asm/autoreg"
 	"miren.dev/runtime/pkg/dns"
 )
 
@@ -23,11 +22,13 @@ type ServiceManager struct {
 	ctx     context.Context
 }
 
-var _ = autoreg.Register[ServiceManager]()
-
-func (s *ServiceManager) Populated() error {
-	s.bridges = make(map[string]*BridgeServices)
-	return nil
+// NewServiceManager creates a new ServiceManager.
+func NewServiceManager(log *slog.Logger, eac *entityserver_v1alpha.EntityAccessClient) *ServiceManager {
+	return &ServiceManager{
+		Log:     log,
+		EAC:     eac,
+		bridges: make(map[string]*BridgeServices),
+	}
 }
 
 // BridgeServices holds the services running for a specific bridge

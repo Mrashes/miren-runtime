@@ -3,10 +3,7 @@
 package commands
 
 import (
-	"context"
-
 	"miren.dev/mflags"
-	"miren.dev/runtime/pkg/asm"
 )
 
 func addCommands(d *mflags.Dispatcher) {
@@ -17,5 +14,3 @@ func addCommands(d *mflags.Dispatcher) {
 
 	d.Dispatch("server status", Infer("server status", "Show miren service status (Linux only)", ServerStatus))
 }
-
-func (c *Context) setupServerComponents(_ context.Context, _ *asm.Registry) {}

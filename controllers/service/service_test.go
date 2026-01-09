@@ -15,14 +15,50 @@ import (
 	"miren.dev/runtime/api/network/network_v1alpha"
 	"miren.dev/runtime/components/ipalloc"
 	"miren.dev/runtime/controllers/sandbox"
-	"miren.dev/runtime/observability"
-	build "miren.dev/runtime/pkg/buildkit"
 	"miren.dev/runtime/pkg/controller"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/entity/types"
 	"miren.dev/runtime/pkg/idgen"
 	"miren.dev/runtime/pkg/testutils"
 )
+
+// newServiceController creates a ServiceController from TestDeps for testing.
+func newServiceController(d *testutils.TestDeps) (*ServiceController, error) {
+	cfg := ServiceControllerDeps{
+		Log:             d.Log,
+		EAC:             d.EAC,
+		IPv4Routable:    d.IPv4Routable,
+		ServicePrefixes: d.ServicePrefixes,
+		DisableLocalNet: false,
+	}
+	return NewServiceController(cfg)
+}
+
+// newSandboxController creates a SandboxController from TestDeps for testing.
+func newSandboxController(d *testutils.TestDeps) (*sandbox.SandboxController, error) {
+	sbMetrics := sandbox.NewMetrics()
+	sbMetrics.Log = d.Log
+	sbMetrics.CPUUsage = d.CPU
+	sbMetrics.MemUsage = d.Mem
+	cfg := sandbox.SandboxControllerDeps{
+		Log:            d.Log,
+		CC:             d.CC,
+		EAC:            d.EAC,
+		Namespace:      d.Namespace,
+		NodeId:         "test-node",
+		NetServ:        d.NetServ,
+		Bridge:         d.Bridge,
+		Subnet:         d.Subnet,
+		DataPath:       d.DataPath,
+		Tempdir:        d.TempDir,
+		LogsMaintainer: d.LogsMaintainer,
+		LogWriter:      d.LogWriter,
+		StatusMon:      d.StatusMon,
+		Resolver:       d.Resolver,
+		Metrics:        sbMetrics,
+	}
+	return sandbox.NewSandboxController(cfg)
+}
 
 func TestServiceController(t *testing.T) {
 	sbName := func() string {
@@ -46,11 +82,10 @@ func TestServiceController(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var sc ServiceController
-		err := reg.Populate(&sc)
+		sc, err := newServiceController(testDeps)
 		r.NoError(err)
 
 		err = sc.Init(ctx)
@@ -87,28 +122,21 @@ func TestServiceController(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject, build.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var (
-			sc  ServiceController
-			sbC sandbox.SandboxController
-			eac *entityserver_v1alpha.EntityAccessClient
-		)
+		eac := testDeps.EAC
 
-		err := reg.Init(&eac)
+		sc, err := newServiceController(testDeps)
 		r.NoError(err)
 
-		err = reg.Populate(&sc)
-		r.NoError(err)
-
-		err = reg.Populate(&sbC)
+		sbC, err := newSandboxController(testDeps)
 		r.NoError(err)
 
 		err = sc.Init(ctx)
 		r.NoError(err)
 
-		defer checkClosed(t, &sbC)
+		defer checkClosed(t, sbC)
 
 		err = sbC.Init(ctx)
 		r.NoError(err)
@@ -222,28 +250,21 @@ func TestServiceController(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject, build.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var (
-			sc  ServiceController
-			sbC sandbox.SandboxController
-			eac *entityserver_v1alpha.EntityAccessClient
-		)
+		eac := testDeps.EAC
 
-		err := reg.Init(&eac)
+		sc, err := newServiceController(testDeps)
 		r.NoError(err)
 
-		err = reg.Populate(&sc)
-		r.NoError(err)
-
-		err = reg.Populate(&sbC)
+		sbC, err := newSandboxController(testDeps)
 		r.NoError(err)
 
 		err = sc.Init(ctx)
 		r.NoError(err)
 
-		defer checkClosed(t, &sbC)
+		defer checkClosed(t, sbC)
 
 		err = sbC.Init(ctx)
 		r.NoError(err)
@@ -379,18 +400,10 @@ func TestServiceController(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var (
-			sc  ServiceController
-			eac *entityserver_v1alpha.EntityAccessClient
-		)
-
-		err := reg.Init(&eac)
-		r.NoError(err)
-
-		err = reg.Populate(&sc)
+		sc, err := newServiceController(testDeps)
 		r.NoError(err)
 
 		err = sc.Init(ctx)
@@ -440,28 +453,21 @@ func TestServiceController(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject, build.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var (
-			sc  ServiceController
-			sbC sandbox.SandboxController
-			eac *entityserver_v1alpha.EntityAccessClient
-		)
+		eac := testDeps.EAC
 
-		err := reg.Init(&eac)
+		sc, err := newServiceController(testDeps)
 		r.NoError(err)
 
-		err = reg.Populate(&sc)
-		r.NoError(err)
-
-		err = reg.Populate(&sbC)
+		sbC, err := newSandboxController(testDeps)
 		r.NoError(err)
 
 		err = sc.Init(ctx)
 		r.NoError(err)
 
-		defer checkClosed(t, &sbC)
+		defer checkClosed(t, sbC)
 
 		err = sbC.Init(ctx)
 		r.NoError(err)
@@ -641,18 +647,12 @@ func TestServiceController(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var (
-			sc  ServiceController
-			eac *entityserver_v1alpha.EntityAccessClient
-		)
+		eac := testDeps.EAC
 
-		err := reg.Init(&eac)
-		r.NoError(err)
-
-		err = reg.Populate(&sc)
+		sc, err := newServiceController(testDeps)
 		r.NoError(err)
 
 		err = sc.Init(ctx)
@@ -722,18 +722,12 @@ func TestServiceController(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var (
-			sc  ServiceController
-			eac *entityserver_v1alpha.EntityAccessClient
-		)
+		eac := testDeps.EAC
 
-		err := reg.Init(&eac)
-		r.NoError(err)
-
-		err = reg.Populate(&sc)
+		sc, err := newServiceController(testDeps)
 		r.NoError(err)
 
 		err = sc.Init(ctx)
@@ -863,11 +857,10 @@ func TestServiceController(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var sc ServiceController
-		err := reg.Populate(&sc)
+		sc, err := newServiceController(testDeps)
 		r.NoError(err)
 
 		err = sc.Init(ctx)
@@ -905,18 +898,12 @@ func TestServiceController(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		reg, cleanup := testutils.Registry(observability.TestInject)
+		testDeps, cleanup := testutils.NewTestDeps()
 		defer cleanup()
 
-		var (
-			sc  ServiceController
-			eac *entityserver_v1alpha.EntityAccessClient
-		)
+		eac := testDeps.EAC
 
-		err := reg.Init(&eac)
-		r.NoError(err)
-
-		err = reg.Populate(&sc)
+		sc, err := newServiceController(testDeps)
 		r.NoError(err)
 
 		// Set service prefixes for IP allocation

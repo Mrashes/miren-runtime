@@ -12,7 +12,6 @@ import (
 	"github.com/containerd/cgroups/v3/cgroup2/stats"
 	"miren.dev/runtime/api/metric/metric_v1alpha"
 	"miren.dev/runtime/metrics"
-	"miren.dev/runtime/pkg/asm/autoreg"
 	"miren.dev/runtime/pkg/mapx"
 	"miren.dev/runtime/pkg/rpc/standard"
 	"miren.dev/runtime/pkg/units"
@@ -36,7 +35,12 @@ type Metrics struct {
 	namedEntries map[string]*Cgroups
 }
 
-var _ = autoreg.Register[Metrics]()
+// NewMetrics creates a new Metrics.
+func NewMetrics() *Metrics {
+	return &Metrics{
+		namedEntries: make(map[string]*Cgroups),
+	}
+}
 
 func (m *Metrics) Add(name string, pathes map[string]string, attributes map[string]string) error {
 	m.mu.Lock()

@@ -3,7 +3,6 @@ package runner
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"testing"
 	"time"
 
@@ -13,8 +12,10 @@ import (
 	compute "miren.dev/runtime/api/compute/compute_v1alpha"
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
 	"miren.dev/runtime/components/coordinate"
+	"miren.dev/runtime/components/netresolve"
+	"miren.dev/runtime/controllers/sandbox"
 	schedulerctrl "miren.dev/runtime/controllers/scheduler"
-	"miren.dev/runtime/observability"
+	"miren.dev/runtime/network"
 	"miren.dev/runtime/pkg/controller"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/testutils"
@@ -23,14 +24,9 @@ import (
 func TestRunnerCoordinatorIntegration(t *testing.T) {
 	r := require.New(t)
 
-	// Setup logging
-	reg, cleanup := testutils.Registry(observability.TestInject)
+	// Setup test dependencies
+	testDeps, cleanup := testutils.NewTestDeps()
 	defer cleanup()
-
-	var log *slog.Logger
-
-	err := reg.Init(&log)
-	r.NoError(err)
 
 	// Create temp directory for test data
 	tempDir := t.TempDir()
@@ -57,8 +53,8 @@ func TestRunnerCoordinatorIntegration(t *testing.T) {
 	defer cancel()
 
 	// Start coordinator in background
-	coord := coordinate.NewCoordinator(log, coordCfg)
-	err = coord.Start(ctx)
+	coord := coordinate.NewCoordinator(testDeps.Log, coordCfg)
+	err := coord.Start(ctx)
 	r.NoError(err)
 
 	// Wait for coordinator to start
@@ -70,8 +66,33 @@ func TestRunnerCoordinatorIntegration(t *testing.T) {
 	runnerCfg.Config = rcfg
 	runnerCfg.DataPath = t.TempDir()
 
+	res, _ := netresolve.NewLocalResolver()
+
+	// Build RunnerDeps from testDeps
+	sbMetrics := sandbox.NewMetrics()
+	sbMetrics.Log = testDeps.Log
+	sbMetrics.CPUUsage = testDeps.CPU
+	sbMetrics.MemUsage = testDeps.Mem
+
+	deps := RunnerDeps{
+		CC:              testDeps.CC,
+		Namespace:       testDeps.Namespace,
+		Bridge:          testDeps.Bridge,
+		Tempdir:         tempDir,
+		Subnet:          testDeps.Subnet,
+		NetServ:         network.NewServiceManager(testDeps.Log, nil),
+		LogsMaintainer:  testDeps.LogsMaintainer,
+		LogWriter:       testDeps.LogWriter,
+		StatusMon:       testDeps.StatusMon,
+		IPv4Routable:    testDeps.IPv4Routable,
+		ServicePrefixes: testDeps.ServicePrefixes,
+		DisableLocalNet: false,
+		Resolver:        res,
+		SandboxMetrics:  sbMetrics,
+	}
+
 	// Create and start runner
-	runner, err := NewRunner(log, reg, runnerCfg)
+	runner, err := NewRunner(testDeps.Log, deps, runnerCfg)
 	r.NoError(err)
 
 	runnerDone := make(chan error, 1)
@@ -97,7 +118,7 @@ func TestRunnerCoordinatorIntegration(t *testing.T) {
 	nodeId := "node/" + runnerCfg.Id
 
 	// Poll for the node entity to be ready (wait for runner startup to complete)
-	var res *entityserver_v1alpha.EntityAccessClientGetResults
+	var nodeRes *entityserver_v1alpha.EntityAccessClientGetResults
 	pollTimeout := time.After(10 * time.Second)
 	pollTicker := time.NewTicker(100 * time.Millisecond)
 	defer pollTicker.Stop()
@@ -108,21 +129,21 @@ func TestRunnerCoordinatorIntegration(t *testing.T) {
 			// runner.Start() completed, check for error
 			require.NoError(t, err, "runner.Start() failed")
 			// If it succeeded, the node should now be available, try one more time
-			res, err = eac.Get(ctx, nodeId)
+			nodeRes, err = eac.Get(ctx, nodeId)
 			require.NoError(t, err, "failed to get node entity after runner started")
-			require.True(t, res.HasEntity(), "node entity not found after runner started")
+			require.True(t, nodeRes.HasEntity(), "node entity not found after runner started")
 			// Verify status field is present
-			node := entity.New(res.Entity().Attrs())
+			node := entity.New(nodeRes.Entity().Attrs())
 			_, ok := node.Get(compute.NodeStatusId)
 			require.True(t, ok, "node entity status not set after runner started")
 			goto nodeReady
 		case <-pollTimeout:
 			t.Fatal("timeout waiting for node entity to be created with status")
 		case <-pollTicker.C:
-			res, err = eac.Get(ctx, nodeId)
-			if err == nil && res.HasEntity() {
+			nodeRes, err = eac.Get(ctx, nodeId)
+			if err == nil && nodeRes.HasEntity() {
 				// Check that status field is present before proceeding
-				node := entity.New(res.Entity().Attrs())
+				node := entity.New(nodeRes.Entity().Attrs())
 				if _, ok := node.Get(compute.NodeStatusId); ok {
 					goto nodeReady
 				}
@@ -132,9 +153,9 @@ func TestRunnerCoordinatorIntegration(t *testing.T) {
 
 nodeReady:
 
-	r.True(res.HasEntity())
+	r.True(nodeRes.HasEntity())
 
-	node := entity.New(res.Entity().Attrs())
+	node := entity.New(nodeRes.Entity().Attrs())
 
 	status, ok := node.Get(compute.NodeStatusId)
 	r.True(ok)
@@ -142,12 +163,12 @@ nodeReady:
 	r.Equal(compute.NodeStatusReadyId, status.Value.Id())
 
 	// Create and start the scheduler controller
-	scheduler := schedulerctrl.NewController(log, &eac)
+	scheduler := schedulerctrl.NewController(testDeps.Log, &eac)
 	r.NoError(scheduler.Init(ctx))
 
 	schedulerController := controller.NewReconcileController(
 		"scheduler",
-		log,
+		testDeps.Log,
 		entity.Ref(entity.EntityKind, compute.KindSandbox),
 		&eac,
 		controller.AdaptReconcileController[compute.Sandbox](scheduler),
@@ -162,20 +183,14 @@ nodeReady:
 	id := fmt.Sprintf("sandbox/test-%d", time.Now().Unix())
 
 	// Test creating a sandbox entity
-	sandbox := &entityserver_v1alpha.Entity{}
-	sandbox.SetAttrs(entity.New(
+	sandboxEntity := &entityserver_v1alpha.Entity{}
+	sandboxEntity.SetAttrs(entity.New(
 		entity.EntityKind, compute.KindSandbox,
 		entity.Keyword(entity.Ident, id),
 	).Attrs())
 
-	_, err = eac.Put(ctx, sandbox)
+	_, err = eac.Put(ctx, sandboxEntity)
 	r.NoError(err)
-
-	var (
-		cc *containerd.Client
-	)
-
-	r.NoError(reg.Init(&cc))
 
 	ctx = namespaces.WithNamespace(ctx, runner.ContainerdNamespace())
 

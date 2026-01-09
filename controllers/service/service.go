@@ -23,13 +23,22 @@ import (
 	"miren.dev/runtime/pkg/set"
 )
 
+// ServiceControllerDeps holds required dependencies for ServiceController.
+type ServiceControllerDeps struct {
+	Log             *slog.Logger
+	EAC             *entityserver_v1alpha.EntityAccessClient
+	IPv4Routable    netip.Prefix
+	ServicePrefixes []netip.Prefix
+	DisableLocalNet bool
+}
+
 type ServiceController struct {
 	Log             *slog.Logger
 	EAC             *entityserver_v1alpha.EntityAccessClient
-	IPv4Routable    netip.Prefix   `asm:"ip4-routable"`
-	ServicePrefixes []netip.Prefix `asm:"service-prefixes"`
+	IPv4Routable    netip.Prefix
+	ServicePrefixes []netip.Prefix
 
-	DisableLocalNet bool `asm:"disable-localnet,optional"`
+	DisableLocalNet bool
 
 	routablePrefixes []netip.Prefix
 
@@ -38,6 +47,27 @@ type ServiceController struct {
 
 	mu             sync.Mutex
 	chainEndpoints map[string][]string
+}
+
+// NewServiceController creates a new ServiceController with validated dependencies.
+func NewServiceController(cfg ServiceControllerDeps) (*ServiceController, error) {
+	if cfg.Log == nil {
+		return nil, fmt.Errorf("service: Log is required")
+	}
+	if cfg.EAC == nil {
+		return nil, fmt.Errorf("service: entity access client is required")
+	}
+	if !cfg.IPv4Routable.IsValid() {
+		return nil, fmt.Errorf("service: IPv4Routable must be a valid prefix")
+	}
+
+	return &ServiceController{
+		Log:             cfg.Log,
+		EAC:             cfg.EAC,
+		IPv4Routable:    cfg.IPv4Routable,
+		ServicePrefixes: cfg.ServicePrefixes,
+		DisableLocalNet: cfg.DisableLocalNet,
+	}, nil
 }
 
 func (s *ServiceController) UpdateEndpoints(ctx context.Context, event controller.Event) ([]entity.Attr, error) {
@@ -367,7 +397,7 @@ func (s *ServiceController) initNFT(table string, nc *nftCommands) error {
 
 func (s *ServiceController) Init(ctx context.Context) error {
 	s.chainEndpoints = make(map[string][]string)
-	s.routablePrefixes = []netip.Prefix{s.IPv4Routable}
+	s.routablePrefixes = append([]netip.Prefix{s.IPv4Routable}, s.ServicePrefixes...)
 
 	s.Log.Info("Initializing service controller")
 

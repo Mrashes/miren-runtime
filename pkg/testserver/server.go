@@ -2,10 +2,8 @@ package testserver
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,9 +17,9 @@ import (
 	"miren.dev/runtime/components/netresolve"
 	"miren.dev/runtime/components/ocireg"
 	"miren.dev/runtime/components/runner"
-	"miren.dev/runtime/metrics"
+	"miren.dev/runtime/controllers/sandbox"
+	"miren.dev/runtime/network"
 	"miren.dev/runtime/observability"
-	"miren.dev/runtime/pkg/netdb"
 	"miren.dev/runtime/pkg/rpc"
 	"miren.dev/runtime/pkg/slogfmt"
 	"miren.dev/runtime/pkg/testutils"
@@ -52,83 +50,36 @@ func TestServer(t *testing.T) error {
 	// Create a cancellable context
 	ctx, ctxCancel := context.WithCancel(ctx)
 	eg, sub := errgroup.WithContext(ctx)
-	reg, cleanup := testutils.Registry()
+
+	testDeps, cleanup := testutils.NewTestDeps()
 	t.Cleanup(cleanup)
-
-	// Don't use observability.TestInject because it injects a LogWriter that
-	// is a no-op. The registry appears to have a bug where it isn't always picking
-	// the same implementation, and sometimes it picks the DebugLogWriter and the test
-	// fails because of that.
-
-	reg.Provide(func(opts struct {
-		Log *slog.Logger
-	}) *observability.StatusMonitor {
-		log := opts.Log
-		if log == nil {
-			log = slog.Default()
-		}
-		return &observability.StatusMonitor{
-			Log: log,
-			//entities: make(map[string]*EntityStatus),
-		}
-	})
 
 	// Mirroring defaults from cli/commands/dev.go
 	optsAddress := "localhost:8443"
 	optsRunnerAddress := "localhost:8444"
-	optsEtcdEndpoints := []string{"http://etcd:2379"}
-	var optsEtcdPrefix string
-	reg.ResolveNamed(&optsEtcdPrefix, "etcd-prefix")
 	optsRunnerId := "dev"
 
 	log := slog.New(slogfmt.NewTestHandler(t, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	res, hm := netresolve.NewLocalResolver()
 
-	var (
-		cpu  metrics.CPUUsage
-		mem  metrics.MemoryUsage
-		logs observability.LogReader
-	)
-
-	err := reg.Populate(&mem)
-	if err != nil {
-		log.Error("failed to populate memory usage", "error", err)
-		ctxCancel()
-		return err
-	}
-
-	err = reg.Populate(&cpu)
-	if err != nil {
-		log.Error("failed to populate CPU usage", "error", err)
-		ctxCancel()
-		return err
-	}
-
-	err = reg.Populate(&logs)
-	if err != nil {
-		log.Error("failed to populate log reader", "error", err)
-		ctxCancel()
-		return err
-	}
-
 	tempDir := t.TempDir()
 
 	co := coordinate.NewCoordinator(log, coordinate.CoordinatorConfig{
 		Address:       optsAddress,
-		EtcdEndpoints: optsEtcdEndpoints,
-		Prefix:        optsEtcdPrefix,
+		EtcdEndpoints: []string{"http://etcd:2379"},
+		Prefix:        "/" + testDeps.Namespace,
 		Resolver:      res,
 		TempDir:       tempDir,
 		DataPath:      filepath.Join(tempDir, "coordinator"),
-		Mem:           &mem,
-		Cpu:           &cpu,
-		Logs:          &logs,
+		Mem:           testDeps.Mem,
+		Cpu:           testDeps.CPU,
+		Logs:          testDeps.Logs,
 		NoAuth:        true,
 	})
 
 	t.Log("Starting coordinator")
-	err = co.Start(sub)
+	err := co.Start(sub)
 	if err != nil {
 		log.Error("failed to start coordinator", "error", err)
 		ctxCancel()
@@ -137,30 +88,8 @@ func TestServer(t *testing.T) error {
 
 	time.Sleep(time.Second)
 
-	reg.ProvideName("subnet", func(opts struct {
-		Dir    string       `asm:"data-path"`
-		Id     string       `asm:"server-id"`
-		Prefix netip.Prefix `asm:"ip4-routable"`
-	}) (*netdb.Subnet, error) {
-		os.MkdirAll(opts.Dir, 0755)
-		ndb, err := netdb.New(filepath.Join(opts.Dir, "net.db"))
-		if err != nil {
-			return nil, fmt.Errorf("failed to open netdb: %w", err)
-		}
-
-		sub, err := ndb.Subnet(opts.Prefix.String())
-		if err != nil {
-			return nil, err
-		}
-
-		return sub, nil
-	})
-
-	reg.ProvideName("router-address", func(opts struct {
-		Sub *netdb.Subnet `asm:"subnet"`
-	}) (netip.Addr, error) {
-		return opts.Sub.Router().Addr(), nil
-	})
+	// Create subnet from test deps
+	subnet := testDeps.Subnet
 
 	// Run the runner!
 
@@ -189,12 +118,7 @@ func TestServer(t *testing.T) error {
 	eac := entityserver_v1alpha.NewEntityAccessClient(client)
 	ec := entityserver.NewClient(log, eac)
 
-	reg.Register("hl-entity-client", ec)
-
-	var subnets []netip.Prefix
-	reg.Resolve(&subnets)
-
-	ipa := ipalloc.NewAllocator(log, subnets)
+	ipa := ipalloc.NewAllocator(log, testDeps.ServicePrefixes)
 	eg.Go(func() error {
 		defer t.Log("ipallocator watch complete")
 		return ipa.Watch(ctx, eac)
@@ -202,16 +126,10 @@ func TestServer(t *testing.T) error {
 
 	aa := co.Activator()
 
-	spm := co.SandboxPoolManager()
-
 	ingressConfig := httpingress.IngressConfig{
 		RequestTimeout: 60 * time.Second, // Default timeout for tests
 	}
 	hs := httpingress.NewServer(ctx, log, ingressConfig, client, aa, nil, nil)
-
-	reg.Register("app-activator", aa)
-	reg.Register("sandbox-pool-manager", spm)
-	reg.Register("resolver", res)
 
 	rcfg, err := co.RunnerConfig(optsRunnerAddress)
 	if err != nil {
@@ -219,7 +137,40 @@ func TestServer(t *testing.T) error {
 		return err
 	}
 
-	r, err := runner.NewRunner(log, reg, runner.RunnerConfig{
+	// Create network service manager
+	netServ := network.NewServiceManager(log, eac)
+
+	// Create observability components
+	statusMon := observability.NewStatusMonitor(log)
+	logsMaintainer := observability.NewLogsMaintainer()
+
+	// Use testDeps.LogWriter (PersistentLogWriter) so logs can be read back via VictoriaLogs
+	logWriter := testDeps.LogWriter
+
+	// Create sandbox metrics
+	sbMetrics := sandbox.NewMetrics()
+	sbMetrics.Log = log
+	sbMetrics.CPUUsage = testDeps.CPU
+	sbMetrics.MemUsage = testDeps.Mem
+
+	deps := runner.RunnerDeps{
+		CC:              testDeps.CC,
+		Namespace:       testDeps.Namespace,
+		Bridge:          testDeps.Bridge,
+		Tempdir:         tempDir,
+		Subnet:          subnet,
+		NetServ:         netServ,
+		LogsMaintainer:  logsMaintainer,
+		LogWriter:       logWriter,
+		StatusMon:       statusMon,
+		IPv4Routable:    testDeps.IPv4Routable,
+		ServicePrefixes: testDeps.ServicePrefixes,
+		DisableLocalNet: false,
+		Resolver:        res,
+		SandboxMetrics:  sbMetrics,
+	}
+
+	r, err := runner.NewRunner(log, deps, runner.RunnerConfig{
 		Id:            optsRunnerId,
 		ListenAddress: optsRunnerAddress,
 		Workers:       1,
@@ -267,13 +218,8 @@ func TestServer(t *testing.T) error {
 		return nil
 	})
 
-	var ociRegistry ocireg.Registry
-	err = reg.Populate(&ociRegistry)
-	if err != nil {
-		log.Error("failed to populate OCI registry", "error", err)
-		ctxCancel()
-		return err
-	}
+	// Create OCI registry
+	ociRegistry := ocireg.NewRegistry(filepath.Join(tempDir, "oci"), log, ec)
 
 	// Start the OCI Registry
 	err = ociRegistry.Start(ctx, ":5000")
@@ -293,39 +239,21 @@ func TestServer(t *testing.T) error {
 		log.Info("OCI registry server shutdown complete")
 	})
 
-	var regAddr netip.Addr
-
-	err = reg.ResolveNamed(&regAddr, "router-address")
-	if err != nil {
-		log.Error("failed to resolve router address", "error", err)
-		ctxCancel()
-		return err
-	}
+	regAddr := subnet.Router().Addr()
 
 	log.Info("OCI registry URL", "url", regAddr)
 
 	hm.SetHost("cluster.local", regAddr)
 
-	log.Info("Starting test server", "address", optsAddress, "etcd_endpoints", optsEtcdEndpoints, "etcd_prefix", optsEtcdPrefix, "runner_id", optsRunnerId)
+	log.Info("Starting test server", "address", optsAddress, "runner_id", optsRunnerId)
 
 	// Register cleanup for running components
 	t.Cleanup(func() {
-		// TODO: Close any RPC connections, currently hangs
-		// if client != nil {
-		// 	log.Info("Closing RPC client connections")
-		// 	client.Close()
-		// }
-
 		log.Info("Stopping coordinator and controllers")
 		co.Stop()
 
 		log.Info("Canceling context to stop all components")
 		ctxCancel()
-
-		// TODO: eg.Wait still hangs, something's amiss in the context canecel handling. A problem for another day!
-		// if err := eg.Wait(); err != nil {
-		// 	log.Error("error waiting for components to stop", "error", err)
-		// }
 	})
 
 	// Wait in a separate goroutine for any errors from the errgroup

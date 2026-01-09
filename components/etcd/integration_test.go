@@ -20,12 +20,10 @@ import (
 )
 
 func TestEtcdComponentIntegration(t *testing.T) {
-	reg, cleanup := testutils.Registry()
+	testDeps, cleanup := testutils.NewTestDeps()
 	defer cleanup()
 
-	var cc *containerd.Client
-	err := reg.Resolve(&cc)
-	require.NoError(t, err, "failed to resolve containerd client")
+	cc := testDeps.CC
 
 	// Create temporary directory for test data
 	tmpDir, err := os.MkdirTemp("", "etcd-test")

@@ -9,7 +9,6 @@ import (
 
 	"miren.dev/runtime/api/metric/metric_v1alpha"
 	"miren.dev/runtime/metrics"
-	"miren.dev/runtime/pkg/asm/autoreg"
 )
 
 type Cgroups struct {
@@ -24,7 +23,12 @@ type Metrics struct {
 	namedEntries map[string]*Cgroups
 }
 
-var _ = autoreg.Register[Metrics]()
+// NewMetrics creates a new Metrics.
+func NewMetrics() *Metrics {
+	return &Metrics{
+		namedEntries: make(map[string]*Cgroups),
+	}
+}
 
 func (m *Metrics) Add(name string, pathes map[string]string, attributes map[string]string) error {
 	return nil

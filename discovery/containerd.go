@@ -11,8 +11,17 @@ import (
 
 type Containerd struct {
 	Log       *slog.Logger
-	Namespace string `asm:"namespace"`
+	Namespace string
 	Client    *containerd.Client
+}
+
+// NewContainerd creates a new Containerd discovery.
+func NewContainerd(log *slog.Logger, namespace string, client *containerd.Client) *Containerd {
+	return &Containerd{
+		Log:       log,
+		Namespace: namespace,
+		Client:    client,
+	}
 }
 
 func (c *Containerd) Lookup(ctx context.Context, app string) (Endpoint, chan BackgroundLookup, error) {

@@ -8,7 +8,6 @@ import (
 	"github.com/moby/buildkit/identity"
 	"github.com/stretchr/testify/require"
 	"miren.dev/runtime/observability"
-	"miren.dev/runtime/pkg/testutils"
 )
 
 func TestLogs(t *testing.T) {
@@ -18,25 +17,15 @@ func TestLogs(t *testing.T) {
 
 		r := require.New(t)
 
-		reg, cleanup := testutils.Registry(observability.TestInject)
-		defer cleanup()
+		// Use VictoriaLogs test endpoint
+		address := "victorialogs:9428"
+		timeout := 30 * time.Second
 
-		var (
-			lm observability.LogsMaintainer
-			pw observability.PersistentLogWriter
-			pr observability.PersistentLogReader
-		)
+		lm := observability.NewLogsMaintainer()
+		pw := observability.NewPersistentLogWriter(address, timeout)
+		pr := observability.NewPersistentLogReader(address, timeout)
 
-		err := reg.Populate(&lm)
-		r.NoError(err)
-
-		err = reg.Populate(&pw)
-		r.NoError(err)
-
-		err = reg.Populate(&pr)
-		r.NoError(err)
-
-		err = lm.Setup(ctx)
+		err := lm.Setup(ctx)
 		r.NoError(err)
 
 		id := identity.NewID()

@@ -14,7 +14,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/sys/unix"
 	"miren.dev/runtime/clientconfig"
-	"miren.dev/runtime/pkg/asm"
 	"miren.dev/runtime/pkg/rpc"
 	"miren.dev/runtime/pkg/slogfmt"
 	"miren.dev/runtime/pkg/slogrus"
@@ -23,7 +22,7 @@ import (
 
 type GlobalFlags struct {
 	Verbose       []bool `short:"v" long:"verbose" description:"Enable verbose output"`
-	ServerAddress string `long:"server-address" description:"Server address to connect to" default:"127.0.0.1:8443" asm:"server-addr"`
+	ServerAddress string `long:"server-address" description:"Server address to connect to" default:"127.0.0.1:8443"`
 	// We actually process this manually, but we include it here so that it validates.
 	Options string `long:"options" description:"Path to file containing options"`
 }
@@ -40,8 +39,8 @@ type Context struct {
 	Stdout io.Writer
 	Stderr io.Writer
 
-	Client *asm.Registry
-	Server *asm.Registry
+	// ServerState holds explicit server dependencies
+	ServerState *ServerState
 
 	cancels []func()
 
@@ -50,7 +49,7 @@ type Context struct {
 	ClusterName   string
 
 	Config struct {
-		ServerAddress string `asm:"server-addr"`
+		ServerAddress string
 	}
 
 	levelVar slog.LevelVar
@@ -63,13 +62,14 @@ func (c *Context) Level() slog.Level {
 
 func setup(ctx context.Context, flags *GlobalFlags, opts any) *Context {
 	s := &Context{
-		verbose: len(flags.Verbose),
-		Stdout:  os.Stdout,
-		Stderr:  os.Stderr,
-
-		Server: &asm.Registry{},
-		Client: &asm.Registry{},
+		verbose:     len(flags.Verbose),
+		Stdout:      os.Stdout,
+		Stderr:      os.Stderr,
+		ServerState: NewServerState(),
 	}
+
+	// Initialize config from flags
+	s.Config.ServerAddress = flags.ServerAddress
 
 	var level slog.Level
 
@@ -97,16 +97,6 @@ func setup(ctx context.Context, flags *GlobalFlags, opts any) *Context {
 
 	ctx = slogrus.WithLogger(ctx, s.Log.With("module", "slogrus"))
 	slogrus.OverrideGlobal(s.Log)
-
-	s.Server.Log = s.Log
-	s.Client.Log = s.Log
-
-	s.setupServerComponents(ctx, s.Server)
-
-	s.Server.InferFrom(opts, true)
-	s.Client.InferFrom(flags, true)
-
-	s.Client.Populate(&s.Config)
 
 	if lc, ok := opts.(interface {
 		LoadConfig() (*clientconfig.Config, error)

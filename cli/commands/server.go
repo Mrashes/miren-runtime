@@ -41,7 +41,6 @@ import (
 	"miren.dev/runtime/metrics"
 	"miren.dev/runtime/observability"
 	"miren.dev/runtime/pkg/caauth"
-	"miren.dev/runtime/pkg/containerdx"
 	"miren.dev/runtime/pkg/grunge"
 	"miren.dev/runtime/pkg/ipdiscovery"
 	"miren.dev/runtime/pkg/nbd"
@@ -236,31 +235,26 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 			}
 		}()
 
-		ctx.Server.Override("containerd-socket", containerdComponent.SocketPath())
+		ctx.ServerState.ContainerdSocket = containerdComponent.SocketPath()
 	} else {
 		// Use existing containerd with provided or default socket path
-		defaultSocket := containerdx.DefaultSocket
 		if cfg.Containerd.GetSocketPath() != "" {
-			defaultSocket = cfg.Containerd.GetSocketPath()
+			ctx.ServerState.ContainerdSocket = cfg.Containerd.GetSocketPath()
 		}
+		// else keep the default from NewServerState()
+	}
 
-		ctx.Server.Override("containerd-socket", defaultSocket)
+	// Initialize containerd client
+	if err := ctx.ServerState.InitContainerd(); err != nil {
+		ctx.Log.Error("failed to create containerd client", "error", err)
+		return err
 	}
 
 	// Start embedded etcd server if requested
 	if cfg.Etcd.GetStartEmbedded() {
 		ctx.Log.Info("starting embedded etcd server", "client-port", cfg.Etcd.GetClientPort(), "peer-port", cfg.Etcd.GetPeerPort())
 
-		// Get containerd client from registry
-		var cc *containerd.Client
-		err := ctx.Server.Resolve(&cc)
-		if err != nil {
-			ctx.Log.Error("failed to get containerd client for etcd", "error", err)
-			return err
-		}
-
-		// TODO figure out why I can't use ResolveNamed to pull out the namespace from ctx.Server
-		etcdComponent := etcd.NewEtcdComponent(ctx.Log, cc, "miren", cfg.Server.GetDataPath())
+		etcdComponent := etcd.NewEtcdComponent(ctx.Log, ctx.ServerState.CC, ctx.ServerState.Namespace, cfg.Server.GetDataPath())
 
 		etcdConfig := etcd.EtcdConfig{
 			Name:           "miren-etcd",
@@ -295,15 +289,7 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 	if cfg.Victorialogs.GetStartEmbedded() {
 		ctx.Log.Info("starting embedded victorialogs server", "http-port", cfg.Victorialogs.GetHTTPPort())
 
-		// Get containerd client from registry
-		var cc *containerd.Client
-		err := ctx.Server.Resolve(&cc)
-		if err != nil {
-			ctx.Log.Error("failed to get containerd client for victorialogs", "error", err)
-			return err
-		}
-
-		victoriaLogsComponent := victorialogs.NewVictoriaLogsComponent(ctx.Log, cc, "miren", cfg.Server.GetDataPath())
+		victoriaLogsComponent := victorialogs.NewVictoriaLogsComponent(ctx.Log, ctx.ServerState.CC, ctx.ServerState.Namespace, cfg.Server.GetDataPath())
 
 		victoriaLogsConfig := victorialogs.VictoriaLogsConfig{
 			HTTPPort:        cfg.Victorialogs.GetHTTPPort(),
@@ -318,9 +304,9 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 
 		ctx.Log.Info("embedded victorialogs started", "http-endpoint", victoriaLogsComponent.HTTPEndpoint())
 
-		// Register VictoriaLogs component in the registry for other components to use
-		ctx.Server.Override("victorialogs-address", victoriaLogsComponent.HTTPEndpoint())
-		ctx.Server.Override("victorialogs-timeout", 30*time.Second)
+		// Update ServerState with embedded VictoriaLogs address
+		ctx.ServerState.VictorialogsAddress = victoriaLogsComponent.HTTPEndpoint()
+		ctx.ServerState.VictorialogsTimeout = 30 * time.Second
 
 		// Ensure cleanup on exit
 		defer func() {
@@ -333,29 +319,21 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 		}()
 	} else {
 		if cfg.Victorialogs.GetAddress() == "" {
-			ctx.Log.Error("victorialogs address specified but embedded victorialogs not started", "address", cfg.Victorialogs.GetAddress())
-			return fmt.Errorf("victorialogs address specified but embedded victorialogs not started")
+			ctx.Log.Error("victorialogs address not specified and embedded victorialogs not started")
+			return fmt.Errorf("victorialogs address not specified and embedded victorialogs not started")
 		}
 
-		// Override VictoriaLogs address if provided (for external VictoriaLogs)
+		// Update ServerState with external VictoriaLogs address
 		ctx.Log.Info("using external victorialogs", "address", cfg.Victorialogs.GetAddress())
-		ctx.Server.Override("victorialogs-address", cfg.Victorialogs.GetAddress())
-		ctx.Server.Override("victorialogs-timeout", 30*time.Second)
+		ctx.ServerState.VictorialogsAddress = cfg.Victorialogs.GetAddress()
+		ctx.ServerState.VictorialogsTimeout = 30 * time.Second
 	}
 
 	// Start embedded VictoriaMetrics server if requested
 	if cfg.Victoriametrics.GetStartEmbedded() {
 		ctx.Log.Info("starting embedded victoriametrics server", "http-port", cfg.Victoriametrics.GetHTTPPort())
 
-		// Get containerd client from registry
-		var cc *containerd.Client
-		err := ctx.Server.Resolve(&cc)
-		if err != nil {
-			ctx.Log.Error("failed to get containerd client for victoriametrics", "error", err)
-			return err
-		}
-
-		victoriaMetricsComponent := victoriametrics.NewVictoriaMetricsComponent(ctx.Log, cc, "miren", cfg.Server.GetDataPath())
+		victoriaMetricsComponent := victoriametrics.NewVictoriaMetricsComponent(ctx.Log, ctx.ServerState.CC, ctx.ServerState.Namespace, cfg.Server.GetDataPath())
 
 		victoriaMetricsConfig := victoriametrics.VictoriaMetricsConfig{
 			HTTPPort:        cfg.Victoriametrics.GetHTTPPort(),
@@ -370,19 +348,18 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 
 		ctx.Log.Info("embedded victoriametrics started", "http-endpoint", victoriaMetricsComponent.HTTPEndpoint())
 
-		// Register VictoriaMetrics component in the registry for other components to use
-		ctx.Server.Override("victoriametrics-address", victoriaMetricsComponent.HTTPEndpoint())
-		ctx.Server.Override("victoriametrics-timeout", 30*time.Second)
+		// Update ServerState with embedded VictoriaMetrics address
+		ctx.ServerState.VictoriametricsAddress = victoriaMetricsComponent.HTTPEndpoint()
+		ctx.ServerState.VictoriametricsTimeout = 30 * time.Second
 
 		// Ensure cleanup on exit
 		defer func() {
 			ctx.Log.Info("stopping embedded victoriametrics")
 
 			// First, close the writer to flush any remaining metrics
-			var writer *metrics.VictoriaMetricsWriter
-			if err := ctx.Server.Resolve(&writer); err == nil && writer != nil {
+			if ctx.ServerState.Writer != nil {
 				ctx.Log.Info("flushing and closing victoriametrics writer")
-				if err := writer.Close(); err != nil {
+				if err := ctx.ServerState.Writer.Close(); err != nil {
 					ctx.Log.Error("failed to close victoriametrics writer", "error", err)
 				}
 			}
@@ -396,14 +373,14 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 		}()
 	} else {
 		if cfg.Victoriametrics.GetAddress() == "" {
-			ctx.Log.Error("victoriametrics address specified but embedded victorialogs not started", "address", cfg.Victorialogs.GetAddress())
-			return fmt.Errorf("victoriametrics address specified but embedded victorialogs not started")
+			ctx.Log.Error("victoriametrics address not specified and embedded victoriametrics not started")
+			return fmt.Errorf("victoriametrics address not specified and embedded victoriametrics not started")
 		}
 
-		// Override VictoriaMetrics address if provided (for external VictoriaMetrics)
+		// Update ServerState with external VictoriaMetrics address
 		ctx.Log.Info("using external victoriametrics", "address", cfg.Victoriametrics.GetAddress())
-		ctx.Server.Override("victoriametrics-address", cfg.Victoriametrics.GetAddress())
-		ctx.Server.Override("victoriametrics-timeout", 30*time.Second)
+		ctx.ServerState.VictoriametricsAddress = cfg.Victoriametrics.GetAddress()
+		ctx.ServerState.VictoriametricsTimeout = 30 * time.Second
 	}
 
 	// BuildKit component (nil if not configured)
@@ -413,15 +390,7 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 	if cfg.Buildkit.GetStartEmbedded() {
 		ctx.Log.Info("starting embedded buildkit daemon", "socket-dir", cfg.Buildkit.GetSocketDir())
 
-		// Get containerd client from registry
-		var cc *containerd.Client
-		err := ctx.Server.Resolve(&cc)
-		if err != nil {
-			ctx.Log.Error("failed to get containerd client for buildkit", "error", err)
-			return err
-		}
-
-		buildkitComponent = buildkit.NewComponent(ctx.Log, cc, "miren", cfg.Server.GetDataPath())
+		buildkitComponent = buildkit.NewComponent(ctx.Log, ctx.ServerState.CC, ctx.ServerState.Namespace, cfg.Server.GetDataPath())
 
 		// Parse GC settings
 		gcStorage, _ := units.ParseData(cfg.Buildkit.GetGcKeepStorage())
@@ -476,36 +445,21 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 
 	res, hm := netresolve.NewLocalResolver()
 
-	var (
-		cpu       metrics.CPUUsage
-		mem       metrics.MemoryUsage
-		logs      *observability.LogReader
-		logWriter *observability.PersistentLogWriter
-	)
+	// Initialize metrics components via ServerState
+	ctx.ServerState.InitMetricsWriter(ctx.Log)
+	ctx.ServerState.InitMetricsReader(ctx.Log)
 
-	err = ctx.Server.Populate(&mem)
-	if err != nil {
-		ctx.Log.Error("failed to populate memory usage", "error", err)
-		return err
-	}
+	// Create CPU and memory usage monitors
+	cpu := metrics.NewCPUUsage(ctx.Log, ctx.ServerState.Writer, ctx.ServerState.Reader)
+	ctx.ServerState.CPU = cpu
+	mem := metrics.NewMemoryUsage(ctx.Log, ctx.ServerState.Writer, ctx.ServerState.Reader)
+	ctx.ServerState.Mem = mem
 
-	err = ctx.Server.Populate(&cpu)
-	if err != nil {
-		ctx.Log.Error("failed to populate CPU usage", "error", err)
-		return err
-	}
-
-	err = ctx.Server.Resolve(&logs)
-	if err != nil {
-		ctx.Log.Error("failed to resolve log reader", "error", err)
-		return err
-	}
-
-	err = ctx.Server.Resolve(&logWriter)
-	if err != nil {
-		ctx.Log.Error("failed to resolve log writer", "error", err)
-		return err
-	}
+	// Create log writer and reader
+	logWriter := observability.NewPersistentLogWriter(ctx.ServerState.VictorialogsAddress, ctx.ServerState.VictorialogsTimeout)
+	ctx.ServerState.LogWriter = logWriter
+	logs := observability.NewLogReader(ctx.ServerState.VictorialogsAddress, ctx.ServerState.VictorialogsTimeout)
+	ctx.ServerState.Logs = logs
 
 	// Discover local IPs using ipdiscovery
 	discovery, err := ipdiscovery.DiscoverWithTimeout(5*time.Second, ctx.Log)
@@ -547,12 +501,8 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 	}
 
 	// Create HTTP metrics
-	var httpMetrics metrics.HTTPMetrics
-	err = ctx.Server.Populate(&httpMetrics)
-	if err != nil {
-		ctx.Log.Error("failed to populate HTTP metrics", "error", err)
-		return err
-	}
+	httpMetrics := metrics.NewHTTPMetrics(ctx.Log, ctx.ServerState.Writer, ctx.ServerState.Reader)
+	ctx.ServerState.HTTPMetrics = httpMetrics
 
 	// Load registration if it exists
 	var cloudAuthConfig coordinate.CloudAuthConfig
@@ -613,9 +563,9 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 		Resolver:        res,
 		TempDir:         os.TempDir(),
 		CloudAuth:       cloudAuthConfig,
-		Mem:             &mem,
-		Cpu:             &cpu,
-		HTTP:            &httpMetrics,
+		Mem:             mem,
+		Cpu:             cpu,
+		HTTP:            httpMetrics,
 		Logs:            logs,
 		LogWriter:       logWriter,
 		BuildKit:        buildkitComponent,
@@ -629,14 +579,11 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 
 	time.Sleep(time.Second)
 
-	subnets := []netip.Prefix{
+	// Set service prefixes in ServerState
+	ctx.ServerState.ServicePrefixes = []netip.Prefix{
 		netip.MustParsePrefix("10.10.0.0/16"),
 		netip.MustParsePrefix("fd47:cafe:d00d::/64"),
 	}
-
-	reg := ctx.Server
-
-	ctx.Server.Register("service-prefixes", subnets)
 
 	gn, err := grunge.NewNetwork(ctx.Log, grunge.NetworkOptions{
 		EtcdEndpoints: cfg.Etcd.Endpoints,
@@ -663,38 +610,28 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 	}
 
 	lease := gn.Lease()
+	ctx.ServerState.IPv4Routable = lease.IPv4()
 
 	ctx.Log.Info("leased IP prefixes", "ipv4", lease.IPv4().String(), "ipv6", lease.IPv6().String())
 
-	reg.Register("ip4-routable", lease.IPv4())
+	// Initialize subnet from leased IP
+	dataPath := cfg.Server.GetDataPath()
+	if err := os.MkdirAll(dataPath, 0755); err != nil {
+		return fmt.Errorf("failed to create directory %s: %w", dataPath, err)
+	}
 
-	reg.ProvideName("subnet", func(opts struct {
-		Dir    string       `asm:"data-path"`
-		Id     string       `asm:"server-id"`
-		Prefix netip.Prefix `asm:"ip4-routable"`
-	}) (*netdb.Subnet, error) {
-		if err := os.MkdirAll(opts.Dir, 0755); err != nil {
-			return nil, fmt.Errorf("failed to create directory %s: %w", opts.Dir, err)
-		}
+	ndb, err := netdb.New(filepath.Join(dataPath, "net.db"))
+	if err != nil {
+		return fmt.Errorf("failed to open netdb: %w", err)
+	}
 
-		ndb, err := netdb.New(filepath.Join(opts.Dir, "net.db"))
-		if err != nil {
-			return nil, fmt.Errorf("failed to open netdb: %w", err)
-		}
+	ctx.ServerState.Subnet, err = ndb.Subnet(lease.IPv4().String())
+	if err != nil {
+		return fmt.Errorf("failed to create subnet: %w", err)
+	}
 
-		sub, err := ndb.Subnet(opts.Prefix.String())
-		if err != nil {
-			return nil, err
-		}
-
-		return sub, nil
-	})
-
-	reg.ProvideName("router-address", func(opts struct {
-		Sub *netdb.Subnet `asm:"subnet"`
-	}) (netip.Addr, error) {
-		return opts.Sub.Router().Addr(), nil
-	})
+	// Get router address from subnet
+	routerAddr := ctx.ServerState.Subnet.Router().Addr()
 
 	// Run the runner!
 
@@ -720,9 +657,7 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 	eac := entityserver_v1alpha.NewEntityAccessClient(client)
 	ec := entityserver.NewClient(ctx.Log, eac)
 
-	reg.Register("hl-entity-client", ec)
-
-	ipa := ipalloc.NewAllocator(ctx.Log, subnets)
+	ipa := ipalloc.NewAllocator(ctx.Log, ctx.ServerState.ServicePrefixes)
 	eg.Go(func() error {
 		return ipa.Watch(sub, eac)
 	})
@@ -730,7 +665,8 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 	aa := co.Activator()
 
 	// Create SandboxPoolManager to reconcile pool entities
-	spm := co.SandboxPoolManager()
+	// The SandboxPoolManager runs internally in the coordinator
+	_ = co.SandboxPoolManager()
 
 	// HttpRequestTimeout is already validated by cfg.Validate() to be >= 1
 	// No need for additional checks here
@@ -738,11 +674,13 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 	ingressConfig := httpingress.IngressConfig{
 		RequestTimeout: cfg.Server.HTTPRequestTimeoutDuration(),
 	}
-	hs := httpingress.NewServer(ctx, ctx.Log, ingressConfig, client, aa, &httpMetrics, logWriter)
+	hs := httpingress.NewServer(ctx, ctx.Log, ingressConfig, client, aa, httpMetrics, logWriter)
 
-	reg.Register("app-activator", aa)
-	reg.Register("sandbox-pool-manager", spm)
-	reg.Register("resolver", res)
+	// Initialize remaining ServerState components
+	ctx.ServerState.InitNetServ(ctx.Log)
+	ctx.ServerState.InitLogsMaintainer()
+	ctx.ServerState.InitStatusMonitor(ctx.Log)
+	ctx.ServerState.InitSandboxMetrics(ctx.Log)
 
 	var rc runner.RunnerConfig
 
@@ -764,13 +702,27 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 		rc.CloudAuth = &coordinate.CloudAuthConfig{}
 	}
 
-	err = ctx.Server.Populate(&rc)
-	if err != nil {
-		ctx.Log.Error("failed to populate runner config", "error", err)
-		return err
+	// Build RunnerDeps from ServerState (all dependencies already initialized)
+	deps := runner.RunnerDeps{
+		CC:              ctx.ServerState.CC,
+		Namespace:       ctx.ServerState.Namespace,
+		Bridge:          ctx.ServerState.Bridge,
+		Tempdir:         ctx.ServerState.Tempdir,
+		Subnet:          ctx.ServerState.Subnet,
+		NetServ:         ctx.ServerState.NetServ,
+		LogsMaintainer:  ctx.ServerState.LogsMaintainer,
+		LogWriter:       logWriter,
+		StatusMon:       ctx.ServerState.StatusMon,
+		IPv4Routable:    ctx.ServerState.IPv4Routable,
+		ServicePrefixes: ctx.ServerState.ServicePrefixes,
+		DisableLocalNet: false,
+		Resolver:        res,
+		SandboxMetrics:  ctx.ServerState.SandboxMetrics,
 	}
 
-	r, err := runner.NewRunner(ctx.Log, ctx.Server, rc)
+	rc.DataPath = cfg.Server.GetDataPath()
+
+	r, err := runner.NewRunner(ctx.Log, deps, rc)
 	if err != nil {
 		ctx.Log.Error("failed to create runner", "error", err)
 		return err
@@ -823,36 +775,23 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 		}()
 	}
 
-	var registry ocireg.Registry
-	err = reg.Populate(&registry)
-	if err != nil {
-		ctx.Log.Error("failed to populate OCI registry", "error", err)
-		return err
-	}
+	registry := ocireg.NewRegistry(cfg.Server.GetDataPath(), ctx.Log, ec)
 
 	if err := registry.Start(ctx, ":5000"); err != nil {
 		ctx.Log.Error("failed to start registry", "error", err)
 		return err
 	}
 
-	var regAddr netip.Addr
+	ctx.Log.Info("OCI registry URL", "url", routerAddr)
 
-	err = reg.ResolveNamed(&regAddr, "router-address")
-	if err != nil {
-		ctx.Log.Error("failed to resolve router address", "error", err)
-		return err
-	}
-
-	ctx.Log.Info("OCI registry URL", "url", regAddr)
-
-	if err := hm.SetHost("cluster.local", regAddr); err != nil {
+	if err := hm.SetHost("cluster.local", routerAddr); err != nil {
 		ctx.Log.Error("failed to set host", "error", err)
 		return err
 	}
 
 	// Update BuildKit's hosts file with the registry IP
 	if buildkitComponent != nil {
-		if err := buildkitComponent.SetRegistryIP(regAddr.String()); err != nil {
+		if err := buildkitComponent.SetRegistryIP(routerAddr.String()); err != nil {
 			ctx.Log.Warn("failed to update buildkit hosts file", "error", err)
 		}
 	}
@@ -929,13 +868,9 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 			ctx.Log.Error("failed to close runner during shutdown", "error", err)
 		}
 
-		// Get containerd client from registry
-		var cc *containerd.Client
-		if err := ctx.Server.Resolve(&cc); err != nil {
-			ctx.Log.Error("failed to get containerd client for shutdown", "error", err)
-		} else {
-			// Stop all sandbox containers via containerd
-			if err := stopAllSandboxContainers(context.Background(), ctx.Log, cc); err != nil {
+		// Stop all sandbox containers via containerd using ServerState
+		if ctx.ServerState.CC != nil {
+			if err := stopAllSandboxContainers(context.Background(), ctx.Log, ctx.ServerState.CC); err != nil {
 				ctx.Log.Error("failed to stop all sandbox containers during shutdown", "error", err)
 			}
 		}

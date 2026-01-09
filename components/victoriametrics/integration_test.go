@@ -25,12 +25,10 @@ func uniqueNamespace() string {
 }
 
 func TestVictoriaMetricsComponentIntegration(t *testing.T) {
-	reg, cleanup := testutils.Registry()
+	testDeps, cleanup := testutils.NewTestDeps()
 	defer cleanup()
 
-	var cc *containerd.Client
-	err := reg.Resolve(&cc)
-	require.NoError(t, err, "failed to resolve containerd client")
+	cc := testDeps.CC
 
 	// Create temporary directory for test data
 	tmpDir, err := os.MkdirTemp("", "victoriametrics-test")
@@ -179,12 +177,10 @@ func TestVictoriaMetricsComponentIntegration(t *testing.T) {
 }
 
 func TestVictoriaMetricsComponent_AlreadyRunning(t *testing.T) {
-	reg, cleanup := testutils.Registry()
+	testDeps, cleanup := testutils.NewTestDeps()
 	defer cleanup()
 
-	var cc *containerd.Client
-	err := reg.Resolve(&cc)
-	require.NoError(t, err)
+	cc := testDeps.CC
 
 	tmpDir, err := os.MkdirTemp("", "victoriametrics-test")
 	require.NoError(t, err)
@@ -222,12 +218,10 @@ func TestVictoriaMetricsComponent_AlreadyRunning(t *testing.T) {
 }
 
 func TestVictoriaMetricsComponent_StopWhenNotRunning(t *testing.T) {
-	reg, cleanup := testutils.Registry()
+	testDeps, cleanup := testutils.NewTestDeps()
 	defer cleanup()
 
-	var cc *containerd.Client
-	err := reg.Resolve(&cc)
-	require.NoError(t, err)
+	cc := testDeps.CC
 
 	tmpDir, err := os.MkdirTemp("", "victoriametrics-test")
 	require.NoError(t, err)
@@ -247,12 +241,10 @@ func TestVictoriaMetricsComponent_StopWhenNotRunning(t *testing.T) {
 }
 
 func TestVictoriaMetricsComponent_GracefulShutdown(t *testing.T) {
-	reg, cleanup := testutils.Registry()
+	testDeps, cleanup := testutils.NewTestDeps()
 	defer cleanup()
 
-	var cc *containerd.Client
-	err := reg.Resolve(&cc)
-	require.NoError(t, err)
+	cc := testDeps.CC
 
 	tmpDir, err := os.MkdirTemp("", "victoriametrics-test")
 	require.NoError(t, err)
@@ -301,12 +293,10 @@ func TestVictoriaMetricsComponent_GracefulShutdown(t *testing.T) {
 }
 
 func TestVictoriaMetricsComponent_MultipleStarts(t *testing.T) {
-	reg, cleanup := testutils.Registry()
+	testDeps, cleanup := testutils.NewTestDeps()
 	defer cleanup()
 
-	var cc *containerd.Client
-	err := reg.Resolve(&cc)
-	require.NoError(t, err)
+	cc := testDeps.CC
 
 	tmpDir, err := os.MkdirTemp("", "victoriametrics-test")
 	require.NoError(t, err)

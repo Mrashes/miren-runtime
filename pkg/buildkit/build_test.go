@@ -7,34 +7,39 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
+	buildkit "github.com/moby/buildkit/client"
 	_ "github.com/moby/buildkit/client/connhelper/dockercontainer"
 	"github.com/stretchr/testify/require"
 	"github.com/tonistiigi/fsutil"
 	"miren.dev/runtime/pkg/tarx"
-	"miren.dev/runtime/pkg/testutils"
 )
 
 func TestBuildKitLocal(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	bkClient, err := buildkit.New(ctx, "")
+	if err != nil {
+		t.Fatalf("failed to create buildkit client: %v", err)
+	}
+	defer bkClient.Close()
+
+	bkl := &Buildkit{Client: bkClient, Log: log}
+
 	t.Run("transforms a local directory into on oci tar", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		r := require.New(t)
-
-		reg, cleanup := testutils.Registry(TestInject)
-
-		defer cleanup()
-
-		var bkl *Buildkit
-
-		err := reg.Init(&bkl)
-		r.NoError(err)
 
 		dfr, err := tarx.MakeTar("testdata/df1", nil)
 		r.NoError(err)
@@ -104,14 +109,6 @@ func TestBuildKitLocal(t *testing.T) {
 		defer cancel()
 
 		r := require.New(t)
-
-		reg, cleanup := testutils.Registry(TestInject)
-		defer cleanup()
-
-		var bkl *Buildkit
-
-		err := reg.Init(&bkl)
-		r.NoError(err)
 
 		datafs, err := fsutil.NewFS("testdata/df-large")
 		r.NoError(err)

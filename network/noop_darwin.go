@@ -20,3 +20,11 @@ func SetupBridge(n *BridgeConfig) (*netlink.Bridge, error) {
 func TeardownBridge(name string) error {
 	return fmt.Errorf("network bridge not supported on this platform")
 }
+
+func ConfigureGW(br netlink.Link, ec *EndpointConfig) error {
+	return fmt.Errorf("network gateway configuration not supported on this platform")
+}
+
+func MasqueradeEndpoint(ec *EndpointConfig) error {
+	return fmt.Errorf("network masquerade not supported on this platform")
+}
