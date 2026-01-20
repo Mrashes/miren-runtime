@@ -173,6 +173,9 @@ func login(ctx *Context, cloudURL, identityName, keyName string, noSave, force b
 					if newName == "" {
 						return fmt.Errorf("identity name cannot be empty")
 					}
+					if config.HasIdentity(newName) {
+						return fmt.Errorf("identity %q already exists; choose a different name or select 'Update' to re-authenticate", newName)
+					}
 					identityName = newName
 				}
 			} else {
