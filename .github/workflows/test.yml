@@ -183,6 +183,8 @@ jobs:
       run: make test-e2e
 
   build-binaries:
+    # Skip when called from release.yml - it has its own build-binaries with signing
+    if: github.event_name != 'workflow_call'
     strategy:
       matrix:
         include:
@@ -218,6 +220,8 @@ jobs:
           zip -j miren-${{ matrix.os }}-${{ matrix.arch }}.zip bin/miren
 
   build:
+    # Skip when called from release.yml - it has its own build jobs
+    if: github.event_name != 'workflow_call'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v5
