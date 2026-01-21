@@ -3,21 +3,84 @@ package autotls
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/acme/autocert"
 )
 
-func ServeTLS(ctx context.Context, log *slog.Logger, dataPath string, email string, h http.Handler) error {
+// RouteWatcher provides access to the set of hosts with configured routes.
+// Implementations should watch for route changes and keep the set current.
+type RouteWatcher interface {
+	// HasRoute returns true if a route exists for the given host.
+	// This should be a fast in-memory lookup.
+	HasRoute(host string) bool
+}
+
+// RouteSet is a thread-safe set of hosts with configured routes.
+// It implements RouteWatcher and can be updated as routes change.
+type RouteSet struct {
+	mu    sync.RWMutex
+	hosts map[string]struct{}
+}
+
+// NewRouteSet creates a new empty RouteSet.
+func NewRouteSet() *RouteSet {
+	return &RouteSet{
+		hosts: make(map[string]struct{}),
+	}
+}
+
+// HasRoute returns true if the host has a configured route.
+func (rs *RouteSet) HasRoute(host string) bool {
+	rs.mu.RLock()
+	defer rs.mu.RUnlock()
+	_, ok := rs.hosts[host]
+	return ok
+}
+
+// Add adds a host to the route set.
+func (rs *RouteSet) Add(host string) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	rs.hosts[host] = struct{}{}
+}
+
+// Remove removes a host from the route set.
+func (rs *RouteSet) Remove(host string) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	delete(rs.hosts, host)
+}
+
+// Replace replaces all hosts in the set with the provided list.
+func (rs *RouteSet) Replace(hosts []string) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	rs.hosts = make(map[string]struct{}, len(hosts))
+	for _, h := range hosts {
+		rs.hosts[h] = struct{}{}
+	}
+}
+
+func ServeTLS(ctx context.Context, log *slog.Logger, dataPath string, email string, routeWatcher RouteWatcher, h http.Handler) error {
 	mgr := &autocert.Manager{
 		Prompt: autocert.AcceptTOS,
 		Cache:  autocert.DirCache(filepath.Join(dataPath, "certs")),
 		Email:  email,
-		// TODO set HostPolicy to only allow certain domains
+		HostPolicy: func(_ context.Context, host string) error {
+			if !routeWatcher.HasRoute(host) {
+				log.Warn("rejected cert request for host without configured route", "host", host)
+				return fmt.Errorf("no route configured for host: %s", host)
+			}
+			log.Debug("allowing cert provisioning for host with configured route", "host", host)
+			return nil
+		},
 	}
 
 	log = log.With("module", "autotls")

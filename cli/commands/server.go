@@ -26,6 +26,7 @@ import (
 	"k8s.io/klog/v2"
 	"miren.dev/runtime/api/entityserver"
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
+	"miren.dev/runtime/api/ingress"
 	"miren.dev/runtime/clientconfig"
 	"miren.dev/runtime/components/autotls"
 	"miren.dev/runtime/components/buildkit"
@@ -761,7 +762,14 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 				}
 			} else {
 				// Use HTTP challenge (default - autocert)
-				if err := autotls.ServeTLS(sub, ctx.Log, cfg.Server.GetDataPath(), email, hs); err != nil {
+				// Start route watcher to track which hosts have configured routes
+				// This restricts cert provisioning to only domains with explicit routes
+				routeWatcher := ingress.NewRouteWatcher(ctx.Log, eac)
+				eg.Go(func() error {
+					return routeWatcher.Start(sub)
+				})
+
+				if err := autotls.ServeTLS(sub, ctx.Log, cfg.Server.GetDataPath(), email, routeWatcher.RouteSet(), hs); err != nil {
 					ctx.Log.Error("failed to enable standard TLS", "error", err)
 				}
 			}
