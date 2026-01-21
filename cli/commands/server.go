@@ -677,7 +677,7 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 	hs := httpingress.NewServer(ctx, ctx.Log, ingressConfig, client, aa, httpMetrics, logWriter)
 
 	// Initialize remaining ServerState components
-	ctx.ServerState.InitNetServ(ctx.Log)
+	ctx.ServerState.InitNetServ(ctx.Log, eac)
 	ctx.ServerState.InitLogsMaintainer()
 	ctx.ServerState.InitStatusMonitor(ctx.Log)
 	ctx.ServerState.InitSandboxMetrics(ctx.Log)
