@@ -765,8 +765,17 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 				// Start route watcher to track which hosts have configured routes
 				// This restricts cert provisioning to only domains with explicit routes
 				routeWatcher := ingress.NewRouteWatcher(ctx.Log, eac)
+
+				// Load existing routes synchronously before starting TLS
+				// to avoid rejecting cert requests during startup
+				if err := routeWatcher.LoadExistingRoutes(sub); err != nil {
+					ctx.Log.Error("failed to load existing routes", "error", err)
+					return err
+				}
+
+				// Start watching for route changes in the background
 				eg.Go(func() error {
-					return routeWatcher.Start(sub)
+					return routeWatcher.Watch(sub)
 				})
 
 				if err := autotls.ServeTLS(sub, ctx.Log, cfg.Server.GetDataPath(), email, routeWatcher.RouteSet(), hs); err != nil {
