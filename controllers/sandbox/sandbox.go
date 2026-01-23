@@ -116,7 +116,8 @@ type SandboxController struct {
 	portMap     map[string]*containerPorts
 	portMonitor *PortMonitor
 
-	watchdog *ContainerWatchdog
+	watchdog      *ContainerWatchdog
+	imageWatchdog *ImageWatchdog
 
 	// writeTracker tracks entity write revisions to skip self-generated watch events
 	writeTracker controller.WriteTracker
@@ -439,6 +440,17 @@ func (c *SandboxController) Init(ctx context.Context) error {
 	}
 	c.watchdog.Start(c.topCtx)
 
+	// Initialize and start the image watchdog for garbage collection
+	c.imageWatchdog = &ImageWatchdog{
+		Log:       c.Log.With("module", "image-gc"),
+		CC:        c.CC,
+		EAC:       c.EAC,
+		Namespace: c.Namespace,
+		DataPath:  c.DataPath,
+		Config:    DefaultImageGCConfig(),
+	}
+	c.imageWatchdog.Start(c.topCtx)
+
 	return nil
 }
 
@@ -463,6 +475,10 @@ func (c *SandboxController) Close() error {
 
 	if c.watchdog != nil {
 		c.watchdog.Stop()
+	}
+
+	if c.imageWatchdog != nil {
+		c.imageWatchdog.Stop()
 	}
 
 	c.running.Wait()
