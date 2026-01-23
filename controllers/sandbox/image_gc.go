@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sort"
+	"strings"
 	"time"
 
 	"github.com/containerd/containerd/namespaces"
@@ -14,7 +14,6 @@ import (
 	"miren.dev/runtime/api/core/core_v1alpha"
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
 	"miren.dev/runtime/pkg/entity"
-	"miren.dev/runtime/pkg/imagerefs"
 	"miren.dev/runtime/pkg/sysstats"
 )
 
@@ -26,10 +25,6 @@ type ImageGCConfig struct {
 	PressureCheckInterval time.Duration
 	// DiskPressureThreshold is the disk usage percentage that triggers immediate GC (default: 80%)
 	DiskPressureThreshold float64
-	// RetentionDays is how many days to keep images regardless of release count (default: 30)
-	RetentionDays int
-	// RetentionCount is how many recent releases per app to keep regardless of age (default: 20)
-	RetentionCount int
 }
 
 // DefaultImageGCConfig returns the default configuration for image GC.
@@ -38,8 +33,6 @@ func DefaultImageGCConfig() ImageGCConfig {
 		ScheduledGCInterval:   168 * time.Hour, // Weekly
 		PressureCheckInterval: 1 * time.Hour,
 		DiskPressureThreshold: 80.0,
-		RetentionDays:         30,
-		RetentionCount:        20,
 	}
 }
 
@@ -55,11 +48,11 @@ type ImageGCResult struct {
 	RetainedImages int
 }
 
-// ImageWatchdog periodically garbage collects unused container images from containerd.
-// It implements a retention policy that keeps images if they are:
-// 1. Referenced by a running/pending sandbox
-// 2. From an AppVersion less than RetentionDays old
-// 3. Within the last RetentionCount AppVersions for their app
+// ImageWatchdog periodically garbage collects container images from containerd.
+// It uses Artifact entity status to determine which images to remove:
+// - Images with no corresponding Artifact are kept (infrastructure images, etc.)
+// - Images with Artifact status "active" or empty are kept
+// - Images with Artifact status "archived" are deleted
 type ImageWatchdog struct {
 	Log *slog.Logger
 	CC  *containerd.Client
@@ -77,9 +70,7 @@ func (w *ImageWatchdog) Start(ctx context.Context) {
 	w.Log.Info("starting image watchdog",
 		"scheduled_interval", w.Config.ScheduledGCInterval,
 		"pressure_check_interval", w.Config.PressureCheckInterval,
-		"pressure_threshold", w.Config.DiskPressureThreshold,
-		"retention_days", w.Config.RetentionDays,
-		"retention_count", w.Config.RetentionCount)
+		"pressure_threshold", w.Config.DiskPressureThreshold)
 
 	ctx, w.cancel = context.WithCancel(ctx)
 	go w.monitor(ctx)
@@ -187,22 +178,52 @@ func (w *ImageWatchdog) RunGC(ctx context.Context) (*ImageGCResult, error) {
 
 	result.TotalImages = len(images)
 
-	// Collect images that should be retained
-	retainedImages, err := w.collectRetainedImages(gcCtx)
+	// Get images in use by running sandboxes (these are always kept)
+	inUseImages, err := w.collectInUseImages(gcCtx)
 	if err != nil {
-		return result, fmt.Errorf("failed to collect retained images: %w", err)
+		return result, fmt.Errorf("failed to collect in-use images: %w", err)
 	}
 
-	// Delete images not in retained set
+	// Build a map of artifact ID -> status for quick lookup
+	artifactStatuses, err := w.collectArtifactStatuses(gcCtx)
+	if err != nil {
+		return result, fmt.Errorf("failed to collect artifact statuses: %w", err)
+	}
+
+	// Process each image
 	for _, img := range images {
 		imgName := img.Name()
 
-		if retainedImages[imgName] {
+		// Always keep images in use by running sandboxes
+		if inUseImages[imgName] {
 			result.RetainedImages++
 			continue
 		}
 
-		w.Log.Debug("deleting unused image", "image", imgName)
+		// Try to parse the image name to extract artifact ID
+		artifactID := w.parseArtifactID(imgName)
+		if artifactID == "" {
+			// Not a miren-managed image (infrastructure, etc.) - keep it
+			result.RetainedImages++
+			continue
+		}
+
+		// Look up artifact status
+		status, found := artifactStatuses[artifactID]
+		if !found {
+			// No artifact entity found - keep the image (safe default)
+			result.RetainedImages++
+			continue
+		}
+
+		// Only delete if artifact is explicitly archived
+		if status != core_v1alpha.ARCHIVED {
+			result.RetainedImages++
+			continue
+		}
+
+		// Artifact is archived - delete the image
+		w.Log.Debug("deleting archived image", "image", imgName, "artifact", artifactID)
 		err := w.CC.ImageService().Delete(gcCtx, imgName)
 		if err != nil {
 			result.FailedImages[imgName] = err
@@ -214,38 +235,32 @@ func (w *ImageWatchdog) RunGC(ctx context.Context) (*ImageGCResult, error) {
 	return result, nil
 }
 
-// collectRetainedImages returns a set of image names that should be retained.
-func (w *ImageWatchdog) collectRetainedImages(ctx context.Context) (map[string]bool, error) {
-	retained := make(map[string]bool)
-
-	// Always retain infrastructure images
-	retained[imagerefs.Pause] = true
-	retained[imagerefs.Etcd] = true
-	retained[imagerefs.BuildKit] = true
-	retained[imagerefs.Minio] = true
-	retained[imagerefs.VictoriaLogs] = true
-	retained[imagerefs.VictoriaMetrics] = true
-	retained[imagerefs.Miren] = true
-
-	// Collect images from running/pending sandboxes
-	inUseImages, err := w.collectInUseImages(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to collect in-use images: %w", err)
-	}
-	for img := range inUseImages {
-		retained[img] = true
+// parseArtifactID extracts the artifact ID from an image name.
+// Image format: cluster.local:5000/{app}:{artifact-name}
+// Artifact ID format: artifact/{artifact-name}
+// Returns empty string if the image doesn't match the expected format.
+func (w *ImageWatchdog) parseArtifactID(imageName string) string {
+	// Expected format: cluster.local:5000/{app}:{artifact-name}
+	if !strings.HasPrefix(imageName, "cluster.local:5000/") {
+		return ""
 	}
 
-	// Collect images meeting retention policy
-	policyImages, err := w.collectPolicyRetainedImages(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to collect policy-retained images: %w", err)
-	}
-	for img := range policyImages {
-		retained[img] = true
+	// Remove the registry prefix
+	rest := strings.TrimPrefix(imageName, "cluster.local:5000/")
+
+	// Split on : to get app and artifact name
+	parts := strings.SplitN(rest, ":", 2)
+	if len(parts) != 2 {
+		return ""
 	}
 
-	return retained, nil
+	artifactName := parts[1]
+	if artifactName == "" {
+		return ""
+	}
+
+	// Construct the artifact entity ID
+	return "artifact/" + artifactName
 }
 
 // collectInUseImages returns images referenced by running/pending sandboxes.
@@ -261,8 +276,8 @@ func (w *ImageWatchdog) collectInUseImages(ctx context.Context) (map[string]bool
 		var sb compute.Sandbox
 		sb.Decode(e.Entity())
 
-		// Only consider running or pending sandboxes
-		if sb.Status != compute.RUNNING && sb.Status != compute.PENDING && sb.Status != "" {
+		// Only consider sandboxes that are active or booting
+		if sb.Status != compute.RUNNING && sb.Status != compute.PENDING && sb.Status != compute.NOT_READY {
 			continue
 		}
 
@@ -278,77 +293,23 @@ func (w *ImageWatchdog) collectInUseImages(ctx context.Context) (map[string]bool
 	return images, nil
 }
 
-// appVersionInfo holds information about an AppVersion for retention decisions.
-type appVersionInfo struct {
-	ID        entity.Id
-	App       entity.Id
-	ImageUrl  string
-	CreatedAt time.Time
-}
+// collectArtifactStatuses returns a map of artifact ID (string) to status.
+func (w *ImageWatchdog) collectArtifactStatuses(ctx context.Context) (map[string]core_v1alpha.ArtifactStatus, error) {
+	statuses := make(map[string]core_v1alpha.ArtifactStatus)
 
-// collectPolicyRetainedImages returns images that meet the retention policy:
-// - Images from AppVersions < RetentionDays old
-// - Images within the last RetentionCount AppVersions per app
-func (w *ImageWatchdog) collectPolicyRetainedImages(ctx context.Context) (map[string]bool, error) {
-	images := make(map[string]bool)
-
-	// List all AppVersions
-	resp, err := w.EAC.List(ctx, entity.Ref(entity.EntityKind, core_v1alpha.KindAppVersion))
+	resp, err := w.EAC.List(ctx, entity.Ref(entity.EntityKind, core_v1alpha.KindArtifact))
 	if err != nil {
-		return nil, fmt.Errorf("failed to list app versions: %w", err)
+		return nil, fmt.Errorf("failed to list artifacts: %w", err)
 	}
-
-	now := time.Now()
-	retentionCutoff := now.Add(-time.Duration(w.Config.RetentionDays) * 24 * time.Hour)
-
-	// Group versions by app
-	versionsByApp := make(map[entity.Id][]appVersionInfo)
 
 	for _, e := range resp.Values() {
-		var av core_v1alpha.AppVersion
-		av.Decode(e.Entity())
+		var art core_v1alpha.Artifact
+		art.Decode(e.Entity())
 
-		if av.ImageUrl == "" {
-			continue
-		}
-
-		info := appVersionInfo{
-			ID:        av.ID,
-			App:       av.App,
-			ImageUrl:  av.ImageUrl,
-			CreatedAt: e.Entity().GetCreatedAt(),
-		}
-
-		// Always retain if within retention days
-		if info.CreatedAt.After(retentionCutoff) {
-			images[av.ImageUrl] = true
-		}
-
-		// Group by app for count-based retention
-		if av.App != "" {
-			versionsByApp[av.App] = append(versionsByApp[av.App], info)
-		}
+		// Store status (may be empty for old artifacts)
+		statuses[string(art.ID)] = art.Status
 	}
 
-	// Apply count-based retention: keep last N versions per app
-	for _, versions := range versionsByApp {
-		// Sort by creation time, newest first
-		sort.Slice(versions, func(i, j int) bool {
-			return versions[i].CreatedAt.After(versions[j].CreatedAt)
-		})
-
-		// Keep the most recent RetentionCount versions
-		for i, v := range versions {
-			if i >= w.Config.RetentionCount {
-				break
-			}
-			images[v.ImageUrl] = true
-		}
-	}
-
-	w.Log.Debug("collected policy-retained images",
-		"count", len(images),
-		"apps", len(versionsByApp))
-
-	return images, nil
+	w.Log.Debug("collected artifact statuses", "count", len(statuses))
+	return statuses, nil
 }
