@@ -272,6 +272,12 @@ func (h *highlevelBuilder) bootsnap(cur llb.State, args ...string) llb.State {
 	).State
 }
 
+// appChown specifies ownership for app files (UID 2010, GID 2011)
+var appChown = llb.ChownOpt{
+	User:  &llb.UserOpt{UID: 2010},
+	Group: &llb.UserOpt{UID: 2011},
+}
+
 func (h *highlevelBuilder) copyApp(cur, mnt llb.State) llb.State {
 	origin := time.Date(2021, time.January, 1, 0, 0, 0, 0, time.UTC)
 	return cur.File(
@@ -282,6 +288,7 @@ func (h *highlevelBuilder) copyApp(cur, mnt llb.State) llb.State {
 			AllowWildcard:       true,
 			AllowEmptyWildcard:  true,
 			CreatedTime:         &origin,
+			ChownOpt:            &appChown,
 		}),
 		llb.WithCustomName("[phase] Copying application code"),
 	)

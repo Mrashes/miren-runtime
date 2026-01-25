@@ -135,7 +135,6 @@ func (s *RustStack) GenerateLLB(dir string, opts BuildOptions) (*llb.State, erro
 	state = state.AddEnv("APP", "/bin/app")
 
 	state = s.applyOnBuild(state, opts)
-	state = s.chownApp(state)
 
 	return &state, nil
 }

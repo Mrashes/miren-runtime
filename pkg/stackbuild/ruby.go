@@ -162,8 +162,6 @@ func (s *RubyStack) GenerateLLB(dir string, opts BuildOptions) (*llb.State, erro
 
 	base = s.applyOnBuild(base, opts)
 
-	base = s.chownApp(base)
-
 	s.AddEnv("BUNDLE_PATH", "/usr/local/bundle")
 	s.AddEnv("BUNDLE_WITHOUT", "development")
 	s.AddEnv("RACK_ENV", "production")

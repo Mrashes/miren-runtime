@@ -100,8 +100,6 @@ func (s *BunStack) GenerateLLB(dir string, opts BuildOptions) (*llb.State, error
 
 	state = s.applyOnBuild(state, opts)
 
-	state = s.chownApp(state)
-
 	return &state, nil
 }
 
