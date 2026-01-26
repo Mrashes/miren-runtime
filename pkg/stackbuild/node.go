@@ -133,8 +133,6 @@ func (s *NodeStack) GenerateLLB(dir string, opts BuildOptions) (*llb.State, erro
 
 	state = s.applyOnBuild(state, opts)
 
-	state = s.chownApp(state)
-
 	return &state, nil
 }
 

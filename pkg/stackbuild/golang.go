@@ -131,7 +131,10 @@ func (s *GoStack) GenerateLLB(dir string, opts BuildOptions) (*llb.State, error)
 	// Install git for private dependencies
 	state := h.apkAdd(base, "git", "ca-certificates")
 
-	// Copy the rest of the application code
+	// Add app user before copying code so copyApp can set ownership
+	state = s.addAppUser(state)
+
+	// Copy the application code (now owned by app user)
 	appState := h.copyApp(state, localCtx)
 
 	// Use the pre-computed cmdDir from Init()
@@ -161,9 +164,7 @@ func (s *GoStack) GenerateLLB(dir string, opts BuildOptions) (*llb.State, error)
 
 	state = state.AddEnv("APP", "/bin/app")
 
-	state = s.addAppUser(state)
 	state = s.applyOnBuild(state, opts)
-	state = s.chownApp(state)
 
 	return &state, nil
 }
