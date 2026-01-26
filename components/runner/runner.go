@@ -22,6 +22,7 @@ import (
 	"miren.dev/runtime/api/storage/storage_v1alpha"
 	"miren.dev/runtime/clientconfig"
 	"miren.dev/runtime/components/coordinate"
+	"miren.dev/runtime/components/lsvd"
 	"miren.dev/runtime/components/netresolve"
 	"miren.dev/runtime/controllers/disk"
 	"miren.dev/runtime/controllers/ingress"
@@ -80,6 +81,16 @@ type RunnerDeps struct {
 
 	// Sandbox metrics
 	SandboxMetrics *sandbox.Metrics
+
+	// LSVD entity mode configuration
+	// When enabled, uses lsvd_volume/lsvd_mount entities instead of direct LsvdClient calls
+	LsvdEntityMode bool
+
+	// Path to lsvd-server binary (required when LsvdEntityMode is true)
+	LsvdServerBinary string
+
+	// Entity server address for lsvd-server (required when LsvdEntityMode is true)
+	EntityServerAddr string
 }
 
 const (
@@ -123,6 +134,9 @@ type Runner struct {
 	namespace string
 
 	sbController *sandbox.SandboxController
+
+	// LSVD component (only used in entity mode)
+	lsvdComponent *lsvd.Component
 }
 
 func (r *Runner) Close() error {
@@ -377,7 +391,33 @@ func (r *Runner) SetupControllers(
 	var diskController *disk.DiskController
 	var diskLeaseController *disk.DiskLeaseController
 
-	if r.CloudAuth != nil && r.CloudAuth.Enabled {
+	if r.deps.LsvdEntityMode {
+		// Entity mode: start lsvd-server and use entity-based controllers
+		log.Info("Using LSVD entity mode with lsvd-server",
+			"binary", r.deps.LsvdServerBinary,
+			"node_id", r.Id)
+
+		// Create and start lsvd component
+		lsvdComp := lsvd.NewComponent(log, dataPath)
+		r.lsvdComponent = lsvdComp
+
+		lsvdConfig := &lsvd.Config{
+			BinaryPath:       r.deps.LsvdServerBinary,
+			DataPath:         dataPath,
+			EntityServerAddr: r.deps.EntityServerAddr,
+			NodeId:           r.Id,
+		}
+
+		if err := lsvdComp.Start(ctx, lsvdConfig); err != nil {
+			return nil, fmt.Errorf("failed to start lsvd-server: %w", err)
+		}
+
+		r.closers = append(r.closers, lsvdComp)
+
+		// Use entity mode controllers
+		diskController = disk.NewDiskControllerWithEntityMode(log, eas, r.Id)
+		diskLeaseController = disk.NewDiskLeaseControllerWithEntityMode(log, eas, r.Id)
+	} else if r.CloudAuth != nil && r.CloudAuth.Enabled {
 		log.Info("Creating LSVD client with cloud replication",
 			"cloud_url", r.CloudAuth.CloudURL)
 

@@ -139,6 +139,9 @@ coverage-pr: ## Display coverage for lines changed in current branch
 bin/miren: ## Build the miren binary
 	@bash ./hack/build.sh
 
+bin/lsvd-server: ## Build the lsvd-server binary
+	go build -o bin/lsvd-server ./components/lsvd/cmd/lsvd-server
+
 release: ## Build release version
 	@bash ./hack/build-release.sh
 
@@ -146,9 +149,9 @@ bin/miren-debug: ## Build with debug symbols
 	go build -gcflags="all=-N -l" -o bin/miren-debug ./cmd/miren
 
 clean: ## Remove built binaries
-	rm -f bin/miren bin/miren-debug
+	rm -f bin/miren bin/miren-debug bin/lsvd-server
 
-.PHONY: bin/miren release bin/miren-debug clean
+.PHONY: bin/miren bin/lsvd-server release bin/miren-debug clean
 
 #
 # Code Quality
