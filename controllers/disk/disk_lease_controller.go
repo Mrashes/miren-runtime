@@ -1024,8 +1024,9 @@ func (d *DiskLeaseController) handlePendingLeaseViaEntity(ctx context.Context, l
 
 	// Build entity with id and encoded attributes
 	mountId := idgen.GenNS("lsvd-mnt")
+	mountEntityId := "lsvd_mount/" + mountId
 	createAttrs := entity.New(
-		entity.DBId, storage_v1alpha.KindLsvdMount.String()+"/"+mountId,
+		entity.DBId, mountEntityId,
 		lsvdMount.Encode,
 	).Attrs()
 

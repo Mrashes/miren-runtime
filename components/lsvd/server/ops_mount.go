@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -100,8 +101,17 @@ func (r *realMountOps) IsFormatted(device, filesystem string) (bool, error) {
 	cmd := exec.Command("blkid", "-o", "value", "-s", "TYPE", device)
 	output, err := cmd.Output()
 	if err != nil {
-		// No filesystem found
-		return false, nil
+		// Only treat exit status 2 (no filesystem found) as non-error.
+		// Other errors (missing binary, permissions, I/O) should be returned
+		// to prevent unsafe formatting decisions.
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.ExitStatus() == 2 {
+				// No filesystem found - this is expected for unformatted devices
+				return false, nil
+			}
+		}
+		return false, fmt.Errorf("blkid failed: %w", err)
 	}
 
 	fsType := strings.TrimSpace(string(output))

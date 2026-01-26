@@ -432,6 +432,8 @@ func (d *DiskController) handleDeletionViaEntity(ctx context.Context, disk *stor
 		d.Log.Warn("Error looking up lsvd_volume for deletion",
 			"disk", disk.ID,
 			"error", err)
+		// Return error so resync can retry - prevents orphaning volumes if lookup fails
+		return err
 	}
 
 	if volume != nil {

@@ -99,6 +99,19 @@ func (c *VolumeController) reconcileVolumePresent(ctx context.Context, volume *s
 			c.log.Debug("volume already ready", "entity_id", entityId)
 			return nil
 		}
+		// If persisted state has a disk path and it exists on disk,
+		// the volume was created but entity wasn't updated before a crash.
+		// Reconcile by updating entity state to VOL_READY.
+		if existing.DiskPath != "" && c.ops.VolumePathExists(existing.DiskPath) {
+			c.log.Info("found persisted volume on disk, reconciling entity state",
+				"entity_id", entityId,
+				"disk_path", existing.DiskPath,
+			)
+			if err := c.updateVolumeState(ctx, volume.ID, storage_v1alpha.VOL_READY, existing.VolumeId, ""); err != nil {
+				c.log.Warn("failed to update volume state from persisted volume", "entity_id", entityId, "error", err)
+			}
+			return nil
+		}
 	}
 
 	// Need to create the volume
@@ -263,7 +276,9 @@ func (c *VolumeController) getVolumePath(volumeId string) string {
 func (c *VolumeController) ReconcileWithSystem(ctx context.Context) error {
 	c.log.Info("reconciling volumes with system")
 
-	for entityId, volState := range c.state.Volumes {
+	// Use thread-safe accessor to get a snapshot of volumes
+	for _, volState := range c.state.ListVolumes() {
+		entityId := volState.EntityId
 		// Verify volume directory exists
 		if volState.DiskPath != "" {
 			if !c.ops.VolumePathExists(volState.DiskPath) {

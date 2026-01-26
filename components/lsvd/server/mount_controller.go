@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
@@ -24,6 +25,8 @@ type MountController struct {
 	state    *State
 	ops      MountOps
 
+	// handlersMu protects concurrent access to the handlers map
+	handlersMu sync.RWMutex
 	// Active NBD handlers, keyed by entity ID
 	handlers map[string]*nbdHandler
 }
@@ -71,12 +74,14 @@ func (c *MountController) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			// Cleanup handlers on shutdown
+			c.handlersMu.Lock()
 			for entityId, h := range c.handlers {
 				c.log.Info("cleaning up handler on shutdown", "entity_id", entityId)
 				if h.cancel != nil {
 					h.cancel()
 				}
 			}
+			c.handlersMu.Unlock()
 			return nil
 		case <-ticker.C:
 			if err := c.ReconcileWithEntities(ctx); err != nil {
@@ -167,7 +172,7 @@ func (c *MountController) attachAndMount(ctx context.Context, mount *storage_v1a
 	)
 
 	// Update actual_state to MNT_ATTACHING
-	if err := c.updateMountState(ctx, mount.ID, storage_v1alpha.MNT_ATTACHING, 0, "", ""); err != nil {
+	if err := c.updateMountState(ctx, mount.ID, storage_v1alpha.MNT_ATTACHING, nil, nil, nil); err != nil {
 		c.log.Warn("failed to update mount state to attaching", "error", err)
 	}
 
@@ -190,6 +195,7 @@ func (c *MountController) attachAndMount(ctx context.Context, mount *storage_v1a
 	idx, conn, clientFile, cleanup, err := c.ops.NBDLoopback(ctx, sizeBytes)
 	if err != nil {
 		disk.Close(ctx)
+		c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to setup NBD loopback: %v", err))
 		return fmt.Errorf("failed to setup NBD loopback: %w", err)
 	}
 
@@ -199,12 +205,14 @@ func (c *MountController) attachAndMount(ctx context.Context, mount *storage_v1a
 	if err := c.ops.CreateDir(dir, 0755); err != nil {
 		cleanup()
 		disk.Close(ctx)
+		c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to create device directory: %v", err))
 		return fmt.Errorf("failed to create device directory: %w", err)
 	}
 
 	if err := c.ops.CreateDeviceNode(devicePath, idx); err != nil {
 		cleanup()
 		disk.Close(ctx)
+		c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to create device node: %v", err))
 		return fmt.Errorf("failed to create device node: %w", err)
 	}
 
@@ -214,8 +222,10 @@ func (c *MountController) attachAndMount(ctx context.Context, mount *storage_v1a
 
 	// Wait for NBD device to be ready
 	deadline := time.Now().Add(10 * time.Second)
+	nbdReady := false
 	for time.Now().Before(deadline) {
 		if err := c.ops.NBDStatus(idx); err == nil {
+			nbdReady = true
 			break
 		}
 		select {
@@ -226,6 +236,14 @@ func (c *MountController) attachAndMount(ctx context.Context, mount *storage_v1a
 			return ctx.Err()
 		case <-time.After(50 * time.Millisecond):
 		}
+	}
+
+	if !nbdReady {
+		handlerCancel()
+		cleanup()
+		disk.Close(ctx)
+		c.setMountError(ctx, mount.ID, "NBD device did not become ready: timeout")
+		return fmt.Errorf("NBD device did not become ready: timeout")
 	}
 
 	// Update state
@@ -240,19 +258,22 @@ func (c *MountController) attachAndMount(ctx context.Context, mount *storage_v1a
 		LeaseNonce: mount.LeaseNonce,
 	})
 
+	c.handlersMu.Lock()
 	c.handlers[entityId] = &nbdHandler{
 		conn:       conn,
 		clientFile: clientFile,
 		cancel:     handlerCancel,
 		disk:       disk,
 	}
+	c.handlersMu.Unlock()
 
 	if err := c.state.Save(); err != nil {
 		c.log.Warn("failed to save state after NBD attach", "error", err)
 	}
 
 	// Update actual_state to MNT_ATTACHED
-	if err := c.updateMountState(ctx, mount.ID, storage_v1alpha.MNT_ATTACHED, int64(idx), devicePath, ""); err != nil {
+	nbdIdx := int64(idx)
+	if err := c.updateMountState(ctx, mount.ID, storage_v1alpha.MNT_ATTACHED, &nbdIdx, &devicePath, nil); err != nil {
 		c.log.Warn("failed to update mount state to attached", "error", err)
 	}
 
@@ -276,12 +297,13 @@ func (c *MountController) mountVolume(ctx context.Context, mount *storage_v1alph
 	)
 
 	// Update actual_state to MNT_MOUNTING
-	if err := c.updateMountState(ctx, mount.ID, storage_v1alpha.MNT_MOUNTING, 0, "", ""); err != nil {
+	if err := c.updateMountState(ctx, mount.ID, storage_v1alpha.MNT_MOUNTING, nil, nil, nil); err != nil {
 		c.log.Warn("failed to update mount state to mounting", "error", err)
 	}
 
 	// Create mount point
 	if err := c.ops.CreateDir(mount.MountPath, 0755); err != nil {
+		c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to create mount point: %v", err))
 		return fmt.Errorf("failed to create mount point: %w", err)
 	}
 
@@ -295,18 +317,22 @@ func (c *MountController) mountVolume(ctx context.Context, mount *storage_v1alph
 	// Format if needed (check for existing filesystem)
 	formatted, err := c.ops.IsFormatted(mountState.DevicePath, filesystem)
 	if err != nil {
-		c.log.Warn("failed to check if formatted", "error", err)
+		// Treat probe errors as fatal to avoid accidentally formatting over existing data
+		c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to check if formatted: %v", err))
+		return fmt.Errorf("failed to check if formatted: %w", err)
 	}
 
 	if !formatted {
 		c.log.Info("formatting device", "device", mountState.DevicePath, "filesystem", filesystem)
 		if err := c.ops.FormatDevice(ctx, mountState.DevicePath, filesystem); err != nil {
+			c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to format device: %v", err))
 			return fmt.Errorf("failed to format device: %w", err)
 		}
 	}
 
 	// Mount the filesystem
 	if err := c.ops.Mount(mountState.DevicePath, mount.MountPath, filesystem, mount.ReadOnly); err != nil {
+		c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to mount: %v", err))
 		return fmt.Errorf("failed to mount: %w", err)
 	}
 
@@ -323,7 +349,7 @@ func (c *MountController) mountVolume(ctx context.Context, mount *storage_v1alph
 	)
 
 	// Update actual_state to MNT_MOUNTED
-	if err := c.updateMountState(ctx, mount.ID, storage_v1alpha.MNT_MOUNTED, 0, "", ""); err != nil {
+	if err := c.updateMountState(ctx, mount.ID, storage_v1alpha.MNT_MOUNTED, nil, nil, nil); err != nil {
 		c.log.Warn("failed to update mount state to mounted", "error", err)
 	}
 
@@ -340,15 +366,18 @@ func (c *MountController) unmountAndDetach(ctx context.Context, mount *storage_v
 	)
 
 	// Update actual_state to MNT_UNMOUNTING
-	if err := c.updateMountState(ctx, mount.ID, storage_v1alpha.MNT_UNMOUNTING, 0, "", ""); err != nil {
+	if err := c.updateMountState(ctx, mount.ID, storage_v1alpha.MNT_UNMOUNTING, nil, nil, nil); err != nil {
 		c.log.Warn("failed to update mount state to unmounting", "error", err)
 	}
 
 	mountState := c.state.GetMount(entityId)
 	if mountState == nil {
 		c.log.Warn("mount state not found", "entity_id", entityId)
-		// Update actual_state to MNT_DETACHED
-		if err := c.updateMountState(ctx, mount.ID, storage_v1alpha.MNT_DETACHED, 0, "", ""); err != nil {
+		// Update actual_state to MNT_DETACHED and clear stale fields
+		clearNbd := int64(0)
+		clearPath := ""
+		clearErr := ""
+		if err := c.updateMountState(ctx, mount.ID, storage_v1alpha.MNT_DETACHED, &clearNbd, &clearPath, &clearErr); err != nil {
 			c.log.Warn("failed to update mount state to detached", "error", err)
 		}
 		return nil
@@ -358,17 +387,19 @@ func (c *MountController) unmountAndDetach(ctx context.Context, mount *storage_v
 	if mountState.Mounted {
 		if err := c.ops.Unmount(mountState.MountPath); err != nil {
 			c.log.Warn("failed to unmount", "error", err)
+			return fmt.Errorf("failed to unmount: %w", err)
 		}
 		mountState.Mounted = false
 		c.state.SetMount(entityId, mountState)
 	}
 
 	// Update actual_state to MNT_DETACHING
-	if err := c.updateMountState(ctx, mount.ID, storage_v1alpha.MNT_DETACHING, 0, "", ""); err != nil {
+	if err := c.updateMountState(ctx, mount.ID, storage_v1alpha.MNT_DETACHING, nil, nil, nil); err != nil {
 		c.log.Warn("failed to update mount state to detaching", "error", err)
 	}
 
 	// Stop NBD handler
+	c.handlersMu.Lock()
 	if h, ok := c.handlers[entityId]; ok {
 		if h.cancel != nil {
 			h.cancel()
@@ -378,6 +409,7 @@ func (c *MountController) unmountAndDetach(ctx context.Context, mount *storage_v
 		}
 		delete(c.handlers, entityId)
 	}
+	c.handlersMu.Unlock()
 
 	// Disconnect NBD device
 	if mountState.NbdIndex > 0 {
@@ -399,8 +431,11 @@ func (c *MountController) unmountAndDetach(ctx context.Context, mount *storage_v
 
 	c.log.Info("volume unmounted and detached", "entity_id", entityId)
 
-	// Update actual_state to MNT_DETACHED
-	if err := c.updateMountState(ctx, mount.ID, storage_v1alpha.MNT_DETACHED, 0, "", ""); err != nil {
+	// Update actual_state to MNT_DETACHED and clear stale NBD/device/error fields
+	clearNbd := int64(0)
+	clearPath := ""
+	clearErr := ""
+	if err := c.updateMountState(ctx, mount.ID, storage_v1alpha.MNT_DETACHED, &clearNbd, &clearPath, &clearErr); err != nil {
 		c.log.Warn("failed to update mount state to detached", "error", err)
 	}
 
@@ -428,9 +463,13 @@ func (c *MountController) getDevicePath(volumeId string) string {
 func (c *MountController) ReconcileWithSystem(ctx context.Context) error {
 	c.log.Info("reconciling mounts with system")
 
-	for entityId, mountState := range c.state.Mounts {
+	// Use thread-safe accessor to get a snapshot of mounts
+	for _, mountState := range c.state.ListMounts() {
+		entityId := mountState.EntityId
 		// Check if we have an active handler for this mount
+		c.handlersMu.RLock()
 		_, hasHandler := c.handlers[entityId]
+		c.handlersMu.RUnlock()
 
 		// Check if NBD device is still connected
 		nbdConnected := false
@@ -460,23 +499,21 @@ func (c *MountController) ReconcileWithSystem(ctx context.Context) error {
 			}
 		}
 
-		// Check if still mounted
-		if mountState.Mounted {
-			if !c.ops.IsMounted(mountState.MountPath) {
-				c.log.Warn("volume not mounted but should be",
-					"entity_id", entityId,
-					"mount_path", mountState.MountPath,
-				)
-				mountState.Mounted = false
-				c.state.SetMount(entityId, mountState)
+		// Check if mounted (regardless of local flag, to catch reconnect recovery)
+		if !c.ops.IsMounted(mountState.MountPath) {
+			c.log.Warn("volume not mounted but should be",
+				"entity_id", entityId,
+				"mount_path", mountState.MountPath,
+			)
+			mountState.Mounted = false
+			c.state.SetMount(entityId, mountState)
 
-				// Try to remount
-				if err := c.remountFilesystem(ctx, entityId, mountState); err != nil {
-					c.log.Error("failed to remount filesystem",
-						"entity_id", entityId,
-						"error", err,
-					)
-				}
+			// Try to remount
+			if err := c.remountFilesystem(ctx, entityId, mountState); err != nil {
+				c.log.Error("failed to remount filesystem",
+					"entity_id", entityId,
+					"error", err,
+				)
 			}
 		}
 	}
@@ -503,6 +540,7 @@ func (c *MountController) reconnectNBD(ctx context.Context, entityId string, mou
 	)
 
 	// Clean up old handler if exists
+	c.handlersMu.Lock()
 	if h, ok := c.handlers[entityId]; ok {
 		if h.cancel != nil {
 			h.cancel()
@@ -512,6 +550,7 @@ func (c *MountController) reconnectNBD(ctx context.Context, entityId string, mou
 		}
 		delete(c.handlers, entityId)
 	}
+	c.handlersMu.Unlock()
 
 	// Disconnect old NBD device if still partially connected
 	if mountState.NbdIndex > 0 {
@@ -553,8 +592,10 @@ func (c *MountController) reconnectNBD(ctx context.Context, entityId string, mou
 
 	// Wait for NBD device to be ready
 	deadline := time.Now().Add(10 * time.Second)
+	nbdReady := false
 	for time.Now().Before(deadline) {
 		if err := c.ops.NBDStatus(idx); err == nil {
+			nbdReady = true
 			break
 		}
 		select {
@@ -566,18 +607,26 @@ func (c *MountController) reconnectNBD(ctx context.Context, entityId string, mou
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
+	if !nbdReady {
+		handlerCancel()
+		cleanup()
+		disk.Close(ctx)
+		return fmt.Errorf("NBD device did not become ready after reconnect: timeout")
+	}
 
 	// Update state with new NBD index
 	mountState.NbdIndex = idx
 	mountState.DevicePath = devicePath
 	c.state.SetMount(entityId, mountState)
 
+	c.handlersMu.Lock()
 	c.handlers[entityId] = &nbdHandler{
 		conn:       conn,
 		clientFile: clientFile,
 		cancel:     handlerCancel,
 		disk:       disk,
 	}
+	c.handlersMu.Unlock()
 
 	c.log.Info("NBD device reconnected",
 		"entity_id", entityId,
@@ -690,7 +739,9 @@ func mountActualStateToId(state storage_v1alpha.LsvdMountActualState) entity.Id 
 }
 
 // updateMountState updates the actual_state and optionally other fields in the entity
-func (c *MountController) updateMountState(ctx context.Context, id entity.Id, state storage_v1alpha.LsvdMountActualState, nbdIndex int64, devicePath, errorMsg string) error {
+// updateMountState updates the actual_state and optionally other fields.
+// Use nil pointers to leave fields unchanged, or pass a pointer to explicitly set a value (including zero/empty to clear).
+func (c *MountController) updateMountState(ctx context.Context, id entity.Id, state storage_v1alpha.LsvdMountActualState, nbdIndex *int64, devicePath, errorMsg *string) error {
 	// Get the entity.Id for the state
 	stateId := mountActualStateToId(state)
 
@@ -700,16 +751,16 @@ func (c *MountController) updateMountState(ctx context.Context, id entity.Id, st
 		entity.Ref(storage_v1alpha.LsvdMountActualStateId, stateId),
 	}
 
-	if nbdIndex > 0 {
-		attrs = append(attrs, entity.Int64(storage_v1alpha.LsvdMountNbdIndexId, nbdIndex))
+	if nbdIndex != nil {
+		attrs = append(attrs, entity.Int64(storage_v1alpha.LsvdMountNbdIndexId, *nbdIndex))
 	}
 
-	if devicePath != "" {
-		attrs = append(attrs, entity.String(storage_v1alpha.LsvdMountDevicePathId, devicePath))
+	if devicePath != nil {
+		attrs = append(attrs, entity.String(storage_v1alpha.LsvdMountDevicePathId, *devicePath))
 	}
 
-	if errorMsg != "" {
-		attrs = append(attrs, entity.String(storage_v1alpha.LsvdMountErrorMessageId, errorMsg))
+	if errorMsg != nil {
+		attrs = append(attrs, entity.String(storage_v1alpha.LsvdMountErrorMessageId, *errorMsg))
 	}
 
 	_, err := c.eac.Patch(ctx, attrs, 0)
@@ -718,7 +769,7 @@ func (c *MountController) updateMountState(ctx context.Context, id entity.Id, st
 
 // setMountError sets the mount to error state with a message
 func (c *MountController) setMountError(ctx context.Context, id entity.Id, errorMsg string) {
-	if err := c.updateMountState(ctx, id, storage_v1alpha.MNT_ERROR, 0, "", errorMsg); err != nil {
+	if err := c.updateMountState(ctx, id, storage_v1alpha.MNT_ERROR, nil, nil, &errorMsg); err != nil {
 		c.log.Warn("failed to set mount error state", "entity_id", id, "error", err)
 	}
 }

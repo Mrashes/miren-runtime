@@ -37,8 +37,9 @@ func (d *DebugService) Health(ctx context.Context, state *lsvd_v1alpha.LsvdDebug
 	status.SetEntityServerConnected(entityServerConnected)
 
 	if d.server.state != nil {
-		status.SetVolumeCount(int32(len(d.server.state.Volumes)))
-		status.SetMountCount(int32(len(d.server.state.Mounts)))
+		// Use thread-safe helper methods to access counts
+		status.SetVolumeCount(int32(len(d.server.state.ListVolumes())))
+		status.SetMountCount(int32(len(d.server.state.ListMounts())))
 	}
 
 	if !lastVolumeReconcile.IsZero() {

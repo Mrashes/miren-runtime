@@ -330,8 +330,8 @@ func (r *Runner) SetupControllers(
 	eas *es.EntityAccessClient,
 	rs *rpc.Server,
 ) (
-	*controller.ControllerManager,
-	error,
+	_ *controller.ControllerManager,
+	retErr error,
 ) {
 	cm := controller.NewControllerManager()
 
@@ -392,6 +392,14 @@ func (r *Runner) SetupControllers(
 	var diskLeaseController *disk.DiskLeaseController
 
 	if r.deps.LsvdEntityMode {
+		// Validate required config for entity mode
+		if r.deps.LsvdServerBinary == "" {
+			return nil, fmt.Errorf("lsvd_server_binary is required when lsvd_entity_mode is true")
+		}
+		if r.deps.EntityServerAddr == "" {
+			return nil, fmt.Errorf("entity_server_addr is required when lsvd_entity_mode is true")
+		}
+
 		// Entity mode: start lsvd-server and use entity-based controllers
 		log.Info("Using LSVD entity mode with lsvd-server",
 			"binary", r.deps.LsvdServerBinary,
@@ -411,6 +419,13 @@ func (r *Runner) SetupControllers(
 		if err := lsvdComp.Start(ctx, lsvdConfig); err != nil {
 			return nil, fmt.Errorf("failed to start lsvd-server: %w", err)
 		}
+
+		// Clean up lsvd-server if subsequent initialization fails
+		defer func() {
+			if retErr != nil {
+				_ = lsvdComp.Close()
+			}
+		}()
 
 		r.closers = append(r.closers, lsvdComp)
 

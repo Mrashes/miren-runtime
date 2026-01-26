@@ -84,6 +84,7 @@ func (s *Server) Run(ctx context.Context) error {
 	if err != nil {
 		s.log.Warn("failed to load state, starting fresh", "error", err)
 		state = NewState()
+		state.SetPath(s.dataPath)
 	}
 	s.state = state
 
