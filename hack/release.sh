@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Release script for creating version tags following RFD-40 conventions
+# Release script for stable releases following RFD-40 conventions
 # Usage: hack/release.sh <version>
 # Examples:
-#   hack/release.sh v0.0.0-test.1    # Test release
 #   hack/release.sh v0.1.0           # Preview release
 #   hack/release.sh v1.0.0           # GA release
+# For prerelease tags, use hack/release-prerelease.sh instead
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -19,16 +19,16 @@ if [ -z "$VERSION" ]; then
   echo "Usage: $0 <version>"
   echo ""
   echo "Examples:"
-  echo "  $0 v0.0.0-test.1    # Test release"
   echo "  $0 v0.1.0           # Preview release"
   echo "  $0 v1.0.0           # GA release"
   exit 1
 fi
 
-# Validate version format
-if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
-  echo "Error: Invalid semver format: $VERSION"
-  echo "Must match: v<major>.<minor>.<patch>[-<prerelease>]"
+# Validate version format (stable releases only, no prerelease suffix)
+if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Error: Invalid version format: $VERSION"
+  echo "Must match: v<major>.<minor>.<patch>"
+  echo "For prerelease tags, use hack/release-prerelease.sh instead"
   exit 1
 fi
 
@@ -66,31 +66,21 @@ if git rev-parse "$VERSION" >/dev/null 2>&1; then
   exit 1
 fi
 
-# Determine release type and whether to update changelog
-UPDATE_CHANGELOG=true
-RELEASE_TYPE=""
-if [[ "$VERSION" =~ ^v0\.0\.0-test\. ]]; then
-  RELEASE_TYPE="Test release"
-  UPDATE_CHANGELOG=false
-elif [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+- ]]; then
-  RELEASE_TYPE="Prerelease"
-  UPDATE_CHANGELOG=false
-elif [[ "$VERSION" =~ ^v0\. ]]; then
+# Determine release type
+if [[ "$VERSION" =~ ^v0\. ]]; then
   RELEASE_TYPE="Preview release"
 else
   RELEASE_TYPE="GA release"
 fi
 
-# Validate changelog has Unreleased section (for releases that update it)
-if [ "$UPDATE_CHANGELOG" = true ]; then
-  if [ ! -f "$CHANGELOG" ]; then
-    echo "Error: Changelog not found at $CHANGELOG"
-    exit 1
-  fi
-  if ! grep -q "^## Unreleased" "$CHANGELOG"; then
-    echo "Error: Changelog missing '## Unreleased' section"
-    exit 1
-  fi
+# Validate changelog has Unreleased section
+if [ ! -f "$CHANGELOG" ]; then
+  echo "Error: Changelog not found at $CHANGELOG"
+  exit 1
+fi
+if ! grep -q "^## Unreleased" "$CHANGELOG"; then
+  echo "Error: Changelog missing '## Unreleased' section"
+  exit 1
 fi
 
 # Show what we're about to do
@@ -100,11 +90,7 @@ echo "Creating $RELEASE_TYPE: $VERSION"
 echo "======================================"
 echo "Branch: $CURRENT_BRANCH"
 echo "Commit: $(git rev-parse --short HEAD)"
-if [ "$UPDATE_CHANGELOG" = true ]; then
-  echo "Changelog: Will update Unreleased → $VERSION"
-else
-  echo "Changelog: Skipped (test/prerelease)"
-fi
+echo "Changelog: Will update Unreleased → $VERSION"
 echo ""
 
 # Ask for confirmation
@@ -115,20 +101,19 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
   exit 1
 fi
 
-# Update changelog if this is a real release
-if [ "$UPDATE_CHANGELOG" = true ]; then
-  echo ""
-  echo "Updating changelog..."
+# Update changelog
+echo ""
+echo "Updating changelog..."
 
-  RELEASE_DATE=$(date +%Y-%m-%d)
-  TEMP_CHANGELOG=$(mktemp)
-  trap '[[ -n "$TEMP_CHANGELOG" && -e "$TEMP_CHANGELOG" ]] && rm -f "$TEMP_CHANGELOG"' EXIT
+RELEASE_DATE=$(date +%Y-%m-%d)
+TEMP_CHANGELOG=$(mktemp)
+trap '[[ -n "$TEMP_CHANGELOG" && -e "$TEMP_CHANGELOG" ]] && rm -f "$TEMP_CHANGELOG"' EXIT
 
-  # Copy header (everything before "## Unreleased")
-  sed -n '1,/^## Unreleased$/{ /^## Unreleased$/!p }' "$CHANGELOG" > "$TEMP_CHANGELOG"
+# Copy header (everything before "## Unreleased")
+sed -n '1,/^## Unreleased$/{ /^## Unreleased$/!p }' "$CHANGELOG" > "$TEMP_CHANGELOG"
 
-  # Add fresh empty Unreleased section
-  cat >> "$TEMP_CHANGELOG" << 'EOF'
+# Add fresh empty Unreleased section
+cat >> "$TEMP_CHANGELOG" << 'EOF'
 ## Unreleased
 *main*
 
@@ -136,55 +121,42 @@ if [ "$UPDATE_CHANGELOG" = true ]; then
 
 EOF
 
-  # Append rest of changelog, converting old Unreleased to new version
-  sed -n '/^## Unreleased$/,$ {
-    s/^## Unreleased$/## '"$VERSION"'/
-    s/^\*main\*$/*'"$RELEASE_DATE"'*/
-    p
-  }' "$CHANGELOG" >> "$TEMP_CHANGELOG"
+# Append rest of changelog, converting old Unreleased to new version
+sed -n '/^## Unreleased$/,$ {
+  s/^## Unreleased$/## '"$VERSION"'/
+  s/^\*main\*$/*'"$RELEASE_DATE"'*/
+  p
+}' "$CHANGELOG" >> "$TEMP_CHANGELOG"
 
-  mv "$TEMP_CHANGELOG" "$CHANGELOG"
-  TEMP_CHANGELOG=""  # Clear so trap doesn't try to remove moved file
+mv "$TEMP_CHANGELOG" "$CHANGELOG"
+TEMP_CHANGELOG=""  # Clear so trap doesn't try to remove moved file
 
-  # Commit the changelog update
-  git add "$CHANGELOG"
-  git commit -m "Release $VERSION"
+# Create a release branch and commit the changelog update
+RELEASE_BRANCH="release/$VERSION"
+git checkout -b "$RELEASE_BRANCH"
 
-  echo "✓ Changelog updated and committed"
-fi
+git add "$CHANGELOG"
+git commit -m "Release $VERSION"
 
-# Create annotated tag
-TAG_MESSAGE="Release $VERSION
+echo "✓ Changelog updated and committed on branch $RELEASE_BRANCH"
 
-$RELEASE_TYPE created from main branch"
-
-git tag -a "$VERSION" -m "$TAG_MESSAGE"
+# Push the release branch; the tag will be created automatically when the PR is merged
+echo "Pushing release branch to origin..."
+git push origin "$RELEASE_BRANCH"
 
 echo ""
-echo "✓ Created annotated tag: $VERSION"
-echo ""
-
-# Push the commit (if we made one) and tag
-echo "Pushing to origin..."
-if [ "$UPDATE_CHANGELOG" = true ]; then
-  git push origin main
-fi
-git push origin "$VERSION"
+echo "Creating pull request..."
+gh pr create --base main --head "$RELEASE_BRANCH" --title "Release $VERSION" --body "Changelog update for $VERSION"
 
 echo ""
 echo "======================================"
-echo "✓ Release tag pushed successfully"
+echo "✓ Release branch pushed and PR created"
 echo "======================================"
 echo ""
-echo "What happens next:"
-echo "1. Test workflow runs: https://github.com/mirendev/runtime/actions"
-echo "2. Once tests pass, release workflow builds and uploads"
-if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+- ]]; then
-  echo "3. Artifacts uploaded to: $VERSION (prereleases don't update 'latest')"
-else
-  echo "3. Artifacts uploaded to: $VERSION and latest"
-fi
-echo "4. Slack notification sent with deployment details"
+echo "Next steps:"
+echo "1. Merge the PR"
+echo "2. The tag $VERSION will be created automatically on merge"
+echo "3. The release workflow will then build and upload artifacts"
 echo ""
 echo "Monitor progress:"
 echo "  https://github.com/mirendev/runtime/actions"
