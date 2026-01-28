@@ -68,7 +68,7 @@ func (c *testController) recordUndoMult(out MultiplyOut) {
 
 // Action functions
 func AddNumbers(ctx context.Context, in AddNumbersIn) (AddNumbersOut, error) {
-	ctrl := From[*testController](ctx)
+	ctrl := Get[*testController](ctx)
 	ctrl.recordAdd(in)
 	if ctrl.failAdd {
 		return AddNumbersOut{}, errors.New("add failed")
@@ -77,13 +77,13 @@ func AddNumbers(ctx context.Context, in AddNumbersIn) (AddNumbersOut, error) {
 }
 
 func UndoAddNumbers(ctx context.Context, in AddNumbersIn, out AddNumbersOut) error {
-	ctrl := From[*testController](ctx)
+	ctrl := Get[*testController](ctx)
 	ctrl.recordUndoAdd(out)
 	return nil
 }
 
 func Multiply(ctx context.Context, in MultiplyIn) (MultiplyOut, error) {
-	ctrl := From[*testController](ctx)
+	ctrl := Get[*testController](ctx)
 	ctrl.recordMultiply(in)
 	if ctrl.failMultiply {
 		return MultiplyOut{}, errors.New("multiply failed")
@@ -92,7 +92,7 @@ func Multiply(ctx context.Context, in MultiplyIn) (MultiplyOut, error) {
 }
 
 func UndoMultiply(ctx context.Context, in MultiplyIn, out MultiplyOut) error {
-	ctrl := From[*testController](ctx)
+	ctrl := Get[*testController](ctx)
 	ctrl.recordUndoMult(out)
 	return nil
 }
@@ -152,7 +152,7 @@ func TestBuilder_SingleAction(t *testing.T) {
 
 	ctrl := &testController{}
 	err := Define("single-action").
-		With(ctrl).
+		Using(ctrl).
 		Action("add", AddNumbers).Undo(UndoAddNumbers).
 		RegisterTo(registry)
 	require.NoError(t, err)
@@ -169,7 +169,7 @@ func TestBuilder_MultipleActionsWithDependencies(t *testing.T) {
 
 	ctrl := &testController{}
 	err := Define("calc").
-		With(ctrl).
+		Using(ctrl).
 		Action("add", AddNumbers).Undo(UndoAddNumbers).
 		Action("multiply", Multiply).Undo(UndoMultiply).
 		RegisterTo(registry)
@@ -201,7 +201,7 @@ func TestBuilder_DuplicateOutputsError(t *testing.T) {
 	ctrl := &testController{}
 	// Both actions produce "sum"
 	_, err := Define("duplicate").
-		With(ctrl).
+		Using(ctrl).
 		Action("add1", AddNumbers).Undo(UndoAddNumbers).
 		Action("add2", AddNumbers).Undo(UndoAddNumbers).
 		Build()
@@ -214,7 +214,7 @@ func TestExecutor_Success(t *testing.T) {
 
 	ctrl := &testController{}
 	err := Define("calc").
-		With(ctrl).
+		Using(ctrl).
 		Action("add", AddNumbers).Undo(UndoAddNumbers).
 		Action("multiply", Multiply).Undo(UndoMultiply).
 		RegisterTo(registry)
@@ -225,9 +225,9 @@ func TestExecutor_Success(t *testing.T) {
 
 	ctx := context.Background()
 	err = executor.Start("calc").
-		With("a", 2).
-		With("b", 3).
-		With("factor", 4).
+		Input("a", 2).
+		Input("b", 3).
+		Input("factor", 4).
 		WithID("test-exec-1").
 		Execute(ctx)
 	require.NoError(t, err)
@@ -255,7 +255,7 @@ func TestExecutor_FailureAndUndo(t *testing.T) {
 
 	ctrl := &testController{failMultiply: true}
 	err := Define("calc-fail").
-		With(ctrl).
+		Using(ctrl).
 		Action("add", AddNumbers).Undo(UndoAddNumbers).
 		Action("multiply", Multiply).Undo(UndoMultiply).
 		RegisterTo(registry)
@@ -266,9 +266,9 @@ func TestExecutor_FailureAndUndo(t *testing.T) {
 
 	ctx := context.Background()
 	err = executor.Start("calc-fail").
-		With("a", 2).
-		With("b", 3).
-		With("factor", 4).
+		Input("a", 2).
+		Input("b", 3).
+		Input("factor", 4).
 		WithID("test-exec-2").
 		Execute(ctx)
 	require.Error(t, err)
@@ -297,7 +297,7 @@ func TestExecutor_Recovery(t *testing.T) {
 
 	ctrl := &testController{}
 	err := Define("recoverable").
-		With(ctrl).
+		Using(ctrl).
 		Action("add", AddNumbers).Undo(UndoAddNumbers).
 		Action("multiply", Multiply).Undo(UndoMultiply).
 		RegisterTo(registry)
@@ -345,7 +345,7 @@ func TestExecutor_ContextCancellation(t *testing.T) {
 
 	ctrl := &testController{}
 	err := Define("cancellable").
-		With(ctrl).
+		Using(ctrl).
 		Action("add", AddNumbers).Undo(UndoAddNumbers).
 		Action("multiply", Multiply).Undo(UndoMultiply).
 		RegisterTo(registry)
@@ -359,9 +359,9 @@ func TestExecutor_ContextCancellation(t *testing.T) {
 	cancel()
 
 	err = executor.Start("cancellable").
-		With("a", 2).
-		With("b", 3).
-		With("factor", 4).
+		Input("a", 2).
+		Input("b", 3).
+		Input("factor", 4).
 		WithID("cancel-exec").
 		Execute(ctx)
 
@@ -380,25 +380,25 @@ func TestExecutor_ContextCancellation(t *testing.T) {
 	assert.Empty(t, ctrl.multiplyCalls)
 }
 
-func TestFrom_Panic(t *testing.T) {
+func TestGet_Panic(t *testing.T) {
 	ctx := context.Background()
 	assert.Panics(t, func() {
-		From[*testController](ctx)
+		Get[*testController](ctx)
 	})
 }
 
-func TestTryFrom(t *testing.T) {
+func TestTryGet(t *testing.T) {
 	ctx := context.Background()
 
 	// Without dependency
-	ctrl, ok := TryFrom[*testController](ctx)
+	ctrl, ok := TryGet[*testController](ctx)
 	assert.False(t, ok)
 	assert.Nil(t, ctrl)
 
 	// With dependency
 	ctrl = &testController{}
 	ctx = injectDependencies(ctx, []any{ctrl})
-	got, ok := TryFrom[*testController](ctx)
+	got, ok := TryGet[*testController](ctx)
 	assert.True(t, ok)
 	assert.Same(t, ctrl, got)
 }
@@ -488,7 +488,7 @@ func TestExecutor_MissingRequiredInput(t *testing.T) {
 	ctx := context.Background()
 	// Missing "required" input should cause an error
 	err = executor.Start("required-test").
-		With("optional", 10).
+		Input("optional", 10).
 		WithID("missing-required").
 		Execute(ctx)
 	require.Error(t, err)
@@ -510,7 +510,7 @@ func TestExecutor_OptionalInput(t *testing.T) {
 	ctx := context.Background()
 	// Missing "optional" input should use zero value (0)
 	err = executor.Start("optional-test").
-		With("required", 5).
+		Input("required", 5).
 		WithID("optional-missing").
 		Execute(ctx)
 	require.NoError(t, err)

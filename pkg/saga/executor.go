@@ -77,8 +77,8 @@ func (e *Executor) Start(definitionName string) *StartBuilder {
 	}
 }
 
-// With adds an initial input to the saga.
-func (sb *StartBuilder) With(key string, value any) *StartBuilder {
+// Input adds an initial input value to the saga execution.
+func (sb *StartBuilder) Input(key string, value any) *StartBuilder {
 	sb.inputs[key] = value
 	return sb
 }

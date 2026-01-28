@@ -75,9 +75,9 @@ func (b *Builder) Version(v int) *Builder {
 	return b
 }
 
-// With adds dependencies that will be injected into the context during execution.
-// These can be retrieved using From[T](ctx) within action functions.
-func (b *Builder) With(deps ...any) *Builder {
+// Using adds dependencies that will be injected into the context during execution.
+// These can be retrieved using Get[T](ctx) within action functions.
+func (b *Builder) Using(deps ...any) *Builder {
 	b.dependencies = append(b.dependencies, deps...)
 	return b
 }
@@ -303,9 +303,9 @@ func injectDependencies(ctx context.Context, deps []any) context.Context {
 	return ctx
 }
 
-// From retrieves a dependency of type T from the context.
+// Get retrieves a dependency of type T from the context.
 // Panics if the dependency is not found.
-func From[T any](ctx context.Context) T {
+func Get[T any](ctx context.Context) T {
 	var zero T
 	key := contextKey{typ: fmt.Sprintf("%T", zero)}
 	val := ctx.Value(key)
@@ -315,9 +315,9 @@ func From[T any](ctx context.Context) T {
 	return val.(T)
 }
 
-// TryFrom retrieves a dependency of type T from the context.
+// TryGet retrieves a dependency of type T from the context.
 // Returns the zero value and false if not found.
-func TryFrom[T any](ctx context.Context) (T, bool) {
+func TryGet[T any](ctx context.Context) (T, bool) {
 	var zero T
 	key := contextKey{typ: fmt.Sprintf("%T", zero)}
 	val := ctx.Value(key)
