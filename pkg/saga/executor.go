@@ -235,7 +235,9 @@ func (e *Executor) runExecution(ctx context.Context, def *Definition, exec *Exec
 				exec.ExecutionOrder = append(exec.ExecutionOrder, actionName)
 			}
 
-			e.storage.Save(ctx, exec)
+			if saveErr := e.storage.Save(ctx, exec); saveErr != nil {
+				log.Error("failed to persist state after serialization error", "error", saveErr)
+			}
 			return e.runUndo(ctx, def, exec)
 		}
 
