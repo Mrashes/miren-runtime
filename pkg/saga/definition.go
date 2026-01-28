@@ -105,6 +105,11 @@ func (b *Builder) Action(args ...any) *ActionBuilder {
 	case 1:
 		// Action(fn) - derive name from function
 		execute = args[0]
+		t := reflect.TypeOf(execute)
+		if t == nil || t.Kind() != reflect.Func {
+			b.err = fmt.Errorf("Action argument must be a function")
+			return &ActionBuilder{builder: b, pending: &pendingAction{}}
+		}
 		name = funcName(execute)
 	case 2:
 		// Action("name", fn) - explicit name
@@ -158,7 +163,7 @@ func funcName(fn any) string {
 
 // camelToKebab converts CamelCase to kebab-case.
 // "GetBread" -> "get-bread"
-// "AddHTTPHeader" -> "add-http-header"
+// "AddHTTPHeader" -> "add-h-t-t-p-header" (consecutive caps get individual hyphens)
 func camelToKebab(s string) string {
 	var result strings.Builder
 	for i, r := range s {
@@ -226,6 +231,11 @@ func (b *Builder) Build() (*Definition, error) {
 			return nil, fmt.Errorf("action %q: %w", pending.name, err)
 		}
 		pending.typedAct = typed
+
+		// Check for duplicate action names
+		if _, exists := def.Actions[pending.name]; exists {
+			return nil, fmt.Errorf("duplicate action name %q", pending.name)
+		}
 
 		// Check for duplicate output keys
 		for _, key := range typed.outputKeys() {

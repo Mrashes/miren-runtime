@@ -220,6 +220,21 @@ func (e *Executor) runExecution(ctx context.Context, def *Definition, exec *Exec
 			log.Error("failed to serialize output", "action", actionName, "error", err)
 			exec.Error = fmt.Sprintf("action %q output serialization failed: %v", actionName, err)
 			exec.UpdatedAt = time.Now()
+
+			// The action ran but output can't be persisted for later recovery.
+			// Immediately undo this action with the in-memory output.
+			if undoErr := node.Action.Undo(ctx, actionInputs, output); undoErr != nil {
+				log.Error("undo failed after serialization error", "action", actionName, "error", undoErr)
+			} else {
+				// Record as executed and undone so runUndo skips it
+				undoneAt := time.Now()
+				exec.ExecutedActions[actionName] = &ActionResult{
+					ExecutedAt: now,
+					UndoneAt:   &undoneAt,
+				}
+				exec.ExecutionOrder = append(exec.ExecutionOrder, actionName)
+			}
+
 			e.storage.Save(ctx, exec)
 			return e.runUndo(ctx, def, exec)
 		}
@@ -429,9 +444,9 @@ func extractOutputs(node *ActionNode, outputBytes []byte, outputs map[string]jso
 	}
 
 	for _, mapping := range typed.outMappings {
-		// Look for the field in the output map
-		// Go's JSON encoder uses the field name as-is (capitalized) unless there's a json tag
-		if val, exists := outputMap[mapping.fieldName]; exists {
+		// Look for the field in the output map using the JSON key name
+		// (which accounts for json struct tags)
+		if val, exists := outputMap[mapping.jsonKey]; exists {
 			outputs[mapping.sagaKey] = val
 		}
 	}
