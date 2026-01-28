@@ -218,6 +218,9 @@ func (r *realMountOps) IsFormatted(device, filesystem string) (bool, error) {
 func (r *realMountOps) FormatDevice(ctx context.Context, device, filesystem string) error {
 	var cmd *exec.Cmd
 
+	// Use background context intentionally: killing mkfs mid-format can leave
+	// the device in an inconsistent state. The caller's format retry loop
+	// (in mount_controller.go) handles timeouts at a higher level.
 	ctx = context.Background()
 
 	switch filesystem {

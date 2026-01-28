@@ -314,7 +314,7 @@ func (c *MountController) attachAndMount(ctx context.Context, mount *storage_v1a
 			handlerCancel()
 			<-handlerDone // wait for handler to exit
 			cleanup()
-			disk.Close(ctx)
+			disk.Close(context.Background()) // Use background context for cleanup
 			return ctx.Err()
 		case <-time.After(50 * time.Millisecond):
 		}
@@ -324,7 +324,7 @@ func (c *MountController) attachAndMount(ctx context.Context, mount *storage_v1a
 		handlerCancel()
 		<-handlerDone // wait for handler to exit
 		cleanup()
-		disk.Close(ctx)
+		disk.Close(context.Background()) // Use background context for cleanup
 		c.setMountError(ctx, mount.ID, "NBD device did not become ready: timeout")
 		return fmt.Errorf("NBD device did not become ready: timeout")
 	}
@@ -762,7 +762,7 @@ func (c *MountController) reconnectNBD(ctx context.Context, entityId string, mou
 			handlerCancel()
 			<-handlerDone // wait for handler to exit
 			cleanup()
-			disk.Close(ctx)
+			disk.Close(context.Background()) // Use background context for cleanup
 			return ctx.Err()
 		case <-time.After(50 * time.Millisecond):
 		}
@@ -771,7 +771,7 @@ func (c *MountController) reconnectNBD(ctx context.Context, entityId string, mou
 		handlerCancel()
 		<-handlerDone // wait for handler to exit
 		cleanup()
-		disk.Close(ctx)
+		disk.Close(context.Background()) // Use background context for cleanup
 		return fmt.Errorf("NBD device did not become ready after reconnect: timeout")
 	}
 

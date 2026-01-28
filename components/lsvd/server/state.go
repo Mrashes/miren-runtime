@@ -161,11 +161,17 @@ func (s *State) SetPath(dataPath string) {
 	s.path = filepath.Join(dataPath, stateFileName)
 }
 
-// GetVolume returns a volume state by entity ID
+// GetVolume returns a copy of a volume state by entity ID
 func (s *State) GetVolume(entityId string) *VolumeState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.Volumes[entityId]
+	v := s.Volumes[entityId]
+	if v == nil {
+		return nil
+	}
+	// Return a copy to avoid data races
+	copy := *v
+	return &copy
 }
 
 // SetVolume sets a volume state
@@ -182,11 +188,17 @@ func (s *State) DeleteVolume(entityId string) {
 	delete(s.Volumes, entityId)
 }
 
-// GetMount returns a mount state by entity ID
+// GetMount returns a copy of a mount state by entity ID
 func (s *State) GetMount(entityId string) *MountState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.Mounts[entityId]
+	m := s.Mounts[entityId]
+	if m == nil {
+		return nil
+	}
+	// Return a copy to avoid data races
+	copy := *m
+	return &copy
 }
 
 // SetMount sets a mount state
@@ -203,36 +215,42 @@ func (s *State) DeleteMount(entityId string) {
 	delete(s.Mounts, entityId)
 }
 
-// GetVolumeByVolumeId returns a volume state by LSVD volume ID
+// GetVolumeByVolumeId returns a copy of a volume state by LSVD volume ID
 func (s *State) GetVolumeByVolumeId(volumeId string) *VolumeState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, v := range s.Volumes {
 		if v.VolumeId == volumeId {
-			return v
+			// Return a copy to avoid data races
+			copy := *v
+			return &copy
 		}
 	}
 	return nil
 }
 
-// ListVolumes returns all volume states
+// ListVolumes returns copies of all volume states
 func (s *State) ListVolumes() []*VolumeState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	volumes := make([]*VolumeState, 0, len(s.Volumes))
 	for _, v := range s.Volumes {
-		volumes = append(volumes, v)
+		// Return copies to avoid data races
+		copy := *v
+		volumes = append(volumes, &copy)
 	}
 	return volumes
 }
 
-// ListMounts returns all mount states
+// ListMounts returns copies of all mount states
 func (s *State) ListMounts() []*MountState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	mounts := make([]*MountState, 0, len(s.Mounts))
 	for _, m := range s.Mounts {
-		mounts = append(mounts, m)
+		// Return copies to avoid data races
+		copy := *m
+		mounts = append(mounts, &copy)
 	}
 	return mounts
 }

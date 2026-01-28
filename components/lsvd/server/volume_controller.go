@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 
 	"github.com/google/uuid"
@@ -204,10 +205,17 @@ func (c *VolumeController) createVolume(ctx context.Context, volume *storage_v1a
 			"local_id", volumeId,
 			"server_id", actualVolumeId,
 		)
-		volumeId = actualVolumeId
 		if !volume.RemoteOnly {
-			volumePath = c.getVolumePath(volumeId)
+			// Rename the directory to match the server-generated ID
+			oldPath := volumePath
+			newPath := c.getVolumePath(actualVolumeId)
+			if err := os.Rename(oldPath, newPath); err != nil {
+				c.setVolumeError(ctx, volume.ID, fmt.Sprintf("failed to rename volume directory: %v", err))
+				return fmt.Errorf("failed to rename volume directory from %s to %s: %w", oldPath, newPath, err)
+			}
+			volumePath = newPath
 		}
+		volumeId = actualVolumeId
 	}
 
 	// Update state

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -123,15 +124,23 @@ func (m *mockMountOps) NBDLoopback(ctx context.Context, sizeBytes uint64) (uint3
 	// Create a mock connection using net.Pipe
 	client, server := net.Pipe()
 
+	// Create a temp file for clientFile to avoid nil pointer panic
+	clientFile, err := os.CreateTemp("", "mock-nbd-client-*")
+	if err != nil {
+		return 0, nil, nil, nil, fmt.Errorf("failed to create mock client file: %w", err)
+	}
+
 	cleanup := func() error {
 		client.Close()
 		server.Close()
+		clientFile.Close()
+		os.Remove(clientFile.Name())
 		delete(m.nbdStatuses, idx)
 		return nil
 	}
 
-	// Return server side as conn, create a temp file for clientFile
-	return idx, server, nil, cleanup, nil
+	// Return server side as conn
+	return idx, server, clientFile, cleanup, nil
 }
 
 func (m *mockMountOps) NBDStatus(idx uint32) error {

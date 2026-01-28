@@ -158,5 +158,10 @@ func (s *Server) UpdateConfig(fn func(*Config)) error {
 		return err
 	}
 	fn(cfg)
-	return WriteConfig(s.configPath, cfg)
+	if err := WriteConfig(s.configPath, cfg); err != nil {
+		return err
+	}
+	// Update in-memory config to keep it in sync with disk
+	s.config = cfg
+	return nil
 }

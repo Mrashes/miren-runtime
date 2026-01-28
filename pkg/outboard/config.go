@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // Config is the shared configuration file format between the connector (parent)
@@ -35,14 +36,42 @@ func ReadConfig(path string) (*Config, error) {
 }
 
 // WriteConfig writes an outboard config to the given path atomically.
+// It uses a temp file and rename to ensure readers never see partial data.
 func WriteConfig(path string, cfg *Config) error {
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("marshaling outboard config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return fmt.Errorf("writing outboard config: %w", err)
+	// Write to temp file in the same directory for atomic rename
+	dir := filepath.Dir(path)
+	tempFile, err := os.CreateTemp(dir, "outboard-config-*.tmp")
+	if err != nil {
+		return fmt.Errorf("creating temp config file: %w", err)
+	}
+	tempPath := tempFile.Name()
+
+	if _, err := tempFile.Write(data); err != nil {
+		tempFile.Close()
+		os.Remove(tempPath)
+		return fmt.Errorf("writing temp config file: %w", err)
+	}
+
+	if err := tempFile.Sync(); err != nil {
+		tempFile.Close()
+		os.Remove(tempPath)
+		return fmt.Errorf("syncing temp config file: %w", err)
+	}
+
+	if err := tempFile.Close(); err != nil {
+		os.Remove(tempPath)
+		return fmt.Errorf("closing temp config file: %w", err)
+	}
+
+	// Atomic rename
+	if err := os.Rename(tempPath, path); err != nil {
+		os.Remove(tempPath)
+		return fmt.Errorf("renaming temp config file: %w", err)
 	}
 
 	return nil

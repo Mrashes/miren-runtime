@@ -351,6 +351,7 @@ func (d *DiskController) handleDeletion(ctx context.Context, disk *storage_v1alp
 				d.Log.Warn("Failed to delete lsvd_volume entity",
 					"lsvd_volume", volume.ID,
 					"error", err)
+				return err // Retry on next reconciliation
 			}
 		} else if volume.DesiredState != storage_v1alpha.VOL_ABSENT {
 			// Set desired_state to absent

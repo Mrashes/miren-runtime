@@ -142,14 +142,24 @@ func (c *Connector) startLocked(ctx context.Context) error {
 	go forwardFIFO(stdoutFIFO, rlog, stdoutDone)
 	go forwardFIFO(stderrFIFO, rlog, stderrDone)
 
-	// Open FIFOs for writing to connect as stdout/stderr of the process
+	// Open FIFOs for writing to connect as stdout/stderr of the process.
+	// If either open fails, remove both FIFOs to unblock the forwardFIFO goroutines
+	// which are blocked on os.Open waiting for a writer.
 	stdoutW, err := os.OpenFile(stdoutFIFO, os.O_WRONLY, 0)
 	if err != nil {
+		os.Remove(stdoutFIFO) // Unblock forwardFIFO goroutine
+		os.Remove(stderrFIFO) // Unblock forwardFIFO goroutine
+		<-stdoutDone
+		<-stderrDone
 		return fmt.Errorf("opening stdout FIFO for writing: %w", err)
 	}
 	stderrW, err := os.OpenFile(stderrFIFO, os.O_WRONLY, 0)
 	if err != nil {
 		stdoutW.Close()
+		os.Remove(stdoutFIFO) // Trigger EOF for forwardFIFO
+		os.Remove(stderrFIFO) // Unblock forwardFIFO goroutine
+		<-stdoutDone
+		<-stderrDone
 		return fmt.Errorf("opening stderr FIFO for writing: %w", err)
 	}
 
@@ -168,6 +178,9 @@ func (c *Connector) startLocked(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		stdoutW.Close()
 		stderrW.Close()
+		// Wait for FIFO goroutines to exit (they'll get EOF since we closed the writers)
+		<-stdoutDone
+		<-stderrDone
 		return fmt.Errorf("starting outboard process: %w", err)
 	}
 
@@ -185,7 +198,9 @@ func (c *Connector) startLocked(ctx context.Context) error {
 	// Wait for ready
 	if err := c.waitForReady(ctx); err != nil {
 		cmd.Process.Kill()
-		cmd.Wait()
+		cmd.Wait() // This closes child's FDs, triggering EOF for FIFO goroutines
+		<-stdoutDone
+		<-stderrDone
 		return fmt.Errorf("waiting for outboard process to be ready: %w", err)
 	}
 
@@ -194,6 +209,8 @@ func (c *Connector) startLocked(ctx context.Context) error {
 	if err != nil {
 		cmd.Process.Kill()
 		cmd.Wait()
+		<-stdoutDone
+		<-stderrDone
 		return fmt.Errorf("reading updated config: %w", err)
 	}
 
@@ -201,6 +218,8 @@ func (c *Connector) startLocked(ctx context.Context) error {
 	if err := c.connectRPC(ctx, updatedCfg.RPCAddr); err != nil {
 		cmd.Process.Kill()
 		cmd.Wait()
+		<-stdoutDone
+		<-stderrDone
 		return fmt.Errorf("connecting to outboard RPC: %w", err)
 	}
 
@@ -440,13 +459,14 @@ func (c *Connector) ControlClient() *outboard_v1alpha.OutboardControlClient {
 func (c *Connector) ConnectInterface(name string) (*rpc.NetworkClient, error) {
 	c.mu.Lock()
 	rs := c.rpcState
+	configPath := c.configPath // Copy while holding lock to avoid race
 	c.mu.Unlock()
 
 	if rs == nil {
 		return nil, fmt.Errorf("RPC not connected")
 	}
 
-	cfg, err := ReadConfig(c.configPath)
+	cfg, err := ReadConfig(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading config for RPC address: %w", err)
 	}
