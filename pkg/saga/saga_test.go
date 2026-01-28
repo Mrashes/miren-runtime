@@ -403,6 +403,44 @@ func TestTryGet(t *testing.T) {
 	assert.Same(t, ctrl, got)
 }
 
+// testService is an interface for testing UsingAs.
+type testService interface {
+	DoWork() string
+}
+
+// testServiceImpl implements testService.
+type testServiceImpl struct {
+	name string
+}
+
+func (s *testServiceImpl) DoWork() string {
+	return s.name
+}
+
+func TestUsingAs_InterfaceInjection(t *testing.T) {
+	impl := &testServiceImpl{name: "test-impl"}
+
+	// Build a saga using UsingAs to key by interface type
+	b := Define("interface-test")
+	UsingAs[testService](b, impl)
+
+	// Verify the dependency is stored correctly
+	assert.Len(t, b.dependencies, 1)
+
+	// Inject and retrieve by interface type
+	ctx := context.Background()
+	ctx = injectDependencies(ctx, b.dependencies)
+
+	// Should be retrievable by interface type
+	svc, ok := TryGet[testService](ctx)
+	assert.True(t, ok, "should find dependency by interface type")
+	assert.Equal(t, "test-impl", svc.DoWork())
+
+	// Should NOT be retrievable by concrete type (different key)
+	_, ok = TryGet[*testServiceImpl](ctx)
+	assert.False(t, ok, "should not find dependency by concrete type when keyed by interface")
+}
+
 func TestInputs_Get(t *testing.T) {
 	initial := map[string]any{
 		"name":  "test",

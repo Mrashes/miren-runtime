@@ -80,8 +80,28 @@ func (b *Builder) Version(v int) *Builder {
 
 // Using adds dependencies that will be injected into the context during execution.
 // These can be retrieved using Get[T](ctx) within action functions.
+// Note: Dependencies are keyed by their concrete type. To key by an interface type,
+// use UsingAs[T] instead.
 func (b *Builder) Using(deps ...any) *Builder {
 	b.dependencies = append(b.dependencies, deps...)
+	return b
+}
+
+// typedDep wraps a dependency with its intended key type.
+type typedDep struct {
+	keyType string
+	value   any
+}
+
+// UsingAs adds a dependency keyed by type T, allowing retrieval via Get[T](ctx).
+// This is useful for injecting implementations that should be retrieved by interface type.
+// For example: UsingAs[MyInterface](b, impl) allows Get[MyInterface](ctx).
+func UsingAs[T any](b *Builder, dep T) *Builder {
+	var zero T
+	b.dependencies = append(b.dependencies, typedDep{
+		keyType: fmt.Sprintf("%T", zero),
+		value:   dep,
+	})
 	return b
 }
 
@@ -380,8 +400,13 @@ type contextKey struct {
 // injectDependencies adds all dependencies to the context.
 func injectDependencies(ctx context.Context, deps []any) context.Context {
 	for _, dep := range deps {
-		key := contextKey{typ: fmt.Sprintf("%T", dep)}
-		ctx = context.WithValue(ctx, key, dep)
+		if td, ok := dep.(typedDep); ok {
+			// Use the explicitly specified key type
+			ctx = context.WithValue(ctx, contextKey{typ: td.keyType}, td.value)
+		} else {
+			// Use the concrete type as key
+			ctx = context.WithValue(ctx, contextKey{typ: fmt.Sprintf("%T", dep)}, dep)
+		}
 	}
 	return ctx
 }

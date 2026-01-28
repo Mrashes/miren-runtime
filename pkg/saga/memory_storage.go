@@ -50,14 +50,16 @@ func (m *MemoryStorage) Get(ctx context.Context, id string) (*Execution, error) 
 	return exec, nil
 }
 
-// ListIncomplete returns all executions that are still running or undoing.
+// ListIncomplete returns all executions that need recovery.
+// This includes pending (crashed before starting), running, and undoing sagas.
 func (m *MemoryStorage) ListIncomplete(ctx context.Context) ([]*Execution, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	var result []*Execution
 	for _, exec := range m.executions {
-		if exec.Status == StatusRunning || exec.Status == StatusUndoing {
+		switch exec.Status {
+		case StatusPending, StatusRunning, StatusUndoing:
 			result = append(result, exec)
 		}
 	}

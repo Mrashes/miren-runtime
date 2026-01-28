@@ -88,6 +88,15 @@ func (s *EntityStorage) Get(ctx context.Context, id string) (*Execution, error) 
 
 // ListIncomplete returns all executions that need recovery.
 func (s *EntityStorage) ListIncomplete(ctx context.Context) ([]*Execution, error) {
+	// Query for pending sagas (crashed between initial save and status transition)
+	pendingIds, err := s.store.ListIndex(ctx, entity.Ref(
+		saga_v1alpha.SagaStatusId,
+		saga_v1alpha.SagaStatusPendingId,
+	))
+	if err != nil {
+		return nil, fmt.Errorf("listing pending sagas: %w", err)
+	}
+
 	// Query for running sagas
 	runningIds, err := s.store.ListIndex(ctx, entity.Ref(
 		saga_v1alpha.SagaStatusId,
@@ -107,7 +116,8 @@ func (s *EntityStorage) ListIncomplete(ctx context.Context) ([]*Execution, error
 	}
 
 	// Combine IDs
-	allIds := append(runningIds, undoingIds...)
+	allIds := append(pendingIds, runningIds...)
+	allIds = append(allIds, undoingIds...)
 	if len(allIds) == 0 {
 		return nil, nil
 	}

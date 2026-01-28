@@ -407,8 +407,8 @@ func (e *Executor) Recover(ctx context.Context) error {
 		}
 
 		switch exec.Status {
-		case StatusRunning:
-			// Resume execution
+		case StatusPending, StatusRunning:
+			// Resume execution (pending means crashed before first action started)
 			if err := e.runExecution(ctx, def, exec); err != nil {
 				recoverErrors = append(recoverErrors, err)
 			}
