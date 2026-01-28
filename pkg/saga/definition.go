@@ -120,6 +120,11 @@ func (b *Builder) Action(args ...any) *ActionBuilder {
 			return &ActionBuilder{builder: b, pending: &pendingAction{}}
 		}
 		execute = args[1]
+		t := reflect.TypeOf(execute)
+		if t == nil || t.Kind() != reflect.Func {
+			b.err = fmt.Errorf("Action second argument must be a function")
+			return &ActionBuilder{builder: b, pending: &pendingAction{}}
+		}
 	default:
 		b.err = fmt.Errorf("Action requires 1 or 2 arguments")
 		return &ActionBuilder{builder: b, pending: &pendingAction{}}
