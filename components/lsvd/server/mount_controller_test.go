@@ -218,7 +218,7 @@ func (m *mockMountOps) FormatDevice(ctx context.Context, device, filesystem stri
 	return nil
 }
 
-func (m *mockMountOps) OpenLSVDDisk(ctx context.Context, diskPath, volumeId string, remoteOnly bool) (LSVDDisk, error) {
+func (m *mockMountOps) OpenLSVDDisk(ctx context.Context, diskPath, volumeId string, remoteOnly bool, leaseNonce string) (LSVDDisk, error) {
 	if m.openDiskErr != nil {
 		return nil, m.openDiskErr
 	}
@@ -226,6 +226,14 @@ func (m *mockMountOps) OpenLSVDDisk(ctx context.Context, diskPath, volumeId stri
 		m.mockDisk = &mockLSVDDisk{size: 10 * 1024 * 1024 * 1024} // 10GB default
 	}
 	return m.mockDisk, nil
+}
+
+func (m *mockMountOps) AcquireVolumeLease(ctx context.Context, volumeId string, metadata map[string]any) (string, error) {
+	return "mock-nonce", nil
+}
+
+func (m *mockMountOps) ReleaseVolumeLease(ctx context.Context, volumeId, nonce string) error {
+	return nil
 }
 
 // mockLSVDDisk implements LSVDDisk for testing

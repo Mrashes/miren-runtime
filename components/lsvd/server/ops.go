@@ -71,7 +71,16 @@ type MountOps interface {
 
 	// OpenLSVDDisk opens an LSVD disk for the given volume.
 	// If remoteOnly is true, the disk uses only remote cloud storage (no local).
-	OpenLSVDDisk(ctx context.Context, diskPath, volumeId string, remoteOnly bool) (LSVDDisk, error)
+	// The leaseNonce is passed to the segment access for write operations.
+	OpenLSVDDisk(ctx context.Context, diskPath, volumeId string, remoteOnly bool, leaseNonce string) (LSVDDisk, error)
+
+	// AcquireVolumeLease acquires a lease from the cloud for exclusive access.
+	// Returns the lease nonce, or empty string if cloud auth is not configured.
+	AcquireVolumeLease(ctx context.Context, volumeId string, metadata map[string]any) (string, error)
+
+	// ReleaseVolumeLease releases a lease from the cloud.
+	// Does nothing if cloud auth is not configured or nonce is empty.
+	ReleaseVolumeLease(ctx context.Context, volumeId, nonce string) error
 }
 
 // LSVDDisk abstracts LSVD disk operations for NBD handling
@@ -117,8 +126,14 @@ func (r *realVolumeOps) VolumePathExists(path string) bool {
 }
 
 func (r *realVolumeOps) InitLSVDVolume(ctx context.Context, path, volumeId string, size units.Bytes, metadata map[string]any, remoteOnly bool) (string, error) {
+	// Use human-readable name from metadata if provided, otherwise fall back to volumeId
+	displayName := volumeId
+	if name, ok := metadata["name"].(string); ok && name != "" {
+		displayName = name
+	}
+
 	volInfo := &lsvd.VolumeInfo{
-		Name:     volumeId,
+		Name:     displayName,
 		Size:     size,
 		UUID:     volumeId,
 		Metadata: metadata,

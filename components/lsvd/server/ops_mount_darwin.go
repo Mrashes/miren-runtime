@@ -74,6 +74,14 @@ func (r *realMountOps) FormatDevice(ctx context.Context, device, filesystem stri
 	return fmt.Errorf("FormatDevice not supported on Darwin")
 }
 
-func (r *realMountOps) OpenLSVDDisk(ctx context.Context, diskPath, volumeId string, remoteOnly bool) (LSVDDisk, error) {
+func (r *realMountOps) OpenLSVDDisk(ctx context.Context, diskPath, volumeId string, remoteOnly bool, leaseNonce string) (LSVDDisk, error) {
 	return nil, fmt.Errorf("LSVD not supported on Darwin")
+}
+
+func (r *realMountOps) AcquireVolumeLease(ctx context.Context, volumeId string, metadata map[string]any) (string, error) {
+	return "", nil
+}
+
+func (r *realMountOps) ReleaseVolumeLease(ctx context.Context, volumeId, nonce string) error {
+	return nil
 }

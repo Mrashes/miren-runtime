@@ -246,7 +246,7 @@ func (r *realMountOps) FormatDevice(ctx context.Context, device, filesystem stri
 	return nil
 }
 
-func (r *realMountOps) OpenLSVDDisk(ctx context.Context, diskPath, volumeId string, remoteOnly bool) (LSVDDisk, error) {
+func (r *realMountOps) OpenLSVDDisk(ctx context.Context, diskPath, volumeId string, remoteOnly bool, leaseNonce string) (LSVDDisk, error) {
 	var sa lsvd.SegmentAccess
 	var sizeBytes int64
 
@@ -257,6 +257,9 @@ func (r *realMountOps) OpenLSVDDisk(ctx context.Context, diskPath, volumeId stri
 		}
 
 		remoteSA := lsvd.NewDiskAPISegmentAccess(r.log, r.cloudURL, r.authClient)
+		if leaseNonce != "" {
+			remoteSA.SetLeaseNonce(leaseNonce)
+		}
 		sa = remoteSA
 
 		volInfo, err := remoteSA.GetVolumeInfo(ctx, volumeId)
@@ -269,6 +272,7 @@ func (r *realMountOps) OpenLSVDDisk(ctx context.Context, diskPath, volumeId stri
 			"volume_id", volumeId,
 			"size_bytes", sizeBytes,
 			"size_gb", sizeBytes/(1024*1024*1024),
+			"has_lease_nonce", leaseNonce != "",
 		)
 	} else {
 		// Local or replica mode
@@ -292,11 +296,15 @@ func (r *realMountOps) OpenLSVDDisk(ctx context.Context, diskPath, volumeId stri
 			"volume_id", volumeId,
 			"size_bytes", sizeBytes,
 			"size_gb", sizeBytes/(1024*1024*1024),
+			"has_lease_nonce", leaseNonce != "",
 		)
 
 		// Build segment access: use ReplicaWriter when cloud auth is available
 		if r.authClient != nil {
 			remoteSA := lsvd.NewDiskAPISegmentAccess(r.log, r.cloudURL, r.authClient)
+			if leaseNonce != "" {
+				remoteSA.SetLeaseNonce(leaseNonce)
+			}
 			sa = lsvd.ReplicaWriter(r.log, localSA, remoteSA)
 		} else {
 			sa = localSA
@@ -317,6 +325,22 @@ func (r *realMountOps) OpenLSVDDisk(ctx context.Context, diskPath, volumeId stri
 		log:  r.log,
 		size: sizeBytes,
 	}, nil
+}
+
+func (r *realMountOps) AcquireVolumeLease(ctx context.Context, volumeId string, metadata map[string]any) (string, error) {
+	if r.authClient == nil {
+		return "", nil // No cloud auth, no lease needed
+	}
+	sa := lsvd.NewDiskAPISegmentAccess(r.log, r.cloudURL, r.authClient)
+	return sa.AcquireLease(ctx, volumeId, metadata)
+}
+
+func (r *realMountOps) ReleaseVolumeLease(ctx context.Context, volumeId, nonce string) error {
+	if r.authClient == nil || nonce == "" {
+		return nil // No cloud auth or no lease to release
+	}
+	sa := lsvd.NewDiskAPISegmentAccess(r.log, r.cloudURL, r.authClient)
+	return sa.ReleaseLease(ctx, volumeId, nonce)
 }
 
 // realLSVDDisk wraps an lsvd.Disk

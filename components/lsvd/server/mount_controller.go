@@ -87,6 +87,18 @@ func (c *MountController) Shutdown() {
 			h.disk.Close(ctx)
 		}
 
+		// Release lease after closing disk
+		if mountState != nil && mountState.LeaseNonce != "" {
+			volState := c.state.GetVolume(mountState.VolumeId)
+			if volState != nil {
+				if err := c.ops.ReleaseVolumeLease(ctx, volState.VolumeId, mountState.LeaseNonce); err != nil {
+					c.log.Warn("failed to release lease on shutdown", "entity_id", entityId, "error", err)
+				} else {
+					c.log.Info("released volume lease on shutdown", "entity_id", entityId, "volume_id", volState.VolumeId)
+				}
+			}
+		}
+
 		// Remove device node
 		if mountState != nil && mountState.DevicePath != "" {
 			c.ops.RemoveFile(mountState.DevicePath)
@@ -281,9 +293,26 @@ func (c *MountController) attachAndMount(ctx context.Context, mount *storage_v1a
 		return fmt.Errorf("volume %s not found in state", volumeId)
 	}
 
-	// Open LSVD disk
-	disk, err := c.ops.OpenLSVDDisk(ctx, volState.DiskPath, volState.VolumeId, volState.RemoteOnly)
+	// Acquire lease from cloud BEFORE opening disk
+	leaseNonce, err := c.ops.AcquireVolumeLease(ctx, volState.VolumeId, map[string]any{
+		"node":   c.nodeId,
+		"entity": entityId,
+	})
 	if err != nil {
+		c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to acquire lease: %v", err))
+		return fmt.Errorf("failed to acquire lease: %w", err)
+	}
+	c.log.Info("acquired volume lease", "entity_id", entityId, "volume_id", volState.VolumeId, "has_nonce", leaseNonce != "")
+
+	// Open LSVD disk with lease nonce (for write operations)
+	disk, err := c.ops.OpenLSVDDisk(ctx, volState.DiskPath, volState.VolumeId, volState.RemoteOnly, leaseNonce)
+	if err != nil {
+		// Release lease on failure to prevent blocking the volume
+		if leaseNonce != "" {
+			if releaseErr := c.ops.ReleaseVolumeLease(ctx, volState.VolumeId, leaseNonce); releaseErr != nil {
+				c.log.Warn("failed to release lease after disk open failure", "error", releaseErr)
+			}
+		}
 		c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to open disk: %v", err))
 		return fmt.Errorf("failed to open disk: %w", err)
 	}
@@ -298,6 +327,11 @@ func (c *MountController) attachAndMount(ctx context.Context, mount *storage_v1a
 	idx, conn, clientFile, cleanup, err := c.ops.NBDLoopback(ctx, sizeBytes)
 	if err != nil {
 		disk.Close(ctx)
+		if leaseNonce != "" {
+			if releaseErr := c.ops.ReleaseVolumeLease(ctx, volState.VolumeId, leaseNonce); releaseErr != nil {
+				c.log.Warn("failed to release lease after NBD loopback failure", "error", releaseErr)
+			}
+		}
 		c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to setup NBD loopback: %v", err))
 		return fmt.Errorf("failed to setup NBD loopback: %w", err)
 	}
@@ -308,6 +342,11 @@ func (c *MountController) attachAndMount(ctx context.Context, mount *storage_v1a
 	if err := c.ops.CreateDir(dir, 0755); err != nil {
 		cleanup()
 		disk.Close(ctx)
+		if leaseNonce != "" {
+			if releaseErr := c.ops.ReleaseVolumeLease(ctx, volState.VolumeId, leaseNonce); releaseErr != nil {
+				c.log.Warn("failed to release lease after create dir failure", "error", releaseErr)
+			}
+		}
 		c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to create device directory: %v", err))
 		return fmt.Errorf("failed to create device directory: %w", err)
 	}
@@ -315,6 +354,11 @@ func (c *MountController) attachAndMount(ctx context.Context, mount *storage_v1a
 	if err := c.ops.CreateDeviceNode(devicePath, idx); err != nil {
 		cleanup()
 		disk.Close(ctx)
+		if leaseNonce != "" {
+			if releaseErr := c.ops.ReleaseVolumeLease(ctx, volState.VolumeId, leaseNonce); releaseErr != nil {
+				c.log.Warn("failed to release lease after create device node failure", "error", releaseErr)
+			}
+		}
 		c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to create device node: %v", err))
 		return fmt.Errorf("failed to create device node: %w", err)
 	}
@@ -338,6 +382,11 @@ func (c *MountController) attachAndMount(ctx context.Context, mount *storage_v1a
 			<-handlerDone // wait for handler to exit
 			cleanup()
 			disk.Close(context.Background()) // Use background context for cleanup
+			if leaseNonce != "" {
+				if releaseErr := c.ops.ReleaseVolumeLease(context.Background(), volState.VolumeId, leaseNonce); releaseErr != nil {
+					c.log.Warn("failed to release lease after context cancellation", "error", releaseErr)
+				}
+			}
 			return ctx.Err()
 		case <-time.After(50 * time.Millisecond):
 		}
@@ -348,11 +397,16 @@ func (c *MountController) attachAndMount(ctx context.Context, mount *storage_v1a
 		<-handlerDone // wait for handler to exit
 		cleanup()
 		disk.Close(context.Background()) // Use background context for cleanup
+		if leaseNonce != "" {
+			if releaseErr := c.ops.ReleaseVolumeLease(context.Background(), volState.VolumeId, leaseNonce); releaseErr != nil {
+				c.log.Warn("failed to release lease after NBD ready timeout", "error", releaseErr)
+			}
+		}
 		c.setMountError(ctx, mount.ID, "NBD device did not become ready: timeout")
 		return fmt.Errorf("NBD device did not become ready: timeout")
 	}
 
-	// Update state
+	// Update state with the lease nonce
 	c.state.SetMount(entityId, &MountState{
 		EntityId:   entityId,
 		VolumeId:   volumeId,
@@ -361,7 +415,7 @@ func (c *MountController) attachAndMount(ctx context.Context, mount *storage_v1a
 		MountPath:  mount.MountPath,
 		Mounted:    false,
 		ReadOnly:   mount.ReadOnly,
-		LeaseNonce: mount.LeaseNonce,
+		LeaseNonce: leaseNonce,
 	})
 
 	c.handlersMu.Lock()
@@ -382,6 +436,17 @@ func (c *MountController) attachAndMount(ctx context.Context, mount *storage_v1a
 	nbdIdx := int64(idx)
 	if err := c.updateMountState(ctx, mount.ID, storage_v1alpha.MNT_ATTACHED, &nbdIdx, &devicePath, nil); err != nil {
 		c.log.Warn("failed to update mount state to attached", "error", err)
+	}
+
+	// Update entity with lease nonce
+	if leaseNonce != "" {
+		attrs := []entity.Attr{
+			entity.Ref(entity.DBId, mount.ID),
+			entity.String(storage_v1alpha.LsvdMountLeaseNonceId, leaseNonce),
+		}
+		if _, err := c.eac.Patch(ctx, attrs, 0); err != nil {
+			c.log.Warn("failed to update lease nonce in entity", "error", err)
+		}
 	}
 
 	// Now mount the volume
@@ -573,6 +638,19 @@ func (c *MountController) unmountAndDetach(ctx context.Context, mount *storage_v
 		c.ops.RemoveFile(mountState.DevicePath)
 	}
 
+	// Release lease from cloud after unmount
+	if mountState.LeaseNonce != "" {
+		volState := c.state.GetVolume(mountState.VolumeId)
+		if volState != nil {
+			if err := c.ops.ReleaseVolumeLease(ctx, volState.VolumeId, mountState.LeaseNonce); err != nil {
+				c.log.Warn("failed to release lease", "entity_id", entityId, "error", err)
+				// Continue anyway - cloud will eventually clean up expired leases
+			} else {
+				c.log.Info("released volume lease", "entity_id", entityId, "volume_id", volState.VolumeId)
+			}
+		}
+	}
+
 	// Update state
 	c.state.DeleteMount(entityId)
 	if err := c.state.Save(); err != nil {
@@ -720,10 +798,14 @@ func (c *MountController) reconnectNBD(ctx context.Context, entityId string, mou
 		return fmt.Errorf("volume %s not found in state", mountState.VolumeId)
 	}
 
+	// Use the stored lease nonce from local state (don't re-acquire)
+	leaseNonce := mountState.LeaseNonce
+
 	c.log.Info("reconnecting NBD device",
 		"entity_id", entityId,
 		"volume_id", mountState.VolumeId,
 		"disk_path", volState.DiskPath,
+		"has_lease_nonce", leaseNonce != "",
 	)
 
 	// Clean up old handler if exists
@@ -750,8 +832,8 @@ func (c *MountController) reconnectNBD(ctx context.Context, entityId string, mou
 		_ = c.ops.NBDDisconnect(mountState.NbdIndex)
 	}
 
-	// Open LSVD disk
-	disk, err := c.ops.OpenLSVDDisk(ctx, volState.DiskPath, volState.VolumeId, volState.RemoteOnly)
+	// Open LSVD disk with stored lease nonce
+	disk, err := c.ops.OpenLSVDDisk(ctx, volState.DiskPath, volState.VolumeId, volState.RemoteOnly, leaseNonce)
 	if err != nil {
 		return fmt.Errorf("failed to open disk: %w", err)
 	}
@@ -927,6 +1009,8 @@ func (c *MountController) ReconcileWithEntities(ctx context.Context) error {
 		}
 
 		devicePath := mountState.DevicePath
+		leaseNonce := mountState.LeaseNonce
+		volumeId := mountState.VolumeId
 
 		// cleanupHandler tears down the NBD handler, disconnects NBD, and deletes mount state
 		c.cleanupHandler(ctx, mountState.EntityId)
@@ -934,6 +1018,18 @@ func (c *MountController) ReconcileWithEntities(ctx context.Context) error {
 		// Remove the device node (not handled by cleanupHandler)
 		if devicePath != "" {
 			c.ops.RemoveFile(devicePath)
+		}
+
+		// Release lease for orphaned mount
+		if leaseNonce != "" {
+			volState := c.state.GetVolume(volumeId)
+			if volState != nil {
+				if err := c.ops.ReleaseVolumeLease(ctx, volState.VolumeId, leaseNonce); err != nil {
+					c.log.Warn("failed to release lease for orphaned mount", "entity_id", mountState.EntityId, "error", err)
+				} else {
+					c.log.Info("released lease for orphaned mount", "entity_id", mountState.EntityId, "volume_id", volState.VolumeId)
+				}
+			}
 		}
 
 		orphanCleaned = true
