@@ -374,7 +374,10 @@ func (c *Connector) Stop(ctx context.Context) error {
 	}
 
 	// Signal to monitor that this is a graceful stop
-	close(c.stopCh)
+	if c.stopCh != nil {
+		close(c.stopCh)
+		c.stopCh = nil
+	}
 
 	cmd := c.cmd
 	c.mu.Unlock()

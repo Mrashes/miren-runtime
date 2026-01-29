@@ -700,6 +700,19 @@ func (c *MountController) cleanupHandler(ctx context.Context, entityId string) {
 	if mountState != nil && mountState.DevicePath != "" {
 		c.log.Info("disconnecting stale NBD device", "entity_id", entityId, "nbd_index", mountState.NbdIndex)
 		_ = c.ops.NBDDisconnect(mountState.NbdIndex)
+		c.ops.RemoveFile(mountState.DevicePath)
+	}
+
+	// Release lease if present
+	if mountState != nil && mountState.LeaseNonce != "" {
+		volState := c.state.GetVolume(mountState.VolumeId)
+		if volState != nil {
+			if err := c.ops.ReleaseVolumeLease(ctx, volState.VolumeId, mountState.LeaseNonce); err != nil {
+				c.log.Warn("failed to release lease in cleanupHandler", "entity_id", entityId, "error", err)
+			} else {
+				c.log.Info("released lease in cleanupHandler", "entity_id", entityId, "volume_id", volState.VolumeId)
+			}
+		}
 	}
 
 	// Clean up state so attachAndMount starts fresh

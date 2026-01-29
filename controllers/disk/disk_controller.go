@@ -151,7 +151,7 @@ func (d *DiskController) handleProvisioning(ctx context.Context, disk *storage_v
 	// Check if an lsvd_volume entity already exists for this disk
 	existingVolume, err := d.getLsvdVolumeForDisk(ctx, disk.ID)
 	if err != nil {
-		d.Log.Warn("Error looking up existing lsvd_volume", "disk", disk.ID, "error", err)
+		return fmt.Errorf("error looking up existing lsvd_volume for disk %s: %w", disk.ID, err)
 	}
 
 	if existingVolume != nil {
@@ -202,7 +202,7 @@ func (d *DiskController) handleProvisioning(ctx context.Context, disk *storage_v
 		RemoteOnly:   disk.RemoteOnly,
 		DesiredState: storage_v1alpha.VOL_PRESENT,
 		ActualState:  storage_v1alpha.VOL_PENDING,
-		NodeId:       entity.Id("node/" + d.NodeId),
+		NodeId:       entity.Id("node/" + strings.TrimPrefix(d.NodeId, "node/")),
 	}
 
 	d.Log.Info("Creating lsvd_volume entity",

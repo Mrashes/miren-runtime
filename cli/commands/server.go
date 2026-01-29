@@ -1069,13 +1069,14 @@ func stopAllSandboxContainers(ctx context.Context, log *slog.Logger, cc *contain
 }
 
 // normalizeServerAddr converts a server address to a form usable for local connections.
-// Addresses like ":8443" become "localhost:8443" and "0.0.0.0:8443" becomes "localhost:8443".
+// Addresses like ":8443", "0.0.0.0:8443", and "[::]:8443" become "localhost:8443".
 func normalizeServerAddr(addr string) string {
-	if strings.HasPrefix(addr, ":") {
-		return "localhost" + addr
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
 	}
-	if strings.HasPrefix(addr, "0.0.0.0:") {
-		return strings.Replace(addr, "0.0.0.0:", "localhost:", 1)
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		return net.JoinHostPort("localhost", port)
 	}
 	return addr
 }

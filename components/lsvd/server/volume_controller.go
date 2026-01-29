@@ -152,7 +152,14 @@ func (c *VolumeController) reconcileVolumeAbsent(ctx context.Context, volume *st
 
 	switch volume.ActualState {
 	case storage_v1alpha.VOL_DELETED:
-		// Volume is already deleted
+		// Volume is already deleted, clean up local data if it exists
+		volState := c.state.GetVolume(entityId)
+		if volState != nil && volState.DiskPath != "" && c.ops.VolumePathExists(volState.DiskPath) {
+			c.log.Info("cleaning up local volume data", "entity_id", entityId, "disk_path", volState.DiskPath)
+			if err := c.ops.RemoveVolumeDir(volState.DiskPath); err != nil {
+				c.log.Warn("failed to remove volume directory", "entity_id", entityId, "error", err)
+			}
+		}
 		c.state.DeleteVolume(entityId)
 		if err := c.state.Save(); err != nil {
 			c.log.Warn("failed to save state after volume deletion", "error", err)
@@ -446,9 +453,8 @@ func (c *VolumeController) updateVolumeState(ctx context.Context, id entity.Id, 
 		attrs = append(attrs, entity.String(storage_v1alpha.LsvdVolumeVolumeIdId, volumeId))
 	}
 
-	if errorMsg != "" {
-		attrs = append(attrs, entity.String(storage_v1alpha.LsvdVolumeErrorMessageId, errorMsg))
-	}
+	// Always include error_message to clear stale errors on successful transitions
+	attrs = append(attrs, entity.String(storage_v1alpha.LsvdVolumeErrorMessageId, errorMsg))
 
 	_, err := c.eac.Patch(ctx, attrs, 0)
 	return err

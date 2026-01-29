@@ -285,16 +285,18 @@ func DebugLsvdInfo(ctx *Context, opts struct {
 	}
 
 	metrics := metricsResult.Metrics()
-	if metrics != nil {
-		ctx.Printf("Metrics:\n")
-		ctx.Printf("  Volume reconciliations: %d (%d errors)\n", metrics.VolumeReconcileCount(), metrics.VolumeErrorCount())
-		ctx.Printf("  Mount reconciliations:  %d (%d errors)\n", metrics.MountReconcileCount(), metrics.MountErrorCount())
-		if metrics.HasLastVolumeDuration() {
-			ctx.Printf("  Last volume duration:   %s\n", standard.FromDuration(metrics.LastVolumeDuration()))
-		}
-		if metrics.HasLastMountDuration() {
-			ctx.Printf("  Last mount duration:    %s\n", standard.FromDuration(metrics.LastMountDuration()))
-		}
+	if metrics == nil {
+		return fmt.Errorf("GetMetrics returned nil metrics")
+	}
+
+	ctx.Printf("Metrics:\n")
+	ctx.Printf("  Volume reconciliations: %d (%d errors)\n", metrics.VolumeReconcileCount(), metrics.VolumeErrorCount())
+	ctx.Printf("  Mount reconciliations:  %d (%d errors)\n", metrics.MountReconcileCount(), metrics.MountErrorCount())
+	if metrics.HasLastVolumeDuration() {
+		ctx.Printf("  Last volume duration:   %s\n", standard.FromDuration(metrics.LastVolumeDuration()))
+	}
+	if metrics.HasLastMountDuration() {
+		ctx.Printf("  Last mount duration:    %s\n", standard.FromDuration(metrics.LastMountDuration()))
 	}
 
 	return nil
