@@ -179,6 +179,9 @@ func (r *realVolumeOps) InitLSVDVolume(ctx context.Context, path, volumeId strin
 		return serverVolumeId, nil
 	}
 
+	// Local-only mode: use volumeId for the directory name to ensure consistency
+	// with what we return. The human-readable name is preserved in Metadata.
+	volInfo.Name = volumeId
 	if err := localSA.InitVolume(ctx, volInfo); err != nil {
 		return "", err
 	}
