@@ -28,6 +28,9 @@ type VolumeState struct {
 	// VolumeId is the LSVD volume identifier
 	VolumeId string `json:"volume_id"`
 
+	// Name is the human-readable name (from parent disk)
+	Name string `json:"name,omitempty"`
+
 	// DiskPath is the path to the volume data directory
 	DiskPath string `json:"disk_path"`
 

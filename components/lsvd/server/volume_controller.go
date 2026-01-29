@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/uuid"
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
 	"miren.dev/runtime/api/storage/storage_v1alpha"
 	"miren.dev/runtime/pkg/entity"
@@ -181,11 +182,8 @@ func (c *VolumeController) createVolume(ctx context.Context, volume *storage_v1a
 		c.log.Warn("failed to update volume state to creating", "error", err)
 	}
 
-	// Use the entity ID suffix as the volume ID
-	volumeId := entityId
-	if idx := strings.LastIndex(entityId, "/"); idx != -1 {
-		volumeId = entityId[idx+1:]
-	}
+	// Generate a new UUID for the volume ID
+	volumeId := uuid.New().String()
 
 	// Create volume directory using entity ID (skip for remote-only volumes which have no local storage)
 	var volumePath string
@@ -200,6 +198,9 @@ func (c *VolumeController) createVolume(ctx context.Context, volume *storage_v1a
 	// Initialize LSVD volume
 	metadata := map[string]any{
 		"filesystem": volume.Filesystem,
+	}
+	if volume.Name != "" {
+		metadata["name"] = volume.Name
 	}
 	actualVolumeId, err := c.ops.InitLSVDVolume(ctx, volumePath, volumeId, units.GigaBytes(volume.SizeGb).Bytes(), metadata, volume.RemoteOnly)
 	if err != nil {
@@ -222,6 +223,7 @@ func (c *VolumeController) createVolume(ctx context.Context, volume *storage_v1a
 	c.state.SetVolume(entityId, &VolumeState{
 		EntityId:   entityId,
 		VolumeId:   volumeId,
+		Name:       volume.Name,
 		DiskPath:   volumePath,
 		SizeBytes:  units.GigaBytes(volume.SizeGb).Bytes().Int64(),
 		Filesystem: volume.Filesystem,
@@ -326,6 +328,9 @@ func (c *VolumeController) ReconcileWithSystem(ctx context.Context) error {
 
 			metadata := map[string]any{
 				"filesystem": volState.Filesystem,
+			}
+			if volState.Name != "" {
+				metadata["name"] = volState.Name
 			}
 			if _, err := c.ops.InitLSVDVolume(ctx, volState.DiskPath, volState.VolumeId, units.Bytes(volState.SizeBytes), metadata, volState.RemoteOnly); err != nil {
 				c.log.Error("failed to reinitialize volume",

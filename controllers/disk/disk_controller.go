@@ -195,6 +195,7 @@ func (d *DiskController) handleProvisioning(ctx context.Context, disk *storage_v
 	filesystem := strings.TrimPrefix(string(disk.Filesystem), "filesystem.")
 
 	lsvdVolume := &storage_v1alpha.LsvdVolume{
+		Name:         disk.Name,
 		DiskId:       disk.ID,
 		SizeGb:       disk.SizeGb,
 		Filesystem:   filesystem,

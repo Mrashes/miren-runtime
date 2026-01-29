@@ -102,6 +102,10 @@ kinds:
       doc: Error details if lease binding failed
 
   lsvd_volume:
+    name:
+      type: string
+      doc: Human-readable name for the volume (from parent disk)
+
     disk_id:
       type: ref
       doc: Reference to the parent Disk entity
