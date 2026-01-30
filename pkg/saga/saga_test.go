@@ -140,7 +140,7 @@ func (m *memoryStorage) ListIncomplete(ctx context.Context) ([]*Execution, error
 	defer m.mu.Unlock()
 	var result []*Execution
 	for _, exec := range m.executions {
-		if exec.Status == StatusRunning || exec.Status == StatusUndoing {
+		if exec.Status == StatusPending || exec.Status == StatusRunning || exec.Status == StatusUndoing {
 			result = append(result, exec)
 		}
 	}

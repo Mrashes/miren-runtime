@@ -18,7 +18,7 @@ type Storage interface {
 	// Get retrieves an execution by ID.
 	Get(ctx context.Context, id string) (*Execution, error)
 
-	// ListIncomplete returns all executions that need recovery (Running or Undoing).
+	// ListIncomplete returns all executions that need recovery (Pending, Running, or Undoing).
 	ListIncomplete(ctx context.Context) ([]*Execution, error)
 }
 
@@ -435,7 +435,7 @@ func extractOutputs(node *ActionNode, outputBytes []byte, outputs map[string]jso
 	// Parse the output as a map to extract individual fields
 	var outputMap map[string]json.RawMessage
 	if err := json.Unmarshal(outputBytes, &outputMap); err != nil {
-		// Not a map, store the whole thing under the action name
+		// Not a map; nothing to extract into keyed outputs.
 		return nil
 	}
 
