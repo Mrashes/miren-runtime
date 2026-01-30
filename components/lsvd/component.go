@@ -276,6 +276,15 @@ func (c *Component) StartOrReconnect(ctx context.Context, config *Config) error 
 			c.log.Warn("failed to connect debug RPC after reconnect", "error", err)
 		}
 
+		// Check if the running server needs to be upgraded
+		upgraded, err := c.checkAndUpgradeVersion(ctx, config)
+		if err != nil {
+			c.log.Warn("failed to check version", "error", err)
+		} else if upgraded {
+			c.log.Info("lsvd-server was upgraded")
+		}
+
+		c.log.Info("lsvd-server ready", "data_path", config.DataPath)
 		return nil
 	} else {
 		c.log.Info("no existing lsvd-server to reconnect, starting fresh", "reason", err)
