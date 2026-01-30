@@ -564,3 +564,72 @@ func TestExecutor_OptionalInput(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 5, output.Result)
 }
+
+// failingStorage wraps memoryStorage but fails Save after N successful calls.
+type failingStorage struct {
+	*memoryStorage
+	failAfter int
+	saveCount int
+	mu        sync.Mutex
+}
+
+func newFailingStorage(failAfter int) *failingStorage {
+	return &failingStorage{
+		memoryStorage: newMemoryStorage(),
+		failAfter:     failAfter,
+	}
+}
+
+func (f *failingStorage) Save(ctx context.Context, exec *Execution) error {
+	f.mu.Lock()
+	f.saveCount++
+	count := f.saveCount
+	f.mu.Unlock()
+
+	if count > f.failAfter {
+		return errors.New("simulated storage failure")
+	}
+	return f.memoryStorage.Save(ctx, exec)
+}
+
+func TestExecutor_StorageFailureTriggersUndo(t *testing.T) {
+	registry := NewRegistry()
+
+	ctrl := &testController{}
+	err := Define("storage-fail-test").
+		Using(ctrl).
+		Action("add", AddNumbers).Undo(UndoAddNumbers).
+		Action("multiply", Multiply).Undo(UndoMultiply).
+		RegisterTo(registry)
+	require.NoError(t, err)
+
+	// Storage that fails after 3 saves:
+	// 1. Initial save (StatusPending)
+	// 2. Status update (StatusRunning)
+	// 3. After "add" action succeeds
+	// 4. FAIL - after "multiply" action succeeds
+	storage := newFailingStorage(3)
+	executor := NewExecutor(storage, WithRegistry(registry))
+
+	err = executor.Start("storage-fail-test").
+		Input("a", 2).
+		Input("b", 3).
+		Input("factor", 4).
+		WithID("storage-fail-exec").
+		Execute(context.Background())
+
+	// Saga returns an error indicating it failed and was rolled back
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "saga failed")
+
+	// Both actions should have been executed
+	assert.Len(t, ctrl.addCalls, 1)
+	assert.Len(t, ctrl.multiplyCalls, 1)
+
+	// KEY ASSERTION: Both actions should have been undone because
+	// storage failure after multiply triggered compensation.
+	// This verifies the fix: we don't leave the saga in a broken state
+	// where an action executed but wasn't recorded.
+	assert.Len(t, ctrl.undoMultCalls, 1, "multiply should be undone")
+	assert.Len(t, ctrl.undoAddCalls, 1, "add should be undone")
+}

@@ -249,9 +249,12 @@ func (e *Executor) runExecution(ctx context.Context, def *Definition, exec *Exec
 		exec.ExecutionOrder = append(exec.ExecutionOrder, actionName)
 		exec.UpdatedAt = now
 
-		// Persist after each action
+		// Persist after each action - if we can't durably record progress,
+		// we must compensate to guarantee a clean terminal state.
 		if err := e.storage.Save(ctx, exec); err != nil {
-			return fmt.Errorf("persisting action result: %w", err)
+			log.Error("failed to persist action result, triggering undo", "action", actionName, "error", err)
+			exec.Error = fmt.Sprintf("failed to persist action %q result: %v", actionName, err)
+			return e.runUndo(ctx, def, exec)
 		}
 
 		// Add outputs to the map for subsequent actions
