@@ -33,6 +33,32 @@ import (
 	"miren.dev/runtime/pkg/tarx"
 )
 
+// buildLogWriter writes build log entries to VictoriaLogs with version metadata
+type buildLogWriter struct {
+	log      *slog.Logger
+	writer   observability.LogWriter
+	entityID string
+	version  string
+}
+
+func (w *buildLogWriter) write(msg string) {
+	if w.writer == nil || w.entityID == "" {
+		return
+	}
+	err := w.writer.WriteEntry(w.entityID, observability.LogEntry{
+		Timestamp: time.Now(),
+		Stream:    observability.UserOOB,
+		Body:      msg,
+		Attributes: map[string]string{
+			"source":  "build",
+			"version": w.version,
+		},
+	})
+	if err != nil {
+		w.log.Warn("failed to write build log entry", "error", err)
+	}
+}
+
 type Builder struct {
 	Log           *slog.Logger
 	EAS           *entityserver_v1alpha.EntityAccessClient
@@ -664,11 +690,19 @@ func (b *Builder) BuildFromTar(ctx context.Context, state *build_v1alpha.Builder
 		Log:    b.Log,
 	}
 
-	_, mrv, _, err := b.nextVersion(ctx, name)
+	appRec, mrv, _, err := b.nextVersion(ctx, name)
 	if err != nil {
 		b.Log.Error("error getting next version", "error", err)
 		b.sendErrorStatus(ctx, status, "Error getting next version: %v", err)
 		return err
+	}
+
+	// Initialize build log writer for persisting build output to VictoriaLogs
+	buildLog := &buildLogWriter{
+		log:      b.Log,
+		writer:   b.LogWriter,
+		entityID: appRec.ID.String(),
+		version:  mrv.Version,
 	}
 
 	var tos []TransformOptions
@@ -676,6 +710,21 @@ func (b *Builder) BuildFromTar(ctx context.Context, state *build_v1alpha.Builder
 	tos = append(tos,
 		WithBuildArg("MIREN_VERSION", mrv.Version),
 	)
+
+	// Always persist build logs to VictoriaLogs, regardless of status stream
+	tos = append(tos, WithStatusUpdates(func(ss *client.SolveStatus, _ []byte) {
+		for _, log := range ss.Logs {
+			if log.Data != nil {
+				lines := strings.Split(string(log.Data), "\n")
+				for _, line := range lines {
+					line = strings.TrimSpace(line)
+					if line != "" {
+						buildLog.write(line)
+					}
+				}
+			}
+		}
+	}))
 
 	if status != nil {
 		tos = append(tos, WithPhaseUpdates(func(phase string) {
@@ -695,7 +744,7 @@ func (b *Builder) BuildFromTar(ctx context.Context, state *build_v1alpha.Builder
 			}
 		}))
 
-		tos = append(tos, WithStatusUpdates(func(ss *client.SolveStatus, sj []byte) {
+		tos = append(tos, WithStatusUpdates(func(_ *client.SolveStatus, sj []byte) {
 			so := new(build_v1alpha.Status)
 			so.Update().SetBuildkit(sj)
 			_, err := status.Send(ctx, so)
@@ -717,6 +766,11 @@ func (b *Builder) BuildFromTar(ctx context.Context, state *build_v1alpha.Builder
 		b.Log.Error("error building image", "error", err)
 		b.sendErrorStatus(ctx, status, "Error building image: %v", err)
 		return err
+	}
+
+	// Log detection events from stack analysis
+	for _, event := range res.DetectionEvents {
+		buildLog.write(fmt.Sprintf("[detect] %s: %s", event.Name, event.Message))
 	}
 
 	if res.ManifestDigest == "" {
@@ -866,7 +920,7 @@ func (b *Builder) logDeployment(ctx context.Context, appName, version, artifact 
 		Stream:    observability.UserOOB,
 		Body:      logMsg,
 		Attributes: map[string]string{
-			"source":   "builder",
+			"source":   "build",
 			"version":  version,
 			"artifact": artifact,
 		},

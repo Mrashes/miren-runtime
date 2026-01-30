@@ -14,8 +14,8 @@ ISO_SESSION ?= dev-$(shell basename "$$(pwd)")
 GIT_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "dev")
 GIT_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo "")
 GIT_VERSION := $(shell \
-  if git describe --exact-match --tags HEAD 2>/dev/null; then \
-    git describe --exact-match --tags HEAD 2>/dev/null; \
+  if git describe --exact-match --tags HEAD >/dev/null 2>&1; then \
+    git describe --exact-match --tags HEAD; \
   elif echo "$(GIT_BRANCH)" | grep -q '^release/'; then \
     echo "$(GIT_BRANCH)" | sed 's|^release/||'; \
   elif [ -n "$(GIT_COMMIT)" ]; then \
