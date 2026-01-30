@@ -686,35 +686,6 @@ func TestExecutor_FailedUndoNotMarkedAsUndone(t *testing.T) {
 	assert.Equal(t, StatusUndoing, exec.Status, "saga should stay in Undoing status when undo fails")
 }
 
-// trackingStorage wraps memoryStorage and records the status at each Save call.
-type trackingStorage struct {
-	*memoryStorage
-	mu            sync.Mutex
-	statusHistory []Status
-}
-
-func newTrackingStorage() *trackingStorage {
-	return &trackingStorage{
-		memoryStorage: newMemoryStorage(),
-		statusHistory: []Status{},
-	}
-}
-
-func (t *trackingStorage) Save(ctx context.Context, exec *Execution) error {
-	t.mu.Lock()
-	t.statusHistory = append(t.statusHistory, exec.Status)
-	t.mu.Unlock()
-	return t.memoryStorage.Save(ctx, exec)
-}
-
-func (t *trackingStorage) getStatusHistory() []Status {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	result := make([]Status, len(t.statusHistory))
-	copy(result, t.statusHistory)
-	return result
-}
-
 func TestExecutor_RecoveryAfterActionFailure(t *testing.T) {
 	// This test simulates a crash after an action fails but before undo starts.
 	// Without the fix, recovery would incorrectly complete the saga instead of undoing.
@@ -759,7 +730,7 @@ func TestExecutor_RecoveryAfterActionFailure(t *testing.T) {
 
 	// Recover
 	executor := NewExecutor(storage, WithRegistry(registry))
-	err = executor.Recover(context.Background())
+	_ = executor.Recover(context.Background())
 
 	// The saga had a failed action - recovery should have triggered undo
 	exec, _ := storage.Get(context.Background(), "crashed-after-fail")
@@ -769,4 +740,75 @@ func TestExecutor_RecoveryAfterActionFailure(t *testing.T) {
 	assert.Equal(t, StatusFailed, exec.Status,
 		"Saga with failed action should be Failed after recovery, not %s", exec.Status)
 	assert.Len(t, ctrl.undoAddCalls, 1, "add should have been undone during recovery")
+}
+
+// UnserializableOut contains a channel which json.Marshal cannot serialize.
+type UnserializableOut struct {
+	Value int
+	Ch    chan int // channels can't be serialized
+}
+
+type unserializableController struct {
+	executeCalls int
+	undoCalls    int
+	failUndo     bool
+}
+
+func UnserializableAction(ctx context.Context, in AddNumbersIn) (UnserializableOut, error) {
+	ctrl := Get[*unserializableController](ctx)
+	ctrl.executeCalls++
+	return UnserializableOut{Value: in.A + in.B, Ch: make(chan int)}, nil
+}
+
+func UndoUnserializableAction(ctx context.Context, in AddNumbersIn, out UnserializableOut) error {
+	ctrl := Get[*unserializableController](ctx)
+	ctrl.undoCalls++
+	if ctrl.failUndo {
+		return errors.New("undo failed")
+	}
+	return nil
+}
+
+func TestExecutor_SerializationFailurePlusUndoFailure(t *testing.T) {
+	// This tests the edge case where:
+	// 1. Action executes successfully
+	// 2. Output serialization fails (contains channel)
+	// 3. Immediate undo also fails
+	// The action should still be recorded so runUndo can retry.
+
+	registry := NewRegistry()
+
+	ctrl := &unserializableController{failUndo: true}
+	err := Define("unserializable-test").
+		Using(ctrl).
+		Action("unserializable", UnserializableAction).Undo(UndoUnserializableAction).
+		RegisterTo(registry)
+	require.NoError(t, err)
+
+	storage := newMemoryStorage()
+	executor := NewExecutor(storage, WithRegistry(registry))
+
+	err = executor.Start("unserializable-test").
+		Input("a", 2).
+		Input("b", 3).
+		WithID("unserializable-exec").
+		Execute(context.Background())
+
+	// Saga should fail (undo errors)
+	require.Error(t, err)
+
+	// Action was executed
+	assert.Equal(t, 1, ctrl.executeCalls)
+
+	// Undo was attempted twice:
+	// 1. Immediate undo after serialization failure (failed)
+	// 2. runUndo retry (also failed, but at least it was attempted)
+	assert.Equal(t, 2, ctrl.undoCalls, "undo should be attempted twice: immediate + runUndo retry")
+
+	// KEY ASSERTION: The action should be recorded even though immediate undo failed
+	exec, err := storage.Get(context.Background(), "unserializable-exec")
+	require.NoError(t, err)
+
+	_, recorded := exec.ExecutedActions["unserializable"]
+	assert.True(t, recorded, "action should be recorded even when immediate undo fails")
 }

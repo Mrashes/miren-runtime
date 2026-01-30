@@ -231,6 +231,12 @@ func (e *Executor) runExecution(ctx context.Context, def *Definition, exec *Exec
 			// Immediately undo this action with the in-memory output.
 			if undoErr := node.Action.Undo(ctx, actionInputs, output); undoErr != nil {
 				log.Error("undo failed after serialization error", "action", actionName, "error", undoErr)
+				// Record the action even though undo failed, so runUndo can retry.
+				// Output is nil since serialization failed.
+				exec.ExecutedActions[actionName] = &ActionResult{
+					ExecutedAt: now,
+				}
+				exec.ExecutionOrder = append(exec.ExecutionOrder, actionName)
 			} else {
 				// Record as executed and undone so runUndo skips it
 				undoneAt := time.Now()
