@@ -2,6 +2,7 @@ package commands
 
 import (
 	"miren.dev/mflags"
+	"miren.dev/runtime/pkg/labs"
 )
 
 func RegisterAll(d *mflags.Dispatcher) {
@@ -69,6 +70,16 @@ func RegisterAll(d *mflags.Dispatcher) {
 	d.Dispatch("cluster switch", Infer("cluster switch", "Switch to a different cluster", ClusterSwitch))
 	d.Dispatch("cluster add", Infer("cluster add", "Add a new cluster configuration", ClusterAdd))
 	d.Dispatch("cluster remove", Infer("cluster remove", "Remove a cluster from the configuration", ClusterRemove))
+
+	// Runner commands (distributed runners) - behind feature flag
+	if labs.DistributedRunners() {
+		d.Dispatch("runner", Section("runner", "Runner management commands", ""))
+		d.Dispatch("runner invite", Infer("runner invite", "Create a join code for a new runner", RunnerInvite))
+		d.Dispatch("runner join", Infer("runner join", "Join this machine to a coordinator as a runner", RunnerJoin))
+		d.Dispatch("runner list", Infer("runner list", "List all registered runners", RunnerList))
+		d.Dispatch("runner revoke", Infer("runner revoke", "Revoke a runner invitation", RunnerRevoke))
+		d.Dispatch("runner invite list", Infer("runner invite list", "List all runner invitations", RunnerInviteList))
+	}
 
 	// Server commands
 	d.Dispatch("server", Infer("server", "Start the miren server", Server))

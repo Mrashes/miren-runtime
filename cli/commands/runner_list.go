@@ -1,0 +1,229 @@
+package commands
+
+import (
+	"sort"
+	"strings"
+	"time"
+
+	"miren.dev/runtime/api/runner/runner_v1alpha"
+	"miren.dev/runtime/pkg/rpc/standard"
+	"miren.dev/runtime/pkg/ui"
+)
+
+func RunnerList(ctx *Context, opts struct {
+	FormatOptions
+	ConfigCentric
+}) error {
+	client, err := ctx.RPCClient("dev.miren.runtime/runner")
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	rc := runner_v1alpha.NewRunnerRegistrationClient(client)
+
+	res, err := rc.ListRunners(ctx)
+	if err != nil {
+		return err
+	}
+
+	runners := res.Runners()
+
+	if opts.IsJSON() {
+		type RunnerJSON struct {
+			ID           string   `json:"id"`
+			RunnerID     string   `json:"runner_id"`
+			Name         string   `json:"name"`
+			Status       string   `json:"status"`
+			Version      string   `json:"version"`
+			APIAddress   string   `json:"api_address"`
+			Labels       []string `json:"labels,omitempty"`
+			RegisteredAt string   `json:"registered_at,omitempty"`
+		}
+
+		var output []RunnerJSON
+		for _, r := range runners {
+			rj := RunnerJSON{
+				ID:         r.Id(),
+				RunnerID:   r.RunnerId(),
+				Name:       r.Name(),
+				Status:     r.Status(),
+				Version:    r.Version(),
+				APIAddress: r.ApiAddress(),
+				Labels:     r.Labels(),
+			}
+			if r.HasRegisteredAt() {
+				rj.RegisteredAt = standard.FromTimestamp(r.RegisteredAt()).Format(time.RFC3339)
+			}
+			output = append(output, rj)
+		}
+		return PrintJSON(output)
+	}
+
+	if len(runners) == 0 {
+		ctx.Printf("No runners registered\n")
+		ctx.Printf("\nUse 'miren runner invite' to create a join code\n")
+		return nil
+	}
+
+	headers := []string{"NAME", "STATUS", "VERSION", "ADDRESS", "REGISTERED"}
+	var rows []ui.Row
+
+	for _, r := range runners {
+		name := r.Name()
+		if name == "" {
+			name = r.RunnerId()
+			if len(name) > 12 {
+				name = name[:12]
+			}
+		}
+
+		status := r.Status()
+		switch status {
+		case "status.ready":
+			status = infoGreen.Render("ready")
+		case "status.unknown":
+			status = infoGray.Render("unknown")
+		case "status.disabled":
+			status = infoLabel.Render("disabled")
+		case "status.unhealthy":
+			status = infoRed.Render("unhealthy")
+		}
+
+		version := r.Version()
+		if version == "" {
+			version = "-"
+		}
+
+		addr := r.ApiAddress()
+		if addr == "" {
+			addr = "-"
+		}
+
+		registered := "-"
+		if r.HasRegisteredAt() {
+			registered = formatDuration(time.Since(standard.FromTimestamp(r.RegisteredAt()))) + " ago"
+		}
+
+		rows = append(rows, ui.Row{name, status, version, addr, registered})
+	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i][0] < rows[j][0]
+	})
+
+	columns := ui.AutoSizeColumns(headers, rows, nil)
+	table := ui.NewTable(
+		ui.WithColumns(columns),
+		ui.WithRows(rows),
+	)
+
+	ctx.Printf("%s\n", table.Render())
+	return nil
+}
+
+func RunnerInviteList(ctx *Context, opts struct {
+	FormatOptions
+	ConfigCentric
+}) error {
+	client, err := ctx.RPCClient("dev.miren.runtime/runner")
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	rc := runner_v1alpha.NewRunnerRegistrationClient(client)
+
+	res, err := rc.ListInvites(ctx)
+	if err != nil {
+		return err
+	}
+
+	invites := res.Invites()
+
+	if opts.IsJSON() {
+		type InviteJSON struct {
+			ID        string   `json:"id"`
+			Status    string   `json:"status"`
+			Labels    []string `json:"labels,omitempty"`
+			ExpiresAt string   `json:"expires_at"`
+			CreatedAt string   `json:"created_at"`
+			ClaimedBy string   `json:"claimed_by,omitempty"`
+			ClaimedAt string   `json:"claimed_at,omitempty"`
+		}
+
+		var output []InviteJSON
+		for _, inv := range invites {
+			ij := InviteJSON{
+				ID:        inv.Id(),
+				Status:    strings.TrimPrefix(inv.Status(), "status."),
+				Labels:    inv.Labels(),
+				ExpiresAt: standard.FromTimestamp(inv.ExpiresAt()).Format(time.RFC3339),
+				CreatedAt: standard.FromTimestamp(inv.CreatedAt()).Format(time.RFC3339),
+			}
+			if inv.ClaimedBy() != "" {
+				ij.ClaimedBy = inv.ClaimedBy()
+				ij.ClaimedAt = standard.FromTimestamp(inv.ClaimedAt()).Format(time.RFC3339)
+			}
+			output = append(output, ij)
+		}
+		return PrintJSON(output)
+	}
+
+	if len(invites) == 0 {
+		ctx.Printf("No invites\n")
+		return nil
+	}
+
+	headers := []string{"ID", "STATUS", "LABELS", "EXPIRES", "CLAIMED BY"}
+	var rows []ui.Row
+
+	for _, inv := range invites {
+		id := inv.Id()
+		if len(id) > 12 {
+			id = id[:12]
+		}
+
+		status := strings.TrimPrefix(inv.Status(), "status.")
+		switch status {
+		case "pending":
+			status = infoLabel.Render(status)
+		case "claimed":
+			status = infoGreen.Render(status)
+		case "revoked":
+			status = infoGray.Render(status)
+		case "expired":
+			status = infoGray.Render(status)
+		}
+
+		labels := "-"
+		if len(inv.Labels()) > 0 {
+			labels = strings.Join(inv.Labels(), ", ")
+		}
+
+		expiresAt := standard.FromTimestamp(inv.ExpiresAt())
+		expires := formatDuration(time.Until(expiresAt))
+		if time.Now().After(expiresAt) {
+			expires = infoGray.Render("expired")
+		}
+
+		claimedBy := "-"
+		if inv.ClaimedBy() != "" {
+			claimedBy = inv.ClaimedBy()
+			if len(claimedBy) > 12 {
+				claimedBy = claimedBy[:12]
+			}
+		}
+
+		rows = append(rows, ui.Row{id, status, labels, expires, claimedBy})
+	}
+
+	columns := ui.AutoSizeColumns(headers, rows, nil)
+	table := ui.NewTable(
+		ui.WithColumns(columns),
+		ui.WithRows(rows),
+	)
+
+	ctx.Printf("%s\n", table.Render())
+	return nil
+}

@@ -1,0 +1,36 @@
+domain: dev.miren.runner
+version: v1alpha
+
+kinds:
+  runner_invite:
+    code_hash:
+      type: string
+      doc: SHA-256 hash of the join code (code itself is not stored)
+      indexed: true
+
+    labels:
+      type: label
+      doc: Labels to apply to the runner when it joins
+      many: true
+
+    expires_at:
+      type: time
+      doc: When the invite expires
+
+    status:
+      type: enum
+      doc: Status of the invite
+      choices: [pending, claimed, revoked, expired]
+      indexed: true
+
+    claimed_by:
+      type: string
+      doc: Runner ID that claimed this invite
+
+    claimed_at:
+      type: time
+      doc: When the invite was claimed
+
+    created_at:
+      type: time
+      doc: When the invite was created
