@@ -1,0 +1,814 @@
+package saga
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// Test input/output types
+type AddNumbersIn struct {
+	A int `saga:"a"`
+	B int `saga:"b"`
+}
+
+type AddNumbersOut struct {
+	Sum int `saga:"sum"`
+}
+
+type MultiplyIn struct {
+	Sum    int `saga:"sum"`
+	Factor int `saga:"factor"`
+}
+
+type MultiplyOut struct {
+	Result int `saga:"result"`
+}
+
+// Test controller to track calls
+type testController struct {
+	mu            sync.Mutex
+	addCalls      []AddNumbersIn
+	multiplyCalls []MultiplyIn
+	undoAddCalls  []AddNumbersOut
+	undoMultCalls []MultiplyOut
+	failAdd       bool
+	failMultiply  bool
+	failUndoAdd   bool
+}
+
+func (c *testController) recordAdd(in AddNumbersIn) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.addCalls = append(c.addCalls, in)
+}
+
+func (c *testController) recordMultiply(in MultiplyIn) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.multiplyCalls = append(c.multiplyCalls, in)
+}
+
+func (c *testController) recordUndoAdd(out AddNumbersOut) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.undoAddCalls = append(c.undoAddCalls, out)
+}
+
+func (c *testController) recordUndoMult(out MultiplyOut) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.undoMultCalls = append(c.undoMultCalls, out)
+}
+
+// Action functions
+func AddNumbers(ctx context.Context, in AddNumbersIn) (AddNumbersOut, error) {
+	ctrl := Get[*testController](ctx)
+	ctrl.recordAdd(in)
+	if ctrl.failAdd {
+		return AddNumbersOut{}, errors.New("add failed")
+	}
+	return AddNumbersOut{Sum: in.A + in.B}, nil
+}
+
+func UndoAddNumbers(ctx context.Context, in AddNumbersIn, out AddNumbersOut) error {
+	ctrl := Get[*testController](ctx)
+	ctrl.recordUndoAdd(out)
+	if ctrl.failUndoAdd {
+		return errors.New("undo add failed")
+	}
+	return nil
+}
+
+func Multiply(ctx context.Context, in MultiplyIn) (MultiplyOut, error) {
+	ctrl := Get[*testController](ctx)
+	ctrl.recordMultiply(in)
+	if ctrl.failMultiply {
+		return MultiplyOut{}, errors.New("multiply failed")
+	}
+	return MultiplyOut{Result: in.Sum * in.Factor}, nil
+}
+
+func UndoMultiply(ctx context.Context, in MultiplyIn, out MultiplyOut) error {
+	ctrl := Get[*testController](ctx)
+	ctrl.recordUndoMult(out)
+	return nil
+}
+
+// In-memory storage for testing
+type memoryStorage struct {
+	mu         sync.Mutex
+	executions map[string]*Execution
+}
+
+func newMemoryStorage() *memoryStorage {
+	return &memoryStorage{
+		executions: make(map[string]*Execution),
+	}
+}
+
+func (m *memoryStorage) Save(ctx context.Context, exec *Execution) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Deep copy to simulate real storage
+	copied := *exec
+	copied.ExecutedActions = make(map[string]*ActionResult)
+	for k, v := range exec.ExecutedActions {
+		copiedResult := *v
+		copied.ExecutedActions[k] = &copiedResult
+	}
+	copied.ExecutionOrder = make([]string, len(exec.ExecutionOrder))
+	copy(copied.ExecutionOrder, exec.ExecutionOrder)
+	m.executions[exec.ID] = &copied
+	return nil
+}
+
+func (m *memoryStorage) Get(ctx context.Context, id string) (*Execution, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	exec, ok := m.executions[id]
+	if !ok {
+		return nil, errors.New("not found")
+	}
+	return exec, nil
+}
+
+func (m *memoryStorage) ListIncomplete(ctx context.Context) ([]*Execution, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var result []*Execution
+	for _, exec := range m.executions {
+		if exec.Status == StatusPending || exec.Status == StatusRunning || exec.Status == StatusUndoing {
+			result = append(result, exec)
+		}
+	}
+	return result, nil
+}
+
+func TestBuilder_SingleAction(t *testing.T) {
+	registry := NewRegistry()
+
+	ctrl := &testController{}
+	err := Define("single-action").
+		Using(ctrl).
+		Action("add", AddNumbers).Undo(UndoAddNumbers).
+		RegisterTo(registry)
+	require.NoError(t, err)
+
+	def, ok := registry.Get("single-action")
+	require.True(t, ok)
+	assert.Equal(t, "single-action", def.Name)
+	assert.Len(t, def.Actions, 1)
+	assert.Contains(t, def.Actions, "add")
+}
+
+func TestBuilder_MultipleActionsWithDependencies(t *testing.T) {
+	registry := NewRegistry()
+
+	ctrl := &testController{}
+	err := Define("calc").
+		Using(ctrl).
+		Action("add", AddNumbers).Undo(UndoAddNumbers).
+		Action("multiply", Multiply).Undo(UndoMultiply).
+		RegisterTo(registry)
+	require.NoError(t, err)
+
+	def, ok := registry.Get("calc")
+	require.True(t, ok)
+	assert.Len(t, def.Actions, 2)
+
+	// Multiply depends on add (because it needs "sum")
+	multNode := def.Actions["multiply"]
+	assert.Contains(t, multNode.Dependencies, "add")
+
+	// Execution order should have add before multiply
+	addIdx := -1
+	multIdx := -1
+	for i, name := range def.executionOrder {
+		if name == "add" {
+			addIdx = i
+		}
+		if name == "multiply" {
+			multIdx = i
+		}
+	}
+	assert.True(t, addIdx < multIdx, "add should come before multiply")
+}
+
+func TestBuilder_DuplicateOutputsError(t *testing.T) {
+	ctrl := &testController{}
+	// Both actions produce "sum"
+	_, err := Define("duplicate").
+		Using(ctrl).
+		Action("add1", AddNumbers).Undo(UndoAddNumbers).
+		Action("add2", AddNumbers).Undo(UndoAddNumbers).
+		Build()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "sum")
+}
+
+func TestExecutor_Success(t *testing.T) {
+	registry := NewRegistry()
+
+	ctrl := &testController{}
+	err := Define("calc").
+		Using(ctrl).
+		Action("add", AddNumbers).Undo(UndoAddNumbers).
+		Action("multiply", Multiply).Undo(UndoMultiply).
+		RegisterTo(registry)
+	require.NoError(t, err)
+
+	storage := newMemoryStorage()
+	executor := NewExecutor(storage, WithRegistry(registry))
+
+	ctx := context.Background()
+	err = executor.Start("calc").
+		Input("a", 2).
+		Input("b", 3).
+		Input("factor", 4).
+		WithID("test-exec-1").
+		Execute(ctx)
+	require.NoError(t, err)
+
+	// Verify actions were called
+	assert.Len(t, ctrl.addCalls, 1)
+	assert.Equal(t, AddNumbersIn{A: 2, B: 3}, ctrl.addCalls[0])
+
+	assert.Len(t, ctrl.multiplyCalls, 1)
+	assert.Equal(t, MultiplyIn{Sum: 5, Factor: 4}, ctrl.multiplyCalls[0])
+
+	// Verify no undos
+	assert.Empty(t, ctrl.undoAddCalls)
+	assert.Empty(t, ctrl.undoMultCalls)
+
+	// Verify final state
+	exec, err := storage.Get(ctx, "test-exec-1")
+	require.NoError(t, err)
+	assert.Equal(t, StatusCompleted, exec.Status)
+	assert.Len(t, exec.ExecutionOrder, 2)
+}
+
+func TestExecutor_FailureAndUndo(t *testing.T) {
+	registry := NewRegistry()
+
+	ctrl := &testController{failMultiply: true}
+	err := Define("calc-fail").
+		Using(ctrl).
+		Action("add", AddNumbers).Undo(UndoAddNumbers).
+		Action("multiply", Multiply).Undo(UndoMultiply).
+		RegisterTo(registry)
+	require.NoError(t, err)
+
+	storage := newMemoryStorage()
+	executor := NewExecutor(storage, WithRegistry(registry))
+
+	ctx := context.Background()
+	err = executor.Start("calc-fail").
+		Input("a", 2).
+		Input("b", 3).
+		Input("factor", 4).
+		WithID("test-exec-2").
+		Execute(ctx)
+	require.Error(t, err)
+
+	// Verify add was called
+	assert.Len(t, ctrl.addCalls, 1)
+
+	// Verify multiply was attempted
+	assert.Len(t, ctrl.multiplyCalls, 1)
+
+	// Verify undo was called for add (not multiply since it failed)
+	assert.Len(t, ctrl.undoAddCalls, 1)
+	assert.Equal(t, AddNumbersOut{Sum: 5}, ctrl.undoAddCalls[0])
+
+	// Multiply doesn't produce output on failure, so no undo
+	assert.Empty(t, ctrl.undoMultCalls)
+
+	// Verify final state
+	exec, err := storage.Get(ctx, "test-exec-2")
+	require.NoError(t, err)
+	assert.Equal(t, StatusFailed, exec.Status)
+}
+
+func TestExecutor_Recovery(t *testing.T) {
+	registry := NewRegistry()
+
+	ctrl := &testController{}
+	err := Define("recoverable").
+		Using(ctrl).
+		Action("add", AddNumbers).Undo(UndoAddNumbers).
+		Action("multiply", Multiply).Undo(UndoMultiply).
+		RegisterTo(registry)
+	require.NoError(t, err)
+
+	storage := newMemoryStorage()
+
+	// Simulate a crashed execution
+	// Note: Output uses uppercase "Sum" because Go's json.Marshal uses field names as-is
+	crashedExec := &Execution{
+		ID:                "crashed-exec",
+		DefinitionName:    "recoverable",
+		DefinitionVersion: 1,
+		InitialInputs:     map[string]any{"a": float64(2), "b": float64(3), "factor": float64(4)},
+		Status:            StatusRunning,
+		ExecutedActions: map[string]*ActionResult{
+			"add": {
+				Output:     []byte(`{"Sum":5}`),
+				ExecutedAt: time.Now(),
+			},
+		},
+		ExecutionOrder: []string{"add"},
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+	storage.Save(context.Background(), crashedExec)
+
+	// Create new executor and recover
+	executor := NewExecutor(storage, WithRegistry(registry))
+	err = executor.Recover(context.Background())
+	require.NoError(t, err)
+
+	// Verify only multiply was called (add was already done)
+	assert.Empty(t, ctrl.addCalls) // add not called again
+	assert.Len(t, ctrl.multiplyCalls, 1)
+
+	// Verify final state
+	exec, err := storage.Get(context.Background(), "crashed-exec")
+	require.NoError(t, err)
+	assert.Equal(t, StatusCompleted, exec.Status)
+}
+
+func TestExecutor_ContextCancellation(t *testing.T) {
+	registry := NewRegistry()
+
+	ctrl := &testController{}
+	err := Define("cancellable").
+		Using(ctrl).
+		Action("add", AddNumbers).Undo(UndoAddNumbers).
+		Action("multiply", Multiply).Undo(UndoMultiply).
+		RegisterTo(registry)
+	require.NoError(t, err)
+
+	storage := newMemoryStorage()
+	executor := NewExecutor(storage, WithRegistry(registry))
+
+	// Create an already-cancelled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err = executor.Start("cancellable").
+		Input("a", 2).
+		Input("b", 3).
+		Input("factor", 4).
+		WithID("cancel-exec").
+		Execute(ctx)
+
+	// Should return an error due to cancellation
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "interrupted")
+
+	// Verify saga is left in Running state (no actions executed)
+	exec, err := storage.Get(context.Background(), "cancel-exec")
+	require.NoError(t, err)
+	assert.Equal(t, StatusRunning, exec.Status)
+	assert.Empty(t, exec.ExecutionOrder)
+
+	// No actions should have been called
+	assert.Empty(t, ctrl.addCalls)
+	assert.Empty(t, ctrl.multiplyCalls)
+}
+
+func TestGet_Panic(t *testing.T) {
+	ctx := context.Background()
+	assert.Panics(t, func() {
+		Get[*testController](ctx)
+	})
+}
+
+func TestTryGet(t *testing.T) {
+	ctx := context.Background()
+
+	// Without dependency
+	ctrl, ok := TryGet[*testController](ctx)
+	assert.False(t, ok)
+	assert.Nil(t, ctrl)
+
+	// With dependency
+	ctrl = &testController{}
+	ctx = injectDependencies(ctx, []any{ctrl})
+	got, ok := TryGet[*testController](ctx)
+	assert.True(t, ok)
+	assert.Same(t, ctrl, got)
+}
+
+// testService is an interface for testing UsingAs.
+type testService interface {
+	DoWork() string
+}
+
+// testServiceImpl implements testService.
+type testServiceImpl struct {
+	name string
+}
+
+func (s *testServiceImpl) DoWork() string {
+	return s.name
+}
+
+func TestUsingAs_InterfaceInjection(t *testing.T) {
+	impl := &testServiceImpl{name: "test-impl"}
+
+	// Build a saga using UsingAs to key by interface type
+	b := Define("interface-test")
+	UsingAs[testService](b, impl)
+
+	// Verify the dependency is stored correctly
+	assert.Len(t, b.dependencies, 1)
+
+	// Inject and retrieve by interface type
+	ctx := context.Background()
+	ctx = injectDependencies(ctx, b.dependencies)
+
+	// Should be retrievable by interface type
+	svc, ok := TryGet[testService](ctx)
+	assert.True(t, ok, "should find dependency by interface type")
+	assert.Equal(t, "test-impl", svc.DoWork())
+
+	// Should NOT be retrievable by concrete type (different key)
+	_, ok = TryGet[*testServiceImpl](ctx)
+	assert.False(t, ok, "should not find dependency by concrete type when keyed by interface")
+}
+
+func TestInputs_Get(t *testing.T) {
+	initial := map[string]any{
+		"name":  "test",
+		"count": float64(42),
+	}
+	outputs := map[string]json.RawMessage{
+		"result": json.RawMessage(`"success"`),
+	}
+
+	inputs := newInputs(initial, outputs)
+
+	// Get from initial
+	var name string
+	err := inputs.Get("name", &name)
+	require.NoError(t, err)
+	assert.Equal(t, "test", name)
+
+	// Get from outputs (takes precedence)
+	var result string
+	err = inputs.Get("result", &result)
+	require.NoError(t, err)
+	assert.Equal(t, "success", result)
+
+	// Missing key
+	var missing string
+	err = inputs.Get("missing", &missing)
+	require.Error(t, err)
+}
+
+func TestInputs_Has(t *testing.T) {
+	initial := map[string]any{"a": 1}
+	outputs := map[string]json.RawMessage{"b": json.RawMessage("2")}
+
+	inputs := newInputs(initial, outputs)
+
+	assert.True(t, inputs.Has("a"))
+	assert.True(t, inputs.Has("b"))
+	assert.False(t, inputs.Has("c"))
+}
+
+func TestInputs_Keys(t *testing.T) {
+	initial := map[string]any{"a": 1, "b": 2}
+	outputs := map[string]json.RawMessage{"b": json.RawMessage("3"), "c": json.RawMessage("4")}
+
+	inputs := newInputs(initial, outputs)
+	keys := inputs.Keys()
+
+	assert.Len(t, keys, 3)
+	assert.Contains(t, keys, "a")
+	assert.Contains(t, keys, "b")
+	assert.Contains(t, keys, "c")
+}
+
+// Test types for optional input testing
+type OptionalIn struct {
+	Required int `saga:"required"`
+	Optional int `saga:"optional,optional"`
+}
+
+type OptionalOut struct {
+	Result int `saga:"result"`
+}
+
+func OptionalAction(ctx context.Context, in OptionalIn) (OptionalOut, error) {
+	return OptionalOut{Result: in.Required + in.Optional}, nil
+}
+
+func UndoOptionalAction(ctx context.Context, in OptionalIn, out OptionalOut) error {
+	return nil
+}
+
+func TestExecutor_MissingRequiredInput(t *testing.T) {
+	registry := NewRegistry()
+
+	err := Define("required-test").
+		Action("optional-action", OptionalAction).Undo(UndoOptionalAction).
+		RegisterTo(registry)
+	require.NoError(t, err)
+
+	storage := newMemoryStorage()
+	executor := NewExecutor(storage, WithRegistry(registry))
+
+	ctx := context.Background()
+	// Missing "required" input should cause an error
+	err = executor.Start("required-test").
+		Input("optional", 10).
+		WithID("missing-required").
+		Execute(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing required input")
+	assert.Contains(t, err.Error(), "required")
+}
+
+func TestExecutor_OptionalInput(t *testing.T) {
+	registry := NewRegistry()
+
+	err := Define("optional-test").
+		Action("optional-action", OptionalAction).Undo(UndoOptionalAction).
+		RegisterTo(registry)
+	require.NoError(t, err)
+
+	storage := newMemoryStorage()
+	executor := NewExecutor(storage, WithRegistry(registry))
+
+	ctx := context.Background()
+	// Missing "optional" input should use zero value (0)
+	err = executor.Start("optional-test").
+		Input("required", 5).
+		WithID("optional-missing").
+		Execute(ctx)
+	require.NoError(t, err)
+
+	// Verify execution completed
+	exec, err := storage.Get(ctx, "optional-missing")
+	require.NoError(t, err)
+	assert.Equal(t, StatusCompleted, exec.Status)
+
+	// Result should be 5 + 0 = 5
+	var output OptionalOut
+	err = json.Unmarshal(exec.ExecutedActions["optional-action"].Output, &output)
+	require.NoError(t, err)
+	assert.Equal(t, 5, output.Result)
+}
+
+// failingStorage wraps memoryStorage but fails Save after N successful calls.
+type failingStorage struct {
+	*memoryStorage
+	failAfter int
+	saveCount int
+	mu        sync.Mutex
+}
+
+func newFailingStorage(failAfter int) *failingStorage {
+	return &failingStorage{
+		memoryStorage: newMemoryStorage(),
+		failAfter:     failAfter,
+	}
+}
+
+func (f *failingStorage) Save(ctx context.Context, exec *Execution) error {
+	f.mu.Lock()
+	f.saveCount++
+	count := f.saveCount
+	f.mu.Unlock()
+
+	if count > f.failAfter {
+		return errors.New("simulated storage failure")
+	}
+	return f.memoryStorage.Save(ctx, exec)
+}
+
+func TestExecutor_StorageFailureTriggersUndo(t *testing.T) {
+	registry := NewRegistry()
+
+	ctrl := &testController{}
+	err := Define("storage-fail-test").
+		Using(ctrl).
+		Action("add", AddNumbers).Undo(UndoAddNumbers).
+		Action("multiply", Multiply).Undo(UndoMultiply).
+		RegisterTo(registry)
+	require.NoError(t, err)
+
+	// Storage that fails after 3 saves:
+	// 1. Initial save (StatusPending)
+	// 2. Status update (StatusRunning)
+	// 3. After "add" action succeeds
+	// 4. FAIL - after "multiply" action succeeds
+	storage := newFailingStorage(3)
+	executor := NewExecutor(storage, WithRegistry(registry))
+
+	err = executor.Start("storage-fail-test").
+		Input("a", 2).
+		Input("b", 3).
+		Input("factor", 4).
+		WithID("storage-fail-exec").
+		Execute(context.Background())
+
+	// Saga returns an error indicating it failed and was rolled back
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "saga failed")
+
+	// Both actions should have been executed
+	assert.Len(t, ctrl.addCalls, 1)
+	assert.Len(t, ctrl.multiplyCalls, 1)
+
+	// KEY ASSERTION: Both actions should have been undone because
+	// storage failure after multiply triggered compensation.
+	// This verifies the fix: we don't leave the saga in a broken state
+	// where an action executed but wasn't recorded.
+	assert.Len(t, ctrl.undoMultCalls, 1, "multiply should be undone")
+	assert.Len(t, ctrl.undoAddCalls, 1, "add should be undone")
+}
+
+func TestExecutor_FailedUndoNotMarkedAsUndone(t *testing.T) {
+	registry := NewRegistry()
+
+	ctrl := &testController{
+		failMultiply: true, // multiply fails, triggering undo
+		failUndoAdd:  true, // undo of add also fails
+	}
+	err := Define("undo-fail-test").
+		Using(ctrl).
+		Action("add", AddNumbers).Undo(UndoAddNumbers).
+		Action("multiply", Multiply).Undo(UndoMultiply).
+		RegisterTo(registry)
+	require.NoError(t, err)
+
+	storage := newMemoryStorage()
+	executor := NewExecutor(storage, WithRegistry(registry))
+
+	err = executor.Start("undo-fail-test").
+		Input("a", 2).
+		Input("b", 3).
+		Input("factor", 4).
+		WithID("undo-fail-exec").
+		Execute(context.Background())
+
+	// Saga should return an error (with undo errors)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "undo errors")
+
+	// Add executed, multiply was attempted
+	assert.Len(t, ctrl.addCalls, 1)
+	assert.Len(t, ctrl.multiplyCalls, 1)
+
+	// Undo was attempted for add (multiply failed so no output to undo)
+	assert.Len(t, ctrl.undoAddCalls, 1)
+
+	// KEY ASSERTION: The "add" action should NOT be marked as undone
+	// because its undo failed. This ensures recovery will retry the undo.
+	exec, err := storage.Get(context.Background(), "undo-fail-exec")
+	require.NoError(t, err)
+
+	addResult := exec.ExecutedActions["add"]
+	require.NotNil(t, addResult)
+	assert.Nil(t, addResult.UndoneAt, "add should NOT be marked as undone since undo failed")
+
+	// KEY ASSERTION: Status should be Undoing (not Failed) so recovery can retry
+	assert.Equal(t, StatusUndoing, exec.Status, "saga should stay in Undoing status when undo fails")
+}
+
+func TestExecutor_RecoveryAfterActionFailure(t *testing.T) {
+	// This test simulates a crash after an action fails but before undo starts.
+	// Without the fix, recovery would incorrectly complete the saga instead of undoing.
+
+	registry := NewRegistry()
+
+	ctrl := &testController{}
+	err := Define("recovery-after-fail").
+		Using(ctrl).
+		Action("add", AddNumbers).Undo(UndoAddNumbers).
+		Action("multiply", Multiply).Undo(UndoMultiply).
+		RegisterTo(registry)
+	require.NoError(t, err)
+
+	storage := newMemoryStorage()
+
+	// Simulate a crashed execution where multiply failed but undo never started.
+	// This is the state we'd have if we crashed after recording the failure
+	// but before runUndo set StatusUndoing.
+	crashedExec := &Execution{
+		ID:                "crashed-after-fail",
+		DefinitionName:    "recovery-after-fail",
+		DefinitionVersion: 1,
+		InitialInputs:     map[string]any{"a": float64(2), "b": float64(3), "factor": float64(4)},
+		Status:            StatusRunning, // BUG: should be Undoing
+		Error:             "action \"multiply\" failed: multiply failed",
+		ExecutedActions: map[string]*ActionResult{
+			"add": {
+				Output:     []byte(`{"Sum":5}`),
+				ExecutedAt: time.Now(),
+			},
+			"multiply": {
+				ExecutedAt: time.Now(),
+				Error:      "multiply failed",
+			},
+		},
+		ExecutionOrder: []string{"add", "multiply"},
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+	storage.Save(context.Background(), crashedExec)
+
+	// Recover
+	executor := NewExecutor(storage, WithRegistry(registry))
+	_ = executor.Recover(context.Background())
+
+	// The saga had a failed action - recovery should have triggered undo
+	exec, _ := storage.Get(context.Background(), "crashed-after-fail")
+
+	// KEY ASSERTION: After recovery, the saga should be Failed (undone),
+	// not Completed. The "add" action should be undone.
+	assert.Equal(t, StatusFailed, exec.Status,
+		"Saga with failed action should be Failed after recovery, not %s", exec.Status)
+	assert.Len(t, ctrl.undoAddCalls, 1, "add should have been undone during recovery")
+}
+
+// UnserializableOut contains a channel which json.Marshal cannot serialize.
+type UnserializableOut struct {
+	Value int
+	Ch    chan int // channels can't be serialized
+}
+
+type unserializableController struct {
+	executeCalls int
+	undoCalls    int
+	failUndo     bool
+}
+
+func UnserializableAction(ctx context.Context, in AddNumbersIn) (UnserializableOut, error) {
+	ctrl := Get[*unserializableController](ctx)
+	ctrl.executeCalls++
+	return UnserializableOut{Value: in.A + in.B, Ch: make(chan int)}, nil
+}
+
+func UndoUnserializableAction(ctx context.Context, in AddNumbersIn, out UnserializableOut) error {
+	ctrl := Get[*unserializableController](ctx)
+	ctrl.undoCalls++
+	if ctrl.failUndo {
+		return errors.New("undo failed")
+	}
+	return nil
+}
+
+func TestExecutor_SerializationFailurePlusUndoFailure(t *testing.T) {
+	// This tests the edge case where:
+	// 1. Action executes successfully
+	// 2. Output serialization fails (contains channel)
+	// 3. Immediate undo also fails
+	// The action should still be recorded so runUndo can retry.
+
+	registry := NewRegistry()
+
+	ctrl := &unserializableController{failUndo: true}
+	err := Define("unserializable-test").
+		Using(ctrl).
+		Action("unserializable", UnserializableAction).Undo(UndoUnserializableAction).
+		RegisterTo(registry)
+	require.NoError(t, err)
+
+	storage := newMemoryStorage()
+	executor := NewExecutor(storage, WithRegistry(registry))
+
+	err = executor.Start("unserializable-test").
+		Input("a", 2).
+		Input("b", 3).
+		WithID("unserializable-exec").
+		Execute(context.Background())
+
+	// Saga should fail (undo errors)
+	require.Error(t, err)
+
+	// Action was executed
+	assert.Equal(t, 1, ctrl.executeCalls)
+
+	// Undo was attempted twice:
+	// 1. Immediate undo after serialization failure (failed)
+	// 2. runUndo retry (also failed, but at least it was attempted)
+	assert.Equal(t, 2, ctrl.undoCalls, "undo should be attempted twice: immediate + runUndo retry")
+
+	// KEY ASSERTION: The action should be recorded even though immediate undo failed
+	exec, err := storage.Get(context.Background(), "unserializable-exec")
+	require.NoError(t, err)
+
+	_, recorded := exec.ExecutedActions["unserializable"]
+	assert.True(t, recorded, "action should be recorded even when immediate undo fails")
+}
