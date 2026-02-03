@@ -17,11 +17,12 @@ import (
 )
 
 var (
-	infoGreen = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	infoRed   = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	infoGray  = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	infoLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
-	infoBold  = lipgloss.NewStyle().Bold(true)
+	infoGreen  = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	infoRed    = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	infoYellow = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	infoGray   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	infoLabel  = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
+	infoBold   = lipgloss.NewStyle().Bold(true)
 )
 
 type cloudUserInfo struct {

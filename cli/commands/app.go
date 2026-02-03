@@ -314,7 +314,22 @@ func (m Model) View() string {
 	)
 
 	for _, ps := range m.status.Pools() {
-		hdr += fmt.Sprintf("       pool: %s instances=%d\n", bold.Render(ps.Name()), len(ps.Windows()))
+		instanceCount := len(ps.Windows())
+		instanceInfo := fmt.Sprintf("instances=%d (auto)", instanceCount)
+		if m.cfg != nil {
+			if m.cfg.HasConcurrency() {
+				// Fixed mode
+				if instanceCount == 0 {
+					instanceInfo = "instances=0 (fixed)"
+				} else {
+					instanceInfo = fmt.Sprintf("instances=%d (fixed)", instanceCount)
+				}
+			} else if instanceCount == 0 {
+				// Auto mode with 0 instances
+				instanceInfo = "instances=0 (idle, will scale on traffic)"
+			}
+		}
+		hdr += fmt.Sprintf("       pool: %s %s\n", bold.Render(ps.Name()), instanceInfo)
 	}
 
 	var (

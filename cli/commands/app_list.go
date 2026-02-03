@@ -160,6 +160,7 @@ func AppList(ctx *Context, opts struct {
 		inCooldown   bool
 		crashCount   int64
 		cooldownLeft time.Duration
+		isAutoscale  bool // true if any service uses autoscaling mode
 	}
 	poolStateMap := make(map[string]*appPoolState)
 	now := time.Now()
@@ -169,7 +170,9 @@ func AppList(ctx *Context, opts struct {
 
 		appName := ui.CleanEntityID(pool.App.String())
 		if poolStateMap[appName] == nil {
-			poolStateMap[appName] = &appPoolState{}
+			poolStateMap[appName] = &appPoolState{
+				isAutoscale: true, // default to autoscale, set to false if ANY service uses fixed mode
+			}
 		}
 		state := poolStateMap[appName]
 		state.ready += int(pool.ReadyInstances)
@@ -178,6 +181,15 @@ func AppList(ctx *Context, opts struct {
 			state.inCooldown = true
 			state.crashCount = pool.ConsecutiveCrashCount
 			state.cooldownLeft = pool.CooldownUntil.Sub(now)
+		}
+
+		// Check concurrency mode from the app's active version config
+		if version, ok := versionMap[pool.SandboxSpec.Version.String()]; ok {
+			for _, svc := range version.Config.Services {
+				if svc.Name == pool.Service && svc.ServiceConcurrency.Mode == "fixed" {
+					state.isAutoscale = false
+				}
+			}
 		}
 	}
 
@@ -188,6 +200,7 @@ func AppList(ctx *Context, opts struct {
 			ReadyInstances   int      `json:"ready_instances"`
 			DesiredInstances int      `json:"desired_instances"`
 			Health           string   `json:"health"`
+			ScalingMode      string   `json:"scaling_mode,omitempty"`
 			Routes           []string `json:"routes,omitempty"`
 		}
 
@@ -204,6 +217,7 @@ func AppList(ctx *Context, opts struct {
 				ReadyInstances   int      `json:"ready_instances"`
 				DesiredInstances int      `json:"desired_instances"`
 				Health           string   `json:"health"`
+				ScalingMode      string   `json:"scaling_mode,omitempty"`
 				Routes           []string `json:"routes,omitempty"`
 			}{
 				Name:   md.Name,
@@ -219,6 +233,12 @@ func AppList(ctx *Context, opts struct {
 			if state, ok := poolStateMap[md.Name]; ok {
 				appData.ReadyInstances = state.ready
 				appData.DesiredInstances = state.desired
+
+				if state.isAutoscale {
+					appData.ScalingMode = "auto"
+				} else {
+					appData.ScalingMode = "fixed"
+				}
 
 				if state.inCooldown {
 					appData.Health = "crashed"
@@ -248,7 +268,7 @@ func AppList(ctx *Context, opts struct {
 	}
 
 	var rows []ui.Row
-	headers := []string{"NAME", "VERSION", "STATUS", "ROUTE"}
+	headers := []string{"NAME", "VERSION", "SCALE", "ROUTE"}
 
 	for _, e := range res.Values() {
 		var app core_v1alpha.App
@@ -270,15 +290,24 @@ func AppList(ctx *Context, opts struct {
 
 		// Runtime status from pool state
 		if state, ok := poolStateMap[md.Name]; ok {
+			modeSuffix := " (auto)"
+			if !state.isAutoscale {
+				modeSuffix = " (fixed)"
+			}
+
 			if state.inCooldown {
 				retryIn := formatDuration(state.cooldownLeft)
 				status = infoRed.Render(fmt.Sprintf("crashed (%dx, retry %s)", state.crashCount, retryIn))
 			} else if state.desired == 0 {
-				status = infoGray.Render("💤 idle")
+				if state.isAutoscale {
+					status = infoGray.Render("💤 idle")
+				} else {
+					status = infoYellow.Render("⚠️ 0 (fixed)")
+				}
 			} else if state.ready == state.desired {
-				status = infoGreen.Render(fmt.Sprintf("%d", state.ready))
+				status = infoGreen.Render(fmt.Sprintf("%d%s", state.ready, modeSuffix))
 			} else {
-				status = infoLabel.Render(fmt.Sprintf("%d/%d", state.ready, state.desired))
+				status = infoLabel.Render(fmt.Sprintf("%d/%d%s", state.ready, state.desired, modeSuffix))
 			}
 		}
 
