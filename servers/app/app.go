@@ -295,11 +295,6 @@ func (r *AppInfo) GetConfiguration(ctx context.Context, state *app_v1alpha.CrudG
 
 	err := r.EC.Get(ctx, name, &appRec)
 	if err != nil {
-		if errors.Is(err, cond.ErrNotFound{}) {
-			// No app, no problem.
-			return nil
-		}
-
 		return err
 	}
 
@@ -311,7 +306,7 @@ func (r *AppInfo) GetConfiguration(ctx context.Context, state *app_v1alpha.CrudG
 			return err
 		}
 	} else {
-		return nil
+		return fmt.Errorf("app has no active version")
 	}
 
 	var cfg app_v1alpha.Configuration
