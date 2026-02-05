@@ -1027,6 +1027,22 @@ func (s *Server) startCallStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// isRequestAuthenticated checks if an HTTP request has valid authentication.
+// Authentication can be via:
+// - TLS client certificate (r.TLS.PeerCertificates)
+// - JWT token (Authorization header, already validated by ServeHTTP)
+// - No TLS at all (server behind auth proxy that handles auth)
+//
+// Returns false only when: TLS is enabled, no client cert, AND no Authorization header.
+func isRequestAuthenticated(r *http.Request) bool {
+	hasCert := r.TLS != nil && len(r.TLS.PeerCertificates) > 0
+	hasAuthHeader := r.Header.Get("Authorization") != ""
+	noTLS := r.TLS == nil
+
+	// Authenticated if any of these are true
+	return hasCert || hasAuthHeader || noTLS
+}
+
 func (s *Server) handleCalls(w http.ResponseWriter, r *http.Request) {
 	oid := OID(r.PathValue("oid"))
 
@@ -1059,20 +1075,9 @@ func (s *Server) handleCalls(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Enforce authentication for non-public methods
-		// Public methods can be called without authentication
 		// Skip this check if skipVerify is set (test mode)
 		if !mm.Public && !s.state.opts.skipVerify {
-			// Authentication can be via:
-			// - TLS client certificate (r.TLS.PeerCertificates)
-			// - JWT token (Authorization header, already validated by ServeHTTP)
-			// - No TLS at all (server behind auth proxy)
-			//
-			// Only reject if: TLS is enabled, no client cert, AND no Authorization header
-			hasCert := r.TLS != nil && len(r.TLS.PeerCertificates) > 0
-			hasAuthHeader := r.Header.Get("Authorization") != ""
-			noTLS := r.TLS == nil
-
-			if !hasCert && !hasAuthHeader && !noTLS {
+			if !isRequestAuthenticated(r) {
 				s.state.log.Warn("authentication required for non-public method",
 					"method", method, "interface", mm.InterfaceName)
 				w.Header().Add("rpc-status", "unauthorized")

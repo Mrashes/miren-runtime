@@ -181,3 +181,80 @@ func TestLocalOnlyAuthenticator(t *testing.T) {
 		})
 	}
 }
+
+// TestIsRequestAuthenticated verifies the isRequestAuthenticated helper function
+// that determines if a request should be allowed to call non-public methods.
+func TestIsRequestAuthenticated(t *testing.T) {
+	mockCert := &x509.Certificate{
+		Subject: pkix.Name{CommonName: "test-client"},
+	}
+
+	tests := []struct {
+		name          string
+		hasTLS        bool
+		hasCert       bool
+		hasAuthHeader bool
+		expectAuth    bool
+	}{
+		{
+			name:          "no TLS at all - authenticated (behind proxy)",
+			hasTLS:        false,
+			hasCert:       false,
+			hasAuthHeader: false,
+			expectAuth:    true,
+		},
+		{
+			name:          "TLS with client cert - authenticated",
+			hasTLS:        true,
+			hasCert:       true,
+			hasAuthHeader: false,
+			expectAuth:    true,
+		},
+		{
+			name:          "TLS with Authorization header (JWT) - authenticated",
+			hasTLS:        true,
+			hasCert:       false,
+			hasAuthHeader: true,
+			expectAuth:    true,
+		},
+		{
+			name:          "TLS with both cert and auth header - authenticated",
+			hasTLS:        true,
+			hasCert:       true,
+			hasAuthHeader: true,
+			expectAuth:    true,
+		},
+		{
+			name:          "TLS without cert or auth header - NOT authenticated",
+			hasTLS:        true,
+			hasCert:       false,
+			hasAuthHeader: false,
+			expectAuth:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequest("POST", "/_rpc/call/test/method", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if tt.hasTLS {
+				req.TLS = &tls.ConnectionState{}
+				if tt.hasCert {
+					req.TLS.PeerCertificates = []*x509.Certificate{mockCert}
+				}
+			}
+
+			if tt.hasAuthHeader {
+				req.Header.Set("Authorization", "Bearer test-token")
+			}
+
+			result := isRequestAuthenticated(req)
+			if result != tt.expectAuth {
+				t.Errorf("expected authenticated=%v, got %v", tt.expectAuth, result)
+			}
+		})
+	}
+}

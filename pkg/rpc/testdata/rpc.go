@@ -277,7 +277,7 @@ func AdaptTown(t Town) *rpc.Interface {
 			Name:          "getHero",
 			InterfaceName: "Town",
 			Index:         0,
-			Public:        false,
+			Public:        true,
 			Handler: func(ctx context.Context, call rpc.Call) error {
 				return t.GetHero(ctx, &TownGetHero{Call: call})
 			},
