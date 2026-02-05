@@ -502,7 +502,8 @@ func (c *Coordinator) Start(ctx context.Context) error {
 			"cloud_url", authCloudURL)
 	} else if c.NoAuth {
 		// Use NoOpAuthenticator when explicitly disabled (for testing)
-		rpcOpts = append(rpcOpts, rpc.WithAuthenticator(&rpc.NoOpAuthenticator{}))
+		// Also skip verification to bypass public method auth checks
+		rpcOpts = append(rpcOpts, rpc.WithAuthenticator(&rpc.NoOpAuthenticator{}), rpc.WithSkipVerify)
 		c.Log.Warn("authentication disabled (NoOpAuthenticator)")
 	} else {
 		// Use LocalOnlyAuthenticator when cloud auth is not enabled
