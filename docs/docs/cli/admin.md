@@ -4,6 +4,10 @@ sidebar_position: 6
 
 # Admin Commands
 
+:::info Labs Feature
+The admin interface is a [labs feature](/labs) and is disabled by default. Enable it with `--labs adminapi` or `MIREN_LABS=adminapi` when starting the server.
+:::
+
 Commands for calling admin functions on your applications.
 
 The admin interface allows you to execute custom administrative functions in your running application—useful for user management, cache clearing, database operations, and other maintenance tasks.

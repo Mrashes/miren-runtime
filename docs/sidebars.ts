@@ -27,6 +27,7 @@ const sidebars: SidebarsConfig = {
         'scaling',
         'disks',
         'firewall',
+        'admin-interface',
       ],
     },
     'working-with-miren-cloud',
@@ -43,6 +44,7 @@ const sidebars: SidebarsConfig = {
         'cli/logs',
         'cli/sandbox',
         'cli/disk',
+        'cli/admin',
         'cli/entity',
       ],
     },
@@ -51,6 +53,7 @@ const sidebars: SidebarsConfig = {
       label: 'Resources',
       collapsed: false,
       items: [
+        'labs',
         'changelog',
         'cloud-updates',
         'support',
