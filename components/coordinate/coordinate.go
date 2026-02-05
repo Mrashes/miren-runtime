@@ -45,6 +45,7 @@ import (
 	"miren.dev/runtime/pkg/controller"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/entity/schema"
+	"miren.dev/runtime/pkg/labs"
 	"miren.dev/runtime/pkg/rpc"
 	"miren.dev/runtime/pkg/sysstats"
 	"miren.dev/runtime/servers/admin"
@@ -725,7 +726,9 @@ func (c *Coordinator) Start(ctx context.Context) error {
 	c.hs = httpingress.NewServer(ctx, c.Log, ingressConfig, loopback, aa, c.HTTP, c.LogWriter)
 
 	adminServer := admin.NewServer(c.Log, ec, c.hs, c.LogWriter)
-	server.ExposeValue("dev.miren.runtime/admin", admin_v1alpha.AdaptAdmin(adminServer))
+	if labs.AdminAPI() {
+		server.ExposeValue("dev.miren.runtime/admin", admin_v1alpha.AdaptAdmin(adminServer))
+	}
 
 	c.Log.Info("started RPC server")
 

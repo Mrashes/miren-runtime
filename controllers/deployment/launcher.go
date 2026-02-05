@@ -13,6 +13,7 @@ import (
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/entity/types"
 	"miren.dev/runtime/pkg/idgen"
+	"miren.dev/runtime/pkg/labs"
 )
 
 // Launcher watches App entities and proactively creates SandboxPools when ActiveVersion changes.
@@ -354,7 +355,7 @@ func (l *Launcher) buildSandboxSpec(
 	if port > 0 {
 		appCont.Env = append(appCont.Env, fmt.Sprintf("PORT=%d", port))
 	}
-	if ver.AdminToken != "" {
+	if labs.AdminAPI() && ver.AdminToken != "" {
 		appCont.Env = append(appCont.Env, "ADMIN_TOKEN="+ver.AdminToken)
 	}
 

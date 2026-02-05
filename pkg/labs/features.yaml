@@ -13,3 +13,8 @@ features:
     predicate: UserSubdomains
     description: Allow claiming custom subdomains
     default: false
+
+  - name: adminapi
+    predicate: AdminAPI
+    description: Enable the admin API for application management functions
+    default: false

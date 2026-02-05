@@ -13,6 +13,7 @@ const (
 	FeatureGlobalRouter       = "globalrouter"
 	FeatureDistributedRunners = "distributedrunners"
 	FeatureUserSubdomains     = "usersubdomains"
+	FeatureAdminAPI           = "adminapi"
 )
 
 // AllFeatures returns a list of all known feature names
@@ -21,6 +22,7 @@ func AllFeatures() []string {
 		FeatureGlobalRouter,
 		FeatureDistributedRunners,
 		FeatureUserSubdomains,
+		FeatureAdminAPI,
 	}
 }
 
@@ -30,6 +32,7 @@ func FeatureDescriptions() map[string]string {
 		FeatureGlobalRouter:       "Use global NAT traversal router for connectivity",
 		FeatureDistributedRunners: "Schedule jobs across multiple runner nodes",
 		FeatureUserSubdomains:     "Allow claiming custom subdomains",
+		FeatureAdminAPI:           "Enable the admin API for application management functions",
 	}
 }
 
@@ -43,6 +46,7 @@ var featureDefaults = map[string]bool{
 	FeatureGlobalRouter:       false,
 	FeatureDistributedRunners: false,
 	FeatureUserSubdomains:     false,
+	FeatureAdminAPI:           false,
 }
 
 // Init initializes the labs feature flags from the provided flag strings.
@@ -135,4 +139,10 @@ func DistributedRunners() bool {
 // Allow claiming custom subdomains
 func UserSubdomains() bool {
 	return IsEnabled(FeatureUserSubdomains)
+}
+
+// AdminAPI returns whether the adminapi feature is enabled.
+// Enable the admin API for application management functions
+func AdminAPI() bool {
+	return IsEnabled(FeatureAdminAPI)
 }
