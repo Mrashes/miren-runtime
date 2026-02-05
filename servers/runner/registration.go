@@ -142,6 +142,9 @@ func (s *RegistrationServer) Join(ctx context.Context, req *runner_v1alpha.Runne
 	runnerID := args.RunnerId()
 	if runnerID == "" {
 		runnerID = uuid.New().String()
+	} else if _, err := uuid.Parse(runnerID); err != nil {
+		results.SetError("runner_id must be a valid UUID")
+		return nil
 	}
 
 	listenAddr := ""

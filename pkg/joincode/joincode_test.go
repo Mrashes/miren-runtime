@@ -17,7 +17,7 @@ func TestGenerate(t *testing.T) {
 
 	parts := strings.Split(code, "-")
 	if len(parts) != 3 {
-		t.Errorf("Expected 3 parts, got %d: %q", len(parts), code)
+		t.Fatalf("Expected 3 parts, got %d: %q", len(parts), code)
 	}
 
 	if len(parts[2]) != 4 {

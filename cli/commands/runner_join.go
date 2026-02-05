@@ -38,9 +38,7 @@ func RunnerJoin(ctx *Context, opts struct {
 	}
 
 	if runnerconfig.Exists(opts.ConfigPath) {
-		ctx.Printf("Runner config already exists at %s\n", opts.ConfigPath)
-		ctx.Printf("Remove it first if you want to re-register this runner.\n")
-		return nil
+		return fmt.Errorf("runner config already exists at %s; remove it first to re-register", opts.ConfigPath)
 	}
 
 	ctx.Printf("Joining coordinator at %s\n", coordinator)
