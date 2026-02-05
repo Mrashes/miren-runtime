@@ -13,6 +13,7 @@ import (
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/entity/types"
 	"miren.dev/runtime/pkg/idgen"
+	"miren.dev/runtime/pkg/labs"
 )
 
 // Launcher watches App entities and proactively creates SandboxPools when ActiveVersion changes.
@@ -323,22 +324,23 @@ func (l *Launcher) buildSandboxSpec(
 				Type: portType,
 			},
 		}
-
-		// Set PORT env var so apps can listen on $PORT
-		appCont.Env = append(appCont.Env, fmt.Sprintf("PORT=%d", port))
 	}
 
-	// Add global config env vars
+	// Add user-supplied config env vars, stripping any system-managed keys
 	envMap := make(map[string]string)
 	for _, x := range ver.Config.Variable {
-		envMap[x.Key] = x.Value
+		if !isSystemEnvVar(x.Key) {
+			envMap[x.Key] = x.Value
+		}
 	}
 
 	// Find and merge per-service env vars (these override global vars)
 	for _, svc := range ver.Config.Services {
 		if svc.Name == serviceName {
 			for _, x := range svc.Env {
-				envMap[x.Key] = x.Value
+				if !isSystemEnvVar(x.Key) {
+					envMap[x.Key] = x.Value
+				}
 			}
 			break
 		}
@@ -347,6 +349,14 @@ func (l *Launcher) buildSandboxSpec(
 	// Convert map to env var slice
 	for k, v := range envMap {
 		appCont.Env = append(appCont.Env, k+"="+v)
+	}
+
+	// Append system-managed env vars last so they cannot be overridden
+	if port > 0 {
+		appCont.Env = append(appCont.Env, fmt.Sprintf("PORT=%d", port))
+	}
+	if labs.AdminAPI() && ver.AdminToken != "" {
+		appCont.Env = append(appCont.Env, "ADMIN_TOKEN="+ver.AdminToken)
 	}
 
 	// Find service command
@@ -521,11 +531,21 @@ func envVarsEqual(env1, env2 []string) bool {
 	return true
 }
 
+// isSystemEnvVar returns true if the given key is a system-managed env var
+// that user config must not override.
+func isSystemEnvVar(key string) bool {
+	switch key {
+	case "MIREN_VERSION", "MIREN_APP", "MIREN_INSTANCE_NUM", "PORT", "ADMIN_TOKEN":
+		return true
+	}
+	return strings.HasPrefix(key, "MIREN_")
+}
+
 // filterSystemEnvVars filters out system-managed env vars that shouldn't affect pool reuse
 func filterSystemEnvVars(envVars []string) []string {
 	filtered := []string{}
 	for _, e := range envVars {
-		// Skip MIREN_VERSION, MIREN_APP, MIREN_INSTANCE_NUM, and PORT - these are set automatically
+		// Skip MIREN_VERSION, MIREN_APP, MIREN_INSTANCE_NUM, PORT, and ADMIN_TOKEN - these are set automatically
 		if strings.HasPrefix(e, "MIREN_VERSION=") {
 			continue
 		}
@@ -536,6 +556,9 @@ func filterSystemEnvVars(envVars []string) []string {
 			continue
 		}
 		if strings.HasPrefix(e, "PORT=") {
+			continue
+		}
+		if strings.HasPrefix(e, "ADMIN_TOKEN=") {
 			continue
 		}
 		filtered = append(filtered, e)

@@ -1,16 +1,19 @@
 package httpingress
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -19,6 +22,7 @@ import (
 	"miren.dev/runtime/api/app"
 	"miren.dev/runtime/api/core/core_v1alpha"
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
+	"miren.dev/runtime/api/httpingress/httpingress_v1alpha"
 	"miren.dev/runtime/api/ingress"
 	"miren.dev/runtime/components/activator"
 	"miren.dev/runtime/metrics"
@@ -287,6 +291,21 @@ func isUpgradeRequest(req *http.Request) bool {
 
 // handleRequest is the inner handler wrapped by TimeoutHandler
 func (h *Server) handleRequest(w http.ResponseWriter, req *http.Request) {
+	// Capture the real stack on panic so it isn't swallowed by TimeoutHandler's
+	// recover/re-panic, which loses the original goroutine stack.
+	defer func() {
+		if r := recover(); r != nil {
+			h.Log.Error("panic in request handler",
+				"error", r,
+				"stack", string(debug.Stack()),
+				"method", req.Method,
+				"path", req.URL.Path,
+				"host", req.Host,
+			)
+			panic(r)
+		}
+	}()
+
 	// Handle Miren server health check endpoint before routing
 	// Using .well-known per RFC 8615 to avoid collision with app routes
 	if req.URL.Path == "/.well-known/miren/health" {
@@ -343,6 +362,12 @@ func (h *Server) handleRequest(w http.ResponseWriter, req *http.Request) {
 }
 
 func (h *Server) serveHTTPWithMetrics(w http.ResponseWriter, req *http.Request, appName *string) {
+	// Block public access to the admin endpoint - it's only accessible via internal requests
+	if req.URL.Path == "/.well-known/miren/admin" {
+		http.NotFound(w, req)
+		return
+	}
+
 	onlyHost, _, err := net.SplitHostPort(req.Host)
 	if err != nil {
 		onlyHost = req.Host
@@ -496,7 +521,7 @@ func (h *Server) logRequestFromStats(appEntityID, appName string, stats httputil
 		stats.StatusCode, stats.ResponseBytes, stats.Duration.Milliseconds())
 
 	err := h.logWriter.WriteEntry(appEntityID, observability.LogEntry{
-		Timestamp: stats.StartTime,
+		Timestamp: time.Now(),
 		Stream:    observability.UserOOB,
 		Body:      logMsg,
 		Attributes: map[string]string{
@@ -538,6 +563,9 @@ func (h *Server) proxyToLease(w http.ResponseWriter, req *http.Request, targetUR
 			}
 
 			outReq.Header.Set("X-Forwarded-Host", req.Host)
+
+			// Mark this as a public request (strip any client-provided value first)
+			outReq.Header.Set("X-Miren-Access", "public")
 		},
 		ErrorHandler: func(rw http.ResponseWriter, r *http.Request, err error) {
 			proxyErr = err
@@ -715,4 +743,218 @@ func (h *Server) handleHealth(w http.ResponseWriter, req *http.Request) {
 
 	// Encode response as JSON
 	json.NewEncoder(w).Encode(response)
+}
+
+// DoRequest handles internal HTTP requests to app sandboxes. This method reuses
+// the same lease management infrastructure as the HTTP proxy but is called
+// directly via Go method invocation rather than through the HTTP listener.
+func (h *Server) DoRequest(ctx context.Context, req *httpingress_v1alpha.InternalHttpRequest) (*httpingress_v1alpha.InternalHttpResponse, error) {
+	startTime := time.Now()
+	resp := &httpingress_v1alpha.InternalHttpResponse{}
+
+	// Validate required fields
+	appId := req.AppId()
+	if appId == "" {
+		resp.SetError("app_id is required")
+		return resp, nil
+	}
+
+	method := req.Method()
+	if method == "" {
+		method = "GET"
+	}
+
+	path := req.Path()
+	if path == "" {
+		path = "/"
+	}
+
+	service := req.Service()
+	if service == "" {
+		service = "web"
+	}
+
+	// Apply timeout if specified
+	if req.TimeoutMs() > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(req.TimeoutMs())*time.Millisecond)
+		defer cancel()
+	}
+
+	// Look up the app
+	gr, err := h.eac.Get(ctx, appId)
+	if err != nil {
+		resp.SetError(fmt.Sprintf("error looking up app: %v", err))
+		return resp, nil
+	}
+
+	var appEntity core_v1alpha.App
+	appEntity.Decode(gr.Entity().Entity())
+
+	if appEntity.ActiveVersion == "" {
+		resp.SetError("no active version for app")
+		return resp, nil
+	}
+
+	// Look up the app version
+	vr, err := h.eac.Get(ctx, appEntity.ActiveVersion.String())
+	if err != nil {
+		resp.SetError(fmt.Sprintf("error looking up app version: %v", err))
+		return resp, nil
+	}
+
+	var av core_v1alpha.AppVersion
+	av.Decode(vr.Entity().Entity())
+
+	// Try to use an existing lease
+	curLease, err := h.useLease(ctx, appId)
+	if err != nil {
+		resp.SetError(fmt.Sprintf("error taking lease: %v", err))
+		return resp, nil
+	}
+
+	if curLease == nil {
+		// Need to acquire a new lease
+		actContext, actCancel := context.WithTimeout(context.Background(), leaseAcquisitionTimeout)
+		defer actCancel()
+
+		actLease, err := h.aa.AcquireLease(actContext, &av, service)
+		if err != nil {
+			if errors.Is(err, activator.ErrSandboxDiedEarly) {
+				resp.SetError("sandbox died early while acquiring lease")
+			} else {
+				resp.SetError(fmt.Sprintf("error acquiring lease: %v", err))
+			}
+			return resp, nil
+		}
+
+		if actLease == nil {
+			resp.SetError("no lease available for app")
+			return resp, nil
+		}
+
+		curLease = h.retainLease(ctx, appId, actLease)
+	}
+
+	// Execute the HTTP request
+	httpResp, err := h.executeInternalRequest(ctx, curLease, req, method, path, appId)
+	if err != nil {
+		// Context errors (timeout, cancellation) are not connection failures —
+		// the sandbox is likely still healthy, so just release the lease.
+		// Only invalidate for actual connection errors (refused, no route, etc).
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			h.releaseLease(ctx, curLease)
+		} else if isProxyConnectionError(err) {
+			h.invalidateLease(context.Background(), appId, curLease)
+		} else {
+			h.releaseLease(ctx, curLease)
+		}
+		resp.SetError(fmt.Sprintf("request failed: %v", err))
+		return resp, nil
+	}
+	defer httpResp.Body.Close()
+
+	// Release the lease on success
+	h.releaseLease(ctx, curLease)
+
+	// Build the response
+	resp.SetStatusCode(int32(httpResp.StatusCode))
+
+	// Copy response headers
+	var respHeaders []*httpingress_v1alpha.HttpHeader
+	for key, values := range httpResp.Header {
+		for _, value := range values {
+			hdr := &httpingress_v1alpha.HttpHeader{}
+			hdr.SetKey(key)
+			hdr.SetValue(value)
+			respHeaders = append(respHeaders, hdr)
+		}
+	}
+	if len(respHeaders) > 0 {
+		resp.SetHeaders(respHeaders)
+	}
+
+	// Read response body
+	body, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		resp.SetError(fmt.Sprintf("error reading response body: %v", err))
+		return resp, nil
+	}
+	resp.SetBody(&body)
+
+	// Log the internal request
+	h.logInternalRequest(appId, method, path, int(httpResp.StatusCode), len(body), startTime)
+
+	return resp, nil
+}
+
+// logInternalRequest logs an internal HTTP request in a format similar to public requests
+func (h *Server) logInternalRequest(appEntityID, method, path string, statusCode, responseBytes int, startTime time.Time) {
+	if h.logWriter == nil {
+		return
+	}
+
+	duration := time.Since(startTime)
+
+	// Format in Heroku logfmt style, indicating this is an internal request
+	logMsg := fmt.Sprintf("method=%s path=\"%s\" access=internal status=%d response=%d duration_ms=%d",
+		method, path, statusCode, responseBytes, duration.Milliseconds())
+
+	err := h.logWriter.WriteEntry(appEntityID, observability.LogEntry{
+		Timestamp: time.Now(),
+		Stream:    observability.UserOOB,
+		Body:      logMsg,
+		Attributes: map[string]string{
+			"source": "router",
+			"access": "internal",
+			"method": method,
+			"path":   path,
+		},
+	})
+	if err != nil {
+		h.Log.Error("failed to write internal request log entry", "error", err, "app", appEntityID)
+	}
+}
+
+// executeInternalRequest performs the actual HTTP request to the sandbox
+func (h *Server) executeInternalRequest(
+	ctx context.Context,
+	lease *lease,
+	req *httpingress_v1alpha.InternalHttpRequest,
+	method, path, appId string,
+) (*http.Response, error) {
+	targetURL := lease.Lease.URL + path
+
+	var bodyReader io.Reader
+	if req.HasBody() && req.Body() != nil {
+		bodyReader = bytes.NewReader(*req.Body())
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, method, targetURL, bodyReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Copy headers from the request
+	for _, hdr := range req.Headers() {
+		httpReq.Header.Add(hdr.Key(), hdr.Value())
+	}
+
+	// Mark this as an internal request
+	httpReq.Header.Set("X-Miren-Access", "internal")
+
+	// Execute the request
+	client := &http.Client{
+		Timeout: h.config.RequestTimeout,
+	}
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		if isProxyConnectionError(err) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	return resp, nil
 }

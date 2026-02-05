@@ -20,6 +20,9 @@ func TestDefaultFeatureValues(t *testing.T) {
 	if UserSubdomains() {
 		t.Error("UserSubdomains should be false by default")
 	}
+	if AdminAPI() {
+		t.Error("AdminAPI should be false by default")
+	}
 }
 
 func TestEnableFeatureViaInit(t *testing.T) {
@@ -117,11 +120,11 @@ func TestIsEnabledFunction(t *testing.T) {
 func TestAllFeatures(t *testing.T) {
 	features := AllFeatures()
 
-	if len(features) != 3 {
-		t.Errorf("Expected 3 features, got %d", len(features))
+	if len(features) != 4 {
+		t.Errorf("Expected 4 features, got %d", len(features))
 	}
 
-	expected := []string{"globalrouter", "distributedrunners", "usersubdomains"}
+	expected := []string{"globalrouter", "distributedrunners", "usersubdomains", "adminapi"}
 	for _, name := range expected {
 		found := false
 		for _, f := range features {
@@ -139,8 +142,8 @@ func TestAllFeatures(t *testing.T) {
 func TestFeatureDescriptions(t *testing.T) {
 	descriptions := FeatureDescriptions()
 
-	if len(descriptions) != 3 {
-		t.Errorf("Expected 3 descriptions, got %d", len(descriptions))
+	if len(descriptions) != 4 {
+		t.Errorf("Expected 4 descriptions, got %d", len(descriptions))
 	}
 
 	if descriptions[FeatureGlobalRouter] == "" {
@@ -152,18 +155,21 @@ func TestFeatureDescriptions(t *testing.T) {
 	if descriptions[FeatureUserSubdomains] == "" {
 		t.Error("UserSubdomains description should not be empty")
 	}
+	if descriptions[FeatureAdminAPI] == "" {
+		t.Error("AdminAPI description should not be empty")
+	}
 }
 
 func TestResetFunction(t *testing.T) {
-	Init(nil, []string{"globalrouter", "distributedrunners", "usersubdomains"})
+	Init(nil, []string{"globalrouter", "distributedrunners", "usersubdomains", "adminapi"})
 
-	if !GlobalRouter() || !DistributedRunners() || !UserSubdomains() {
+	if !GlobalRouter() || !DistributedRunners() || !UserSubdomains() || !AdminAPI() {
 		t.Error("All features should be enabled before reset")
 	}
 
 	Reset()
 
-	if GlobalRouter() || DistributedRunners() || UserSubdomains() {
+	if GlobalRouter() || DistributedRunners() || UserSubdomains() || AdminAPI() {
 		t.Error("All features should be back to defaults (false) after reset")
 	}
 }
