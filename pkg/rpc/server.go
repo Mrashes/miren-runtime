@@ -895,6 +895,33 @@ func (s *Server) startCallStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Enforce authentication for non-public methods
+	if !mm.Public {
+		identity := IdentityFromContext(ctx)
+		if identity == nil {
+			s.state.log.Warn("authentication required for non-public method",
+				"method", method, "interface", mm.InterfaceName)
+			w.Header().Add("rpc-status", "unauthorized")
+			w.Header().Add("rpc-error", "authentication required")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		// Check authorization if an authorizer is configured
+		if s.state.authorizer != nil {
+			resource := strings.ToLower(mm.InterfaceName)
+			action := strings.ToLower(mm.Name)
+			if err := s.state.authorizer.Authorize(ctx, identity, resource, action); err != nil {
+				s.state.log.Warn("authorization denied",
+					"resource", resource, "action", action, "subject", identity.Subject, "error", err)
+				w.Header().Add("rpc-status", "forbidden")
+				w.Header().Add("rpc-error", err.Error())
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+		}
+	}
+
 	w.WriteHeader(http.StatusOK)
 
 	ctx = Propagator().Extract(ctx, propagation.HeaderCarrier(r.Header))
