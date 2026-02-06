@@ -28,6 +28,7 @@ import (
 	esv1 "miren.dev/runtime/api/entityserver/entityserver_v1alpha"
 	"miren.dev/runtime/api/exec/exec_v1alpha"
 	"miren.dev/runtime/api/ingress/ingress_v1alpha"
+	"miren.dev/runtime/api/runner/runner_v1alpha"
 	"miren.dev/runtime/clientconfig"
 	"miren.dev/runtime/components/activator"
 	"miren.dev/runtime/components/autotls"
@@ -57,6 +58,7 @@ import (
 	execproxy "miren.dev/runtime/servers/exec_proxy"
 	"miren.dev/runtime/servers/httpingress"
 	"miren.dev/runtime/servers/logs"
+	runnerserver "miren.dev/runtime/servers/runner"
 	"miren.dev/runtime/version"
 )
 
@@ -730,6 +732,9 @@ func (c *Coordinator) Start(ctx context.Context) error {
 	if labs.AdminAPI() {
 		server.ExposeValue("dev.miren.runtime/admin", admin_v1alpha.AdaptAdmin(adminServer))
 	}
+
+	runnerReg := runnerserver.NewRegistrationServer(c.Log, c.authority, eac, c.Address)
+	server.ExposeValue(rpc.ServiceRunner, runner_v1alpha.AdaptRunnerRegistration(runnerReg))
 
 	c.Log.Info("started RPC server")
 

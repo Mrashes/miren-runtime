@@ -5,13 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"miren.dev/mflags"
 	"miren.dev/runtime/cli/commands"
+	"miren.dev/runtime/pkg/labs"
 	"miren.dev/runtime/version"
 )
 
 func Run(args []string) int {
+	// Initialize labs feature flags from environment before registering commands
+	if labsEnv := os.Getenv("MIREN_LABS"); labsEnv != "" {
+		labs.Init(nil, strings.Split(labsEnv, ","))
+	}
+
 	d := mflags.NewDispatcher("miren")
 
 	commands.RegisterAll(d)
