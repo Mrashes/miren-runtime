@@ -1704,6 +1704,9 @@ func (c *SandboxController) monitorTaskExit(
 				"exit_time", exitStatus.ExitTime(),
 			)
 
+			// We don't delete the task here so that our destroySubContainers function
+			// has a consistent view of the state of containers and tasks.
+
 			// Update sandbox status to STOPPED using Patch (only updating Status field)
 			// We use Patch instead of Put since we're only changing one field
 			// STOPPED status triggers cleanup in reconciliation (stopSandbox), which:
@@ -2193,8 +2196,19 @@ forceKill:
 	}
 
 cleanup:
-	// Delete all containers
+	// Delete all containers.
+	// We must delete the task before the container — containerd requires this.
+	// Tasks may still exist here if the process had already exited when we
+	// tried Kill(SIGTERM), since those containers were skipped in the
+	// graceful-shutdown loop above.
 	for _, info := range containers {
+		if info.task != nil {
+			if _, err := info.task.Delete(ctx, containerd.WithProcessKill); err != nil {
+				if !errdefs.IsNotFound(err) {
+					c.Log.Debug("failed to delete task during cleanup", "id", info.id, "err", err)
+				}
+			}
+		}
 		if err := info.container.Delete(ctx, containerd.WithSnapshotCleanup); err != nil {
 			if !errdefs.IsNotFound(err) {
 				c.Log.Debug("failed to delete container", "id", info.id, "err", err)
