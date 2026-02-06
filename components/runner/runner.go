@@ -89,6 +89,10 @@ type RunnerDeps struct {
 	// SkipLSVD skips starting the lsvd-server component (for tests that don't need disk)
 	SkipLSVD bool
 
+	// IsCoordinator indicates this runner is the coordinator node.
+	// Affects scheduling: stateful sandboxes are routed to the coordinator.
+	IsCoordinator bool
+
 	// Flannel network configuration (for distributed runners)
 	// If EtcdEndpoints is non-empty, the runner will join the Flannel network
 	EtcdEndpoints  []string
@@ -345,15 +349,26 @@ func (r *Runner) initializeNetwork(ctx context.Context, eg ...*errgroup.Group) e
 
 	// Get or create an errgroup for running the network
 	var runGroup *errgroup.Group
+	localGroup := false
 	if len(eg) > 0 && eg[0] != nil {
 		runGroup = eg[0]
 	} else {
 		runGroup, ctx = errgroup.WithContext(ctx)
+		localGroup = true
 	}
 
 	// Start the network (joins the Flannel mesh, doesn't setup config - coordinator did that)
 	if err := gn.Start(ctx, runGroup); err != nil {
 		return fmt.Errorf("failed to start grunge network: %w", err)
+	}
+
+	// If we created a local errgroup, monitor it so errors aren't silently lost
+	if localGroup {
+		go func() {
+			if err := runGroup.Wait(); err != nil {
+				r.Log.Error("network errgroup failed", "error", err)
+			}
+		}()
 	}
 
 	// Update deps with the leased IP
@@ -378,8 +393,13 @@ func (r *Runner) setupEntity(ctx context.Context, ec *entityserver.Client) error
 	r.ec = ec
 	r.se = sess
 
+	role := "runner"
+	if r.deps.IsCoordinator {
+		role = "coordinator"
+	}
+
 	node := compute_v1alpha.Node{
-		Constraints: types.LabelSet("compute", "generic", "role", "coordinator"),
+		Constraints: types.LabelSet("compute", "generic", "role", role),
 		ApiAddress:  r.ListenAddress,
 	}
 

@@ -135,7 +135,9 @@ type EtcdTLSSetupResult struct {
 // This must be called before starting the etcd component when TLS is desired.
 // The dataPath should be the same path used for CoordinatorConfig.DataPath.
 // The CA must already exist (created by the coordinator's LoadCA).
-func SetupEtcdTLS(log *slog.Logger, dataPath string) (*EtcdTLSSetupResult, error) {
+// Additional DNS names and IPs are included in the server certificate SANs
+// so that distributed runners can connect to etcd over the network.
+func SetupEtcdTLS(log *slog.Logger, dataPath string, extraDNSNames []string, extraIPs []net.IP) (*EtcdTLSSetupResult, error) {
 	certPath := filepath.Join(dataPath, "server", "ca.crt")
 	keyPath := filepath.Join(dataPath, "server", "ca.key")
 
@@ -162,13 +164,20 @@ func SetupEtcdTLS(log *slog.Logger, dataPath string) (*EtcdTLSSetupResult, error
 		return nil, fmt.Errorf("failed to create etcd certs directory: %w", err)
 	}
 
+	// Build server cert SANs: always include localhost + loopback, plus any extras
+	dnsNames := []string{"localhost"}
+	dnsNames = append(dnsNames, extraDNSNames...)
+
+	ips := []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
+	ips = append(ips, extraIPs...)
+
 	// Issue etcd server certificate
 	serverCert, err := ca.IssueCertificate(caauth.Options{
 		CommonName:   "etcd-server",
 		Organization: "miren",
 		ValidFor:     1 * year,
-		DNSNames:     []string{"localhost"},
-		IPs:          []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+		DNSNames:     dnsNames,
+		IPs:          ips,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to issue etcd server certificate: %w", err)

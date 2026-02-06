@@ -274,8 +274,17 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 		// Set up etcd TLS when distributed runners feature is enabled
 		if labs.DistributedRunners() {
 			ctx.Log.Info("setting up etcd mTLS for distributed runners")
+
+			// Parse additional IPs for etcd server cert SANs
+			var etcdExtraIPs []net.IP
+			for _, ipStr := range cfg.TLS.AdditionalIPs {
+				if ip := net.ParseIP(ipStr); ip != nil {
+					etcdExtraIPs = append(etcdExtraIPs, ip)
+				}
+			}
+
 			var err error
-			etcdTLSSetup, err = coordinate.SetupEtcdTLS(ctx.Log, cfg.Server.GetDataPath())
+			etcdTLSSetup, err = coordinate.SetupEtcdTLS(ctx.Log, cfg.Server.GetDataPath(), cfg.TLS.AdditionalNames, etcdExtraIPs)
 			if err != nil {
 				ctx.Log.Error("failed to set up etcd TLS", "error", err)
 				return err
@@ -749,6 +758,7 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 		Resolver:         res,
 		SandboxMetrics:   ctx.ServerState.SandboxMetrics,
 		EntityServerAddr: normalizeServerAddr(srvaddr),
+		IsCoordinator:    true,
 	}
 
 	rc.DataPath = cfg.Server.GetDataPath()
