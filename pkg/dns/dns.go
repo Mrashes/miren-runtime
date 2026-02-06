@@ -169,13 +169,22 @@ func (s *Server) handleServiceListQuery(w dns.ResponseWriter, r *dns.Msg) {
 	appName, found := s.ipToApp[sourceIP]
 	if !found {
 		s.mu.RUnlock()
-		// Source IP not from any known sandbox, return empty response
-		s.log.Debug("service list query from unknown IP", "ip", sourceIP)
-		w.WriteMsg(response)
-		return
+		// Try resolving via entity store lookup
+		if s.resolveUnknownIP(sourceIP) {
+			s.mu.RLock()
+			appName = s.ipToApp[sourceIP]
+			s.mu.RUnlock()
+		} else {
+			s.log.Debug("service list query from unknown IP", "ip", sourceIP)
+			w.WriteMsg(response)
+			return
+		}
+	} else {
+		s.mu.RUnlock()
 	}
 
 	// Get all services for this app
+	s.mu.RLock()
 	var services []string
 	if serviceMap, ok := s.appServiceToIPs[appName]; ok {
 		for service := range serviceMap {
@@ -239,12 +248,21 @@ func (s *Server) handlePTRQuery(w dns.ResponseWriter, r *dns.Msg, qname string) 
 	sourceAppName, foundSource := s.ipToApp[sourceIP]
 	if !foundSource {
 		s.mu.RUnlock()
-		// Source IP not from any known sandbox, forward to upstream
-		s.forwardToUpstream(w, r)
-		return
+		// Try resolving via entity store lookup
+		if s.resolveUnknownIP(sourceIP) {
+			s.mu.RLock()
+			sourceAppName = s.ipToApp[sourceIP]
+			s.mu.RUnlock()
+		} else {
+			s.forwardToUpstream(w, r)
+			return
+		}
+	} else {
+		s.mu.RUnlock()
 	}
 
 	// Look up which app the queried IP belongs to
+	s.mu.RLock()
 	targetAppName, foundTarget := s.ipToApp[ip]
 	if !foundTarget {
 		s.mu.RUnlock()
@@ -348,13 +366,22 @@ func (s *Server) handleAppMirenQuery(w dns.ResponseWriter, r *dns.Msg, qname str
 	appName, found := s.ipToApp[sourceIP]
 	if !found {
 		s.mu.RUnlock()
-		// Source IP not from any known sandbox, return empty response
-		s.log.Debug("dns query from unknown IP", "ip", sourceIP, "query", qname)
-		w.WriteMsg(response)
-		return
+		// Try resolving via entity store lookup
+		if s.resolveUnknownIP(sourceIP) {
+			s.mu.RLock()
+			appName = s.ipToApp[sourceIP]
+			s.mu.RUnlock()
+		} else {
+			s.log.Debug("dns query from unknown IP", "ip", sourceIP, "query", qname)
+			w.WriteMsg(response)
+			return
+		}
+	} else {
+		s.mu.RUnlock()
 	}
 
 	// Get IPs for this app+service
+	s.mu.RLock()
 	var ips []string
 	if serviceMap, ok := s.appServiceToIPs[appName]; ok {
 		ips = serviceMap[serviceName]
@@ -569,6 +596,87 @@ func (s *Server) addSandboxMappingLocked(sandboxID, ipAddr, appName, service str
 		s.appServiceToIPs[appName][service] = append(existingIPs, ipAddr)
 		s.log.Info("added sandbox to DNS mapping", "sandbox", sandboxID, "app", appName, "service", service, "ip", ipAddr)
 	}
+}
+
+// resolveUnknownIP searches the entity store for a sandbox with the given IP address
+// and registers it for DNS resolution if found. This handles the race where a sandbox
+// container starts making DNS queries before the entity watcher processes the RUNNING
+// status update. The lookup registers sandboxes regardless of status since the container
+// is clearly running if it's making DNS queries.
+func (s *Server) resolveUnknownIP(sourceIP string) bool {
+	if s.entityClient == nil {
+		return false
+	}
+
+	// Give the watcher a moment to catch up — if it processes the sandbox
+	// update in this window we avoid the full entity scan.
+	time.Sleep(200 * time.Millisecond)
+
+	s.mu.RLock()
+	_, found := s.ipToApp[sourceIP]
+	s.mu.RUnlock()
+	if found {
+		return true
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := s.entityClient.List(ctx, entity.Ref(entity.EntityKind, compute_v1alpha.KindSandbox))
+	if err != nil {
+		s.log.Debug("failed to list sandboxes for unknown IP resolution", "ip", sourceIP, "error", err)
+		return false
+	}
+
+	for _, ent := range resp.Values() {
+		var sb compute_v1alpha.Sandbox
+		sb.Decode(ent.Entity())
+
+		if len(sb.Network) == 0 {
+			continue
+		}
+
+		ipAddr := sb.Network[0].Address
+		if strings.Contains(ipAddr, "/") {
+			ipAddr = strings.Split(ipAddr, "/")[0]
+		}
+
+		if ipAddr != sourceIP {
+			continue
+		}
+
+		var md core_v1alpha.Metadata
+		md.Decode(ent.Entity())
+
+		service, _ := md.Labels.Get("service")
+		if service == "" {
+			return false
+		}
+
+		verResp, err := s.entityClient.Get(ctx, sb.Spec.Version.String())
+		if err != nil {
+			s.log.Debug("failed to get version for unknown IP sandbox", "ip", sourceIP, "error", err)
+			return false
+		}
+
+		var appVer core_v1alpha.AppVersion
+		appVer.Decode(verResp.Entity().Entity())
+
+		appResp, err := s.entityClient.Get(ctx, appVer.App.String())
+		if err != nil {
+			s.log.Debug("failed to get app for unknown IP sandbox", "ip", sourceIP, "error", err)
+			return false
+		}
+
+		var appMD core_v1alpha.Metadata
+		appMD.Decode(appResp.Entity().Entity())
+
+		s.addSandboxMapping(sb.ID.String(), ipAddr, appMD.Name, service)
+		s.log.Info("resolved unknown IP to sandbox via entity lookup", "ip", sourceIP, "sandbox", sb.ID, "app", appMD.Name, "service", service)
+		return true
+	}
+
+	return false
 }
 
 // lookupAppForIP returns the app name associated with the given IP address.
