@@ -379,7 +379,7 @@ func (r *Runner) setupEntity(ctx context.Context, ec *entityserver.Client) error
 	r.se = sess
 
 	node := compute_v1alpha.Node{
-		Constraints: types.LabelSet("compute", "generic"),
+		Constraints: types.LabelSet("compute", "generic", "role", "coordinator"),
 		ApiAddress:  r.ListenAddress,
 	}
 

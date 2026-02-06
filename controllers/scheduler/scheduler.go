@@ -8,7 +8,6 @@ import (
 	"miren.dev/runtime/api/compute/compute_v1alpha"
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
 	"miren.dev/runtime/pkg/entity"
-	"miren.dev/runtime/pkg/joincode"
 )
 
 // Controller assigns sandboxes to nodes for execution.
@@ -143,22 +142,21 @@ func (c *Controller) isStateful(sandbox *compute_v1alpha.Sandbox) bool {
 }
 
 // findCoordinatorNode finds the coordinator node among the available nodes.
-// The coordinator is identified by having a non-UUID runner_id (e.g., "miren" or empty).
+// The coordinator is identified by having a "role=coordinator" constraint label.
 func (c *Controller) findCoordinatorNode(nodes []*compute_v1alpha.Node) *compute_v1alpha.Node {
 	for _, node := range nodes {
-		// Coordinator has non-UUID runner_id (e.g., "miren") or empty runner_id
-		if !joincode.IsUUID(node.RunnerId) {
+		if role, ok := node.Constraints.Get("role"); ok && role == "coordinator" {
 			return node
 		}
 	}
 	return nil
 }
 
-// filterRunnerNodes returns only nodes that are distributed runners (have UUID runner_id).
+// filterRunnerNodes returns only nodes that are distributed runners (not the coordinator).
 func (c *Controller) filterRunnerNodes(nodes []*compute_v1alpha.Node) []*compute_v1alpha.Node {
 	var runners []*compute_v1alpha.Node
 	for _, node := range nodes {
-		if joincode.IsUUID(node.RunnerId) {
+		if role, ok := node.Constraints.Get("role"); !ok || role != "coordinator" {
 			runners = append(runners, node)
 		}
 	}

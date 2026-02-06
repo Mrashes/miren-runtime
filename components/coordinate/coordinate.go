@@ -131,58 +131,29 @@ type EtcdTLSSetupResult struct {
 	ClientTLS *EtcdTLSConfig
 }
 
-// SetupEtcdTLS loads or creates the CA and issues certificates for etcd mTLS.
+// SetupEtcdTLS loads the existing CA and issues certificates for etcd mTLS.
 // This must be called before starting the etcd component when TLS is desired.
 // The dataPath should be the same path used for CoordinatorConfig.DataPath.
+// The CA must already exist (created by the coordinator's LoadCA).
 func SetupEtcdTLS(log *slog.Logger, dataPath string) (*EtcdTLSSetupResult, error) {
-	// Load or create CA (same logic as Coordinator.LoadCA)
 	certPath := filepath.Join(dataPath, "server", "ca.crt")
 	keyPath := filepath.Join(dataPath, "server", "ca.key")
 
-	var ca *caauth.Authority
+	data, err := os.ReadFile(certPath)
+	if err != nil {
+		return nil, fmt.Errorf("CA certificate not found at %s: %w (CA must be created before setting up etcd TLS)", certPath, err)
+	}
 
-	if data, err := os.ReadFile(certPath); err == nil {
-		log.Info("loading existing CA for etcd TLS", "path", certPath)
+	log.Info("loading existing CA for etcd TLS", "path", certPath)
 
-		key, err := os.ReadFile(keyPath)
-		if err != nil {
-			return nil, fmt.Errorf("missing key for CA: %w", err)
-		}
+	key, err := os.ReadFile(keyPath)
+	if err != nil {
+		return nil, fmt.Errorf("missing key for CA: %w", err)
+	}
 
-		ca, err = caauth.LoadFromPEM(data, key)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load CA: %w", err)
-		}
-	} else {
-		log.Info("generating new CA for etcd TLS", "path", certPath)
-
-		var err error
-		ca, err = caauth.New(caauth.Options{
-			CommonName:   "miren-server",
-			Organization: "miren",
-			ValidFor:     10 * year,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate CA: %w", err)
-		}
-
-		err = os.MkdirAll(filepath.Dir(certPath), 0755)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create CA directory: %w", err)
-		}
-
-		cd, kd, err := ca.ExportPEM()
-		if err != nil {
-			return nil, fmt.Errorf("failed to export CA: %w", err)
-		}
-
-		if err := os.WriteFile(certPath, cd, 0644); err != nil {
-			return nil, fmt.Errorf("failed to write CA cert: %w", err)
-		}
-
-		if err := os.WriteFile(keyPath, kd, 0600); err != nil {
-			return nil, fmt.Errorf("failed to write CA key: %w", err)
-		}
+	ca, err := caauth.LoadFromPEM(data, key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load CA: %w", err)
 	}
 
 	// Create etcd certs directory
@@ -468,6 +439,7 @@ func (c *Coordinator) buildEtcdTLSConfig() (*tls.Config, error) {
 	}
 
 	return &tls.Config{
+		MinVersion:   tls.VersionTLS12,
 		Certificates: []tls.Certificate{cert},
 		RootCAs:      caCertPool,
 	}, nil

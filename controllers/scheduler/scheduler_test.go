@@ -10,6 +10,7 @@ import (
 	"miren.dev/runtime/pkg/controller"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/entity/testutils"
+	"miren.dev/runtime/pkg/entity/types"
 )
 
 // reconcileSandbox is a test helper that processes a sandbox through the real controller framework.
@@ -247,18 +248,18 @@ func TestSchedulerStatefulSandboxGoesToCoordinator(t *testing.T) {
 	server, cleanup := testutils.NewInMemEntityServer(t)
 	defer cleanup()
 
-	// Create a coordinator node (non-UUID runner_id)
+	// Create a coordinator node (role=coordinator constraint)
 	coordNode := &compute_v1alpha.Node{
-		Status:   compute_v1alpha.READY,
-		RunnerId: "miren", // Coordinator has non-UUID runner_id
+		Status:      compute_v1alpha.READY,
+		Constraints: types.LabelSet("role", "coordinator"),
 	}
 	coordNodeID, err := server.Client.Create(ctx, "coordinator", coordNode)
 	require.NoError(t, err)
 
-	// Create a runner node (UUID runner_id)
+	// Create a runner node
 	runnerNode := &compute_v1alpha.Node{
 		Status:   compute_v1alpha.READY,
-		RunnerId: "550e8400-e29b-41d4-a716-446655440000", // Runner has UUID
+		RunnerId: "550e8400-e29b-41d4-a716-446655440000",
 	}
 	_, err = server.Client.Create(ctx, "runner", runnerNode)
 	require.NoError(t, err)
@@ -308,15 +309,15 @@ func TestSchedulerStatelessSandboxPrefersRunners(t *testing.T) {
 	server, cleanup := testutils.NewInMemEntityServer(t)
 	defer cleanup()
 
-	// Create a coordinator node (non-UUID runner_id)
+	// Create a coordinator node (role=coordinator constraint)
 	coordNode := &compute_v1alpha.Node{
-		Status:   compute_v1alpha.READY,
-		RunnerId: "miren",
+		Status:      compute_v1alpha.READY,
+		Constraints: types.LabelSet("role", "coordinator"),
 	}
 	coordNodeID, err := server.Client.Create(ctx, "coordinator", coordNode)
 	require.NoError(t, err)
 
-	// Create multiple runner nodes (UUID runner_id)
+	// Create multiple runner nodes
 	runnerIDs := make(map[entity.Id]bool)
 	for i := 0; i < 3; i++ {
 		runnerNode := &compute_v1alpha.Node{
@@ -370,8 +371,8 @@ func TestSchedulerStatelessFallsBackToCoordinator(t *testing.T) {
 
 	// Create only a coordinator node (no runners)
 	coordNode := &compute_v1alpha.Node{
-		Status:   compute_v1alpha.READY,
-		RunnerId: "miren",
+		Status:      compute_v1alpha.READY,
+		Constraints: types.LabelSet("role", "coordinator"),
 	}
 	coordNodeID, err := server.Client.Create(ctx, "coordinator", coordNode)
 	require.NoError(t, err)
