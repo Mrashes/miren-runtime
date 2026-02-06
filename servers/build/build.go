@@ -582,6 +582,37 @@ func (b *Builder) sendErrorStatus(ctx context.Context, status *stream.SendStream
 	}
 }
 
+// isSystemEnvVar returns true if the given key is a system-managed env var
+// that should not be injected as a build arg.
+func isSystemEnvVar(key string) bool {
+	switch key {
+	case "MIREN_VERSION", "MIREN_APP", "MIREN_INSTANCE_NUM", "PORT", "ADMIN_TOKEN":
+		return true
+	}
+	return strings.HasPrefix(key, "MIREN_")
+}
+
+// computeBuildEnvVars computes the merged set of environment variables to inject
+// into the build process. It reuses the same merge logic as runtime config:
+// existing config vars + app.toml vars + CLI vars, then filters out system-managed vars.
+func computeBuildEnvVars(
+	existingVars []core_v1alpha.Variable,
+	ac *appconfig.AppConfig,
+	cliVars []*build_v1alpha.EnvironmentVariable,
+) map[string]string {
+	merged := mergeVariablesFromAppConfig(existingVars, ac)
+	merged = mergeCliEnvVars(merged, cliVars)
+
+	result := make(map[string]string)
+	for _, v := range merged {
+		if isSystemEnvVar(v.Key) {
+			continue
+		}
+		result[v.Key] = v.Value
+	}
+	return result
+}
+
 func (b *Builder) BuildFromTar(ctx context.Context, state *build_v1alpha.BuilderBuildFromTar) error {
 	args := state.Args()
 
@@ -718,11 +749,25 @@ func (b *Builder) BuildFromTar(ctx context.Context, state *build_v1alpha.Builder
 		version:  mrv.Version,
 	}
 
+	// Compute env vars to inject into the build process
+	buildEnvVars := computeBuildEnvVars(mrv.Config.Variable, ac, args.EnvVars())
+	if len(buildEnvVars) > 0 {
+		b.Log.Info("injecting env vars into build", "count", len(buildEnvVars))
+	}
+
 	var tos []TransformOptions
 
 	tos = append(tos,
 		WithBuildArg("MIREN_VERSION", mrv.Version),
 	)
+
+	// Inject user env vars as build args (for Dockerfile builds)
+	if len(buildEnvVars) > 0 {
+		tos = append(tos, WithBuildArgs(buildEnvVars))
+	}
+
+	// Pass env vars for auto-stack builds
+	buildStack.EnvVars = buildEnvVars
 
 	// Track vertices we've already logged to avoid duplicates
 	vertexStarted := make(map[string]bool)

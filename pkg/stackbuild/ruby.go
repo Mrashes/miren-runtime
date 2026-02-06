@@ -156,12 +156,18 @@ func (s *RubyStack) GenerateLLB(dir string, opts BuildOptions) (*llb.State, erro
 	if s.hasRakefile {
 		base = base.Dir("/app").
 			AddEnv("RAILS_ENV", "production").
-			AddEnv("RACK_ENV", "production").
-			Run(
-				llb.Shlex(`sh -c 'bundle exec rake -T | grep -q "rake assets:precompile" && bundle exec rake assets:precompile || echo "no assets:precompile"'`),
-				llb.AddEnv("SECRET_KEY_BASE_DUMMY", "1"),
-				llb.WithCustomName("[phase] Precompiling assets"),
-			).State
+			AddEnv("RACK_ENV", "production")
+
+		// Inject user env vars so they're available during asset precompilation
+		for k, v := range opts.EnvVars {
+			base = base.AddEnv(k, v)
+		}
+
+		base = base.Run(
+			llb.Shlex(`sh -c 'bundle exec rake -T | grep -q "rake assets:precompile" && bundle exec rake assets:precompile || echo "no assets:precompile"'`),
+			llb.AddEnv("SECRET_KEY_BASE_DUMMY", "1"),
+			llb.WithCustomName("[phase] Precompiling assets"),
+		).State
 	}
 
 	base = s.applyOnBuild(base, opts)

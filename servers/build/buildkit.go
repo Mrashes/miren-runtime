@@ -275,6 +275,11 @@ type BuildStack struct {
 	Version     string
 	OnBuild     []string
 	AlpineImage string
+
+	// EnvVars are user-configured environment variables to inject into the build.
+	// For auto-stack builds, these are set on intermediate LLB states before
+	// onBuild commands and asset precompilation steps.
+	EnvVars map[string]string
 }
 
 type ImageConfig struct {
@@ -401,6 +406,7 @@ func (b *Buildkit) BuildImage(
 			OnBuild:     bs.OnBuild,
 			Version:     bs.Version,
 			AlpineImage: bs.AlpineImage,
+			EnvVars:     bs.EnvVars,
 		}
 
 		stack, err := stackbuild.DetectStack(bs.CodeDir, buildOpts)

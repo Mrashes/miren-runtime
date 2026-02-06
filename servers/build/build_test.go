@@ -1418,6 +1418,151 @@ func TestMergeCliEnvVars(t *testing.T) {
 	}
 }
 
+func TestIsSystemEnvVar(t *testing.T) {
+	tests := []struct {
+		key      string
+		isSystem bool
+	}{
+		{"MIREN_VERSION", true},
+		{"MIREN_APP", true},
+		{"MIREN_INSTANCE_NUM", true},
+		{"MIREN_CUSTOM", true},
+		{"PORT", true},
+		{"ADMIN_TOKEN", true},
+		{"DATABASE_URL", false},
+		{"API_KEY", false},
+		{"NODE_ENV", false},
+		{"SECRET_KEY_BASE", false},
+		{"MY_PORT", false},
+		{"PORTNAME", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			assert.Equal(t, tt.isSystem, isSystemEnvVar(tt.key))
+		})
+	}
+}
+
+func TestComputeBuildEnvVars(t *testing.T) {
+	tests := []struct {
+		name         string
+		existingVars []core_v1alpha.Variable
+		appConfig    *appconfig.AppConfig
+		cliVars      []*build_v1alpha.EnvironmentVariable
+		wantVars     map[string]string
+	}{
+		{
+			name:         "empty inputs",
+			existingVars: nil,
+			appConfig:    nil,
+			cliVars:      nil,
+			wantVars:     map[string]string{},
+		},
+		{
+			name: "existing config vars are included",
+			existingVars: []core_v1alpha.Variable{
+				{Key: "DATABASE_URL", Value: "postgres://localhost/db", Source: "manual"},
+				{Key: "API_KEY", Value: "secret123", Source: "config"},
+			},
+			appConfig: nil,
+			cliVars:   nil,
+			wantVars: map[string]string{
+				"DATABASE_URL": "postgres://localhost/db",
+				"API_KEY":      "secret123",
+			},
+		},
+		{
+			name: "app config vars merged in",
+			existingVars: []core_v1alpha.Variable{
+				{Key: "EXISTING", Value: "value", Source: "manual"},
+			},
+			appConfig: &appconfig.AppConfig{
+				EnvVars: []appconfig.AppEnvVar{
+					{Key: "FROM_CONFIG", Value: "config_value"},
+				},
+			},
+			cliVars: nil,
+			wantVars: map[string]string{
+				"EXISTING":    "value",
+				"FROM_CONFIG": "config_value",
+			},
+		},
+		{
+			name:         "CLI vars override config vars",
+			existingVars: nil,
+			appConfig: &appconfig.AppConfig{
+				EnvVars: []appconfig.AppEnvVar{
+					{Key: "FOO", Value: "from-config"},
+				},
+			},
+			cliVars: []*build_v1alpha.EnvironmentVariable{
+				makeEnvVar("FOO", "from-cli", false),
+			},
+			wantVars: map[string]string{
+				"FOO": "from-cli",
+			},
+		},
+		{
+			name: "system vars are filtered out",
+			existingVars: []core_v1alpha.Variable{
+				{Key: "DATABASE_URL", Value: "postgres://localhost/db", Source: "manual"},
+				{Key: "MIREN_VERSION", Value: "v1", Source: "config"},
+				{Key: "MIREN_APP", Value: "myapp", Source: "config"},
+				{Key: "PORT", Value: "8080", Source: "manual"},
+				{Key: "ADMIN_TOKEN", Value: "token123", Source: "manual"},
+				{Key: "MIREN_CUSTOM", Value: "custom", Source: "config"},
+			},
+			appConfig: nil,
+			cliVars:   nil,
+			wantVars: map[string]string{
+				"DATABASE_URL": "postgres://localhost/db",
+			},
+		},
+		{
+			name: "sensitive vars are included",
+			existingVars: []core_v1alpha.Variable{
+				{Key: "SECRET_KEY", Value: "super-secret", Sensitive: true, Source: "manual"},
+			},
+			appConfig: nil,
+			cliVars:   nil,
+			wantVars: map[string]string{
+				"SECRET_KEY": "super-secret",
+			},
+		},
+		{
+			name: "full merge: existing + app config + CLI with system filtering",
+			existingVars: []core_v1alpha.Variable{
+				{Key: "EXISTING_MANUAL", Value: "m1", Source: "manual"},
+				{Key: "EXISTING_CONFIG", Value: "c1", Source: "config"},
+				{Key: "PORT", Value: "3000", Source: "manual"},
+			},
+			appConfig: &appconfig.AppConfig{
+				EnvVars: []appconfig.AppEnvVar{
+					{Key: "EXISTING_CONFIG", Value: "c1-updated"},
+					{Key: "NEW_CONFIG", Value: "new"},
+				},
+			},
+			cliVars: []*build_v1alpha.EnvironmentVariable{
+				makeEnvVar("CLI_VAR", "cli-val", false),
+			},
+			wantVars: map[string]string{
+				"EXISTING_MANUAL": "m1",
+				"EXISTING_CONFIG": "c1-updated",
+				"NEW_CONFIG":      "new",
+				"CLI_VAR":         "cli-val",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := computeBuildEnvVars(tt.existingVars, tt.appConfig, tt.cliVars)
+			assert.Equal(t, tt.wantVars, result)
+		})
+	}
+}
+
 func TestValidateServicesExist(t *testing.T) {
 	tests := []struct {
 		name    string
