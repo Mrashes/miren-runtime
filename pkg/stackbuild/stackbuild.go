@@ -33,6 +33,11 @@ type BuildOptions struct {
 	AlpineImage string
 
 	OnBuild []string
+
+	// EnvVars are user-configured environment variables to inject into build steps
+	// (onBuild commands, asset precompilation). These are set on intermediate LLB
+	// states only and do not persist to the final image config.
+	EnvVars map[string]string
 }
 
 // DetectionEvent represents something detected during stack analysis
@@ -176,6 +181,11 @@ func (s *MetaStack) detectInFile(path, re string) bool {
 }
 
 func (s *MetaStack) applyOnBuild(cur llb.State, opts BuildOptions) llb.State {
+	// Inject user env vars so they're available to onBuild commands
+	for k, v := range opts.EnvVars {
+		cur = cur.AddEnv(k, v)
+	}
+
 	for _, sh := range opts.OnBuild {
 		cur = cur.Dir("/app").Run(
 			llb.Args([]string{"/bin/sh", "-c", sh}),
