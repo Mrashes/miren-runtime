@@ -6,152 +6,405 @@ import (
 
 	"miren.dev/runtime/api/addon/addon_v1alpha"
 	"miren.dev/runtime/pkg/addon"
+	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/entity/types"
 	"miren.dev/runtime/pkg/idgen"
+	"miren.dev/runtime/pkg/saga"
 )
 
 const postgresPort = 5432
 
-func (p *Provider) provisionDedicated(ctx context.Context, app addon.App, plan addon.Plan) (*addon.ProvisionResult, error) {
-	password := idgen.Gen("pw")
-	dbName := sanitizeIdentifier(app.Name)
-	userName := sanitizeIdentifier(app.Name)
-	serviceName := fmt.Sprintf("%s-postgresql", app.Name)
+// resultCapture is injected as a saga dependency so the final action
+// can pass the ProvisionResult back to the caller.
+type resultCapture struct {
+	Result *addon.ProvisionResult
+}
 
-	p.log.Info("provisioning dedicated PostgreSQL",
-		"app", app.Name,
-		"plan", plan.Name)
+// --- Dedicated Provisioning Saga Actions ---
 
-	// Create PostgresServer entity
+type GenerateCredentialsIn struct {
+	AppName string
+}
+
+type GenerateCredentialsOut struct {
+	Password     string
+	DatabaseName string
+	Username     string
+	ServiceName  string
+	ServerName   string
+}
+
+func GenerateCredentials(ctx context.Context, in GenerateCredentialsIn) (GenerateCredentialsOut, error) {
+	return GenerateCredentialsOut{
+		Password:     idgen.Gen("pw"),
+		DatabaseName: sanitizeIdentifier(in.AppName),
+		Username:     sanitizeIdentifier(in.AppName),
+		ServiceName:  fmt.Sprintf("%s-postgresql", in.AppName),
+		ServerName:   fmt.Sprintf("pg-%s-%s", in.AppName, idgen.Gen("s")),
+	}, nil
+}
+
+func UndoGenerateCredentials(ctx context.Context, in GenerateCredentialsIn, out GenerateCredentialsOut) error {
+	return nil
+}
+
+type CreatePostgresServerIn struct {
+	ServerName string
+	PlanName   string
+	Password   string
+}
+
+type CreatePostgresServerOut struct {
+	ServerID entity.Id
+}
+
+func CreatePostgresServer(ctx context.Context, in CreatePostgresServerIn) (CreatePostgresServerOut, error) {
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+
 	server := &addon_v1alpha.PostgresServer{
 		AddonName:         AddonName,
-		Plan:              plan.Name,
+		Plan:              in.PlanName,
 		Status:            "provisioning",
 		AssociationCount:  1,
-		SuperuserPassword: password,
+		SuperuserPassword: in.Password,
 	}
 
-	serverName := fmt.Sprintf("pg-%s-%s", app.Name, idgen.Gen("s"))
-	serverID, err := p.fw.EC.Create(ctx, serverName, server)
+	serverID, err := fw.EC.Create(ctx, in.ServerName, server)
 	if err != nil {
-		return nil, fmt.Errorf("creating postgres server entity: %w", err)
+		return CreatePostgresServerOut{}, fmt.Errorf("creating postgres server entity: %w", err)
 	}
 
-	// Create sandbox pool for the PostgreSQL container
+	return CreatePostgresServerOut{ServerID: serverID}, nil
+}
+
+func UndoCreatePostgresServer(ctx context.Context, in CreatePostgresServerIn, out CreatePostgresServerOut) error {
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+	return fw.EC.Delete(ctx, out.ServerID)
+}
+
+type CreateDedicatedPoolIn struct {
+	ServerName   string
+	AppName      string
+	DatabaseName string
+	Username     string
+	Password     string
+}
+
+type CreateDedicatedPoolOut struct {
+	PoolID entity.Id
+}
+
+func CreateDedicatedPool(ctx context.Context, in CreateDedicatedPoolIn) (CreateDedicatedPoolOut, error) {
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+
 	labels := types.LabelSet(
 		"addon", AddonName,
-		"app", app.Name,
-		"server", serverName,
+		"app", in.AppName,
+		"server", in.ServerName,
 	)
 
 	env := []string{
-		"POSTGRES_DB=" + dbName,
-		"POSTGRES_USER=" + userName,
-		"POSTGRES_PASSWORD=" + password,
+		"POSTGRES_DB=" + in.DatabaseName,
+		"POSTGRES_USER=" + in.Username,
+		"POSTGRES_PASSWORD=" + in.Password,
 	}
 
-	poolID, err := p.fw.CreateSandboxPool(ctx, addon.CreateSandboxPoolSpec{
-		Name:             serverName,
+	poolID, err := fw.CreateSandboxPool(ctx, addon.CreateSandboxPoolSpec{
+		Name:             in.ServerName,
 		Image:            DefaultImage,
 		Env:              env,
 		DesiredInstances: 1,
 		Labels:           labels,
-		SandboxPrefix:    fmt.Sprintf("%s-pg", app.Name),
+		SandboxPrefix:    fmt.Sprintf("%s-pg", in.AppName),
 	})
 	if err != nil {
-		// Cleanup: delete server entity
-		_ = p.fw.EC.Delete(ctx, serverID)
-		return nil, fmt.Errorf("creating sandbox pool: %w", err)
+		return CreateDedicatedPoolOut{}, fmt.Errorf("creating sandbox pool: %w", err)
 	}
 
-	// Wait for pool to have a running instance
-	if err := p.fw.WaitForPool(ctx, poolID, poolReadyTimeout); err != nil {
-		_ = p.fw.DeleteSandboxPool(ctx, poolID)
-		_ = p.fw.EC.Delete(ctx, serverID)
-		return nil, fmt.Errorf("waiting for postgres pool: %w", err)
+	return CreateDedicatedPoolOut{PoolID: poolID}, nil
+}
+
+func UndoCreateDedicatedPool(ctx context.Context, in CreateDedicatedPoolIn, out CreateDedicatedPoolOut) error {
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+	return fw.DeleteSandboxPool(ctx, out.PoolID)
+}
+
+type WaitForDedicatedPoolIn struct {
+	PoolID entity.Id
+}
+
+type WaitForDedicatedPoolOut struct {
+	Ready bool
+}
+
+func WaitForDedicatedPool(ctx context.Context, in WaitForDedicatedPoolIn) (WaitForDedicatedPoolOut, error) {
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+
+	if err := fw.WaitForPool(ctx, in.PoolID, poolReadyTimeout); err != nil {
+		return WaitForDedicatedPoolOut{}, fmt.Errorf("waiting for postgres pool: %w", err)
 	}
 
-	// Create service for network access
-	svcID, err := p.fw.CreateService(ctx, serviceName, labels, postgresPort)
+	return WaitForDedicatedPoolOut{Ready: true}, nil
+}
+
+func UndoWaitForDedicatedPool(ctx context.Context, in WaitForDedicatedPoolIn, out WaitForDedicatedPoolOut) error {
+	return nil
+}
+
+type CreateDedicatedServiceIn struct {
+	ServiceName string
+	AppName     string
+	ServerName  string
+}
+
+type CreateDedicatedServiceOut struct {
+	ServiceID entity.Id
+}
+
+func CreateDedicatedService(ctx context.Context, in CreateDedicatedServiceIn) (CreateDedicatedServiceOut, error) {
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+
+	labels := types.LabelSet(
+		"addon", AddonName,
+		"app", in.AppName,
+		"server", in.ServerName,
+	)
+
+	svcID, err := fw.CreateService(ctx, in.ServiceName, labels, postgresPort)
 	if err != nil {
-		_ = p.fw.DeleteSandboxPool(ctx, poolID)
-		_ = p.fw.EC.Delete(ctx, serverID)
-		return nil, fmt.Errorf("creating service: %w", err)
+		return CreateDedicatedServiceOut{}, fmt.Errorf("creating service: %w", err)
 	}
 
-	// Update server with pool and service refs
-	server.SandboxPool = poolID
-	server.Service = svcID
-	server.Status = "active"
-	server.ID = serverID
+	return CreateDedicatedServiceOut{ServiceID: svcID}, nil
+}
 
-	if err := p.fw.EC.Update(ctx, server); err != nil {
-		_ = p.fw.DeleteService(ctx, svcID)
-		_ = p.fw.DeleteSandboxPool(ctx, poolID)
-		_ = p.fw.EC.Delete(ctx, serverID)
-		return nil, fmt.Errorf("updating postgres server: %w", err)
+func UndoCreateDedicatedService(ctx context.Context, in CreateDedicatedServiceIn, out CreateDedicatedServiceOut) error {
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+	return fw.DeleteService(ctx, out.ServiceID)
+}
+
+type UpdateDedicatedServerIn struct {
+	ServerID  entity.Id
+	PoolID    entity.Id
+	ServiceID entity.Id
+	PlanName  string
+	Password  string
+}
+
+type UpdateDedicatedServerOut struct {
+	Updated bool
+}
+
+func UpdateDedicatedServer(ctx context.Context, in UpdateDedicatedServerIn) (UpdateDedicatedServerOut, error) {
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+
+	server := &addon_v1alpha.PostgresServer{
+		AddonName:         AddonName,
+		Plan:              in.PlanName,
+		Status:            "active",
+		AssociationCount:  1,
+		SuperuserPassword: in.Password,
+		SandboxPool:       in.PoolID,
+		Service:           in.ServiceID,
+	}
+	server.ID = in.ServerID
+
+	if err := fw.EC.Update(ctx, server); err != nil {
+		return UpdateDedicatedServerOut{}, fmt.Errorf("updating postgres server: %w", err)
 	}
 
-	p.log.Info("dedicated PostgreSQL provisioned",
-		"server", serverName,
-		"pool", poolID,
-		"service", svcID)
+	return UpdateDedicatedServerOut{Updated: true}, nil
+}
 
-	host := serviceName + ".addon.app.miren"
-	envVars := buildEnvVars(host, postgresPort, userName, password, dbName)
+func UndoUpdateDedicatedServer(ctx context.Context, in UpdateDedicatedServerIn, out UpdateDedicatedServerOut) error {
+	return nil
+}
 
-	// Store the dedicated data as attrs on the association
+type BuildDedicatedResultIn struct {
+	ServiceName  string
+	Username     string
+	Password     string
+	DatabaseName string
+	ServerID     entity.Id
+}
+
+type BuildDedicatedResultOut struct {
+	Done bool
+}
+
+func BuildDedicatedResult(ctx context.Context, in BuildDedicatedResultIn) (BuildDedicatedResultOut, error) {
+	rc := saga.Get[*resultCapture](ctx)
+
+	host := in.ServiceName + ".addon.app.miren"
+	envVars := buildEnvVars(host, postgresPort, in.Username, in.Password, in.DatabaseName)
+
 	dedicatedData := &addon_v1alpha.PostgresqlDedicatedData{
-		PostgresServer: serverID,
+		PostgresServer: in.ServerID,
 	}
 
-	return &addon.ProvisionResult{
+	rc.Result = &addon.ProvisionResult{
 		EnvVars: envVars,
 		Attrs:   dedicatedData.Encode(),
+	}
+
+	return BuildDedicatedResultOut{Done: true}, nil
+}
+
+func UndoBuildDedicatedResult(ctx context.Context, in BuildDedicatedResultIn, out BuildDedicatedResultOut) error {
+	return nil
+}
+
+// RegisterDedicatedSaga registers the dedicated PostgreSQL provisioning saga.
+func RegisterDedicatedSaga(registry *saga.Registry, fw *addon.ProviderFramework, rc *resultCapture) error {
+	return saga.Define("provision-dedicated-postgresql").
+		Using(fw).
+		Using(rc).
+		Action(GenerateCredentials).Undo(UndoGenerateCredentials).
+		Action(CreatePostgresServer).Undo(UndoCreatePostgresServer).
+		Action(CreateDedicatedPool).Undo(UndoCreateDedicatedPool).
+		Action(WaitForDedicatedPool).Undo(UndoWaitForDedicatedPool).
+		Action(CreateDedicatedService).Undo(UndoCreateDedicatedService).
+		Action(UpdateDedicatedServer).Undo(UndoUpdateDedicatedServer).
+		Action(BuildDedicatedResult).Undo(UndoBuildDedicatedResult).
+		RegisterTo(registry)
+}
+
+// --- Dedicated Deprovisioning Saga Actions ---
+
+type DecodeDedicatedAttrsIn struct {
+	AssocEntity *entity.Entity `saga:"assocentity"`
+}
+
+type DecodeDedicatedAttrsOut struct {
+	DedicatedServerID entity.Id
+}
+
+func DecodeDedicatedAttrs(ctx context.Context, in DecodeDedicatedAttrsIn) (DecodeDedicatedAttrsOut, error) {
+	var data addon_v1alpha.PostgresqlDedicatedData
+	if in.AssocEntity != nil {
+		data.Decode(in.AssocEntity)
+	}
+
+	if data.PostgresServer == "" {
+		return DecodeDedicatedAttrsOut{}, fmt.Errorf("no postgres server ref found")
+	}
+
+	return DecodeDedicatedAttrsOut{DedicatedServerID: data.PostgresServer}, nil
+}
+
+func UndoDecodeDedicatedAttrs(ctx context.Context, in DecodeDedicatedAttrsIn, out DecodeDedicatedAttrsOut) error {
+	return nil
+}
+
+type LookupDedicatedServerIn struct {
+	DedicatedServerID entity.Id
+}
+
+type LookupDedicatedServerOut struct {
+	DedicatedServiceID entity.Id
+	DedicatedPoolID    entity.Id
+}
+
+func LookupDedicatedServer(ctx context.Context, in LookupDedicatedServerIn) (LookupDedicatedServerOut, error) {
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+
+	var server addon_v1alpha.PostgresServer
+	if err := fw.EC.GetById(ctx, in.DedicatedServerID, &server); err != nil {
+		return LookupDedicatedServerOut{}, fmt.Errorf("looking up postgres server: %w", err)
+	}
+
+	return LookupDedicatedServerOut{
+		DedicatedServiceID: server.Service,
+		DedicatedPoolID:    server.SandboxPool,
 	}, nil
 }
 
-func (p *Provider) deprovisionDedicated(ctx context.Context, assoc addon.AddonAssociation) error {
-	// Decode the dedicated data from the association
-	var dedicatedData addon_v1alpha.PostgresqlDedicatedData
-	if assoc.Entity != nil {
-		dedicatedData.Decode(assoc.Entity)
-	}
-
-	if dedicatedData.PostgresServer == "" {
-		p.log.Warn("no postgres server ref found, skipping deprovision")
-		return nil
-	}
-
-	// Fetch the server entity
-	var server addon_v1alpha.PostgresServer
-	if err := p.fw.EC.GetById(ctx, dedicatedData.PostgresServer, &server); err != nil {
-		p.log.Warn("failed to get postgres server for deprovision", "error", err)
-		// Server may already be deleted, continue with best-effort cleanup
-		return nil
-	}
-
-	// Delete service
-	if server.Service != "" {
-		if err := p.fw.DeleteService(ctx, server.Service); err != nil {
-			p.log.Warn("failed to delete service", "error", err)
-		}
-	}
-
-	// Delete sandbox pool
-	if server.SandboxPool != "" {
-		if err := p.fw.DeleteSandboxPool(ctx, server.SandboxPool); err != nil {
-			p.log.Warn("failed to delete sandbox pool", "error", err)
-		}
-	}
-
-	// Delete server entity
-	if err := p.fw.EC.Delete(ctx, server.ID); err != nil {
-		p.log.Warn("failed to delete postgres server entity", "error", err)
-	}
-
-	p.log.Info("dedicated PostgreSQL deprovisioned", "server", server.ID)
+func UndoLookupDedicatedServer(ctx context.Context, in LookupDedicatedServerIn, out LookupDedicatedServerOut) error {
 	return nil
+}
+
+type DeleteDedicatedServiceIn struct {
+	DedicatedServiceID entity.Id
+}
+
+type DeleteDedicatedServiceOut struct {
+	ServiceDeleted bool
+}
+
+func DeleteDedicatedService(ctx context.Context, in DeleteDedicatedServiceIn) (DeleteDedicatedServiceOut, error) {
+	if in.DedicatedServiceID == "" {
+		return DeleteDedicatedServiceOut{ServiceDeleted: false}, nil
+	}
+
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+	if err := fw.DeleteService(ctx, in.DedicatedServiceID); err != nil {
+		return DeleteDedicatedServiceOut{}, fmt.Errorf("deleting service: %w", err)
+	}
+
+	return DeleteDedicatedServiceOut{ServiceDeleted: true}, nil
+}
+
+func UndoDeleteDedicatedService(ctx context.Context, in DeleteDedicatedServiceIn, out DeleteDedicatedServiceOut) error {
+	return nil
+}
+
+type DeleteDedicatedPoolIn struct {
+	DedicatedPoolID entity.Id
+}
+
+type DeleteDedicatedPoolOut struct {
+	PoolDeleted bool
+}
+
+func DeleteDedicatedPool(ctx context.Context, in DeleteDedicatedPoolIn) (DeleteDedicatedPoolOut, error) {
+	if in.DedicatedPoolID == "" {
+		return DeleteDedicatedPoolOut{PoolDeleted: false}, nil
+	}
+
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+	if err := fw.DeleteSandboxPool(ctx, in.DedicatedPoolID); err != nil {
+		return DeleteDedicatedPoolOut{}, fmt.Errorf("deleting sandbox pool: %w", err)
+	}
+
+	return DeleteDedicatedPoolOut{PoolDeleted: true}, nil
+}
+
+func UndoDeleteDedicatedPool(ctx context.Context, in DeleteDedicatedPoolIn, out DeleteDedicatedPoolOut) error {
+	return nil
+}
+
+type DeleteDedicatedServerEntityIn struct {
+	DedicatedServerID entity.Id
+}
+
+type DeleteDedicatedServerEntityOut struct {
+	ServerDeleted bool
+}
+
+func DeleteDedicatedServerEntity(ctx context.Context, in DeleteDedicatedServerEntityIn) (DeleteDedicatedServerEntityOut, error) {
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+
+	if err := fw.EC.Delete(ctx, in.DedicatedServerID); err != nil {
+		return DeleteDedicatedServerEntityOut{}, fmt.Errorf("deleting postgres server: %w", err)
+	}
+
+	return DeleteDedicatedServerEntityOut{ServerDeleted: true}, nil
+}
+
+func UndoDeleteDedicatedServerEntity(ctx context.Context, in DeleteDedicatedServerEntityIn, out DeleteDedicatedServerEntityOut) error {
+	return nil
+}
+
+// RegisterDeprovisionDedicatedSaga registers the dedicated deprovisioning saga.
+func RegisterDeprovisionDedicatedSaga(registry *saga.Registry, fw *addon.ProviderFramework) error {
+	return saga.Define("deprovision-dedicated-postgresql").
+		Using(fw).
+		Action(DecodeDedicatedAttrs).Undo(UndoDecodeDedicatedAttrs).
+		Action(LookupDedicatedServer).Undo(UndoLookupDedicatedServer).
+		Action(DeleteDedicatedService).Undo(UndoDeleteDedicatedService).
+		Action(DeleteDedicatedPool).Undo(UndoDeleteDedicatedPool).
+		Action(DeleteDedicatedServerEntity).Undo(UndoDeleteDedicatedServerEntity).
+		RegisterTo(registry)
 }
 
 // sanitizeIdentifier ensures a name is safe for use as a PostgreSQL identifier.
@@ -170,9 +423,62 @@ func sanitizeIdentifier(name string) string {
 	if len(result) == 0 {
 		return "app"
 	}
-	// Ensure it starts with a letter
 	if result[0] >= '0' && result[0] <= '9' {
 		result = append([]byte{'a'}, result...)
 	}
 	return string(result)
+}
+
+func (p *Provider) provisionDedicated(ctx context.Context, app addon.App, plan addon.Plan) (*addon.ProvisionResult, error) {
+	p.log.Info("provisioning dedicated PostgreSQL",
+		"app", app.Name,
+		"plan", plan.Name)
+
+	rc := &resultCapture{}
+	registry := saga.NewRegistry()
+
+	if err := RegisterDedicatedSaga(registry, p.fw, rc); err != nil {
+		return nil, fmt.Errorf("registering dedicated saga: %w", err)
+	}
+
+	storage := saga.NewMemoryStorage()
+	executor := saga.NewExecutor(storage, saga.WithRegistry(registry))
+
+	err := executor.Start("provision-dedicated-postgresql").
+		Input("appname", app.Name).
+		Input("planname", plan.Name).
+		Execute(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if rc.Result == nil {
+		return nil, fmt.Errorf("saga completed but no result was captured")
+	}
+
+	p.log.Info("dedicated PostgreSQL provisioned", "app", app.Name)
+	return rc.Result, nil
+}
+
+func (p *Provider) deprovisionDedicated(ctx context.Context, assoc addon.AddonAssociation) error {
+	p.log.Info("deprovisioning dedicated PostgreSQL", "assoc", assoc.ID)
+
+	registry := saga.NewRegistry()
+
+	if err := RegisterDeprovisionDedicatedSaga(registry, p.fw); err != nil {
+		return fmt.Errorf("registering deprovision saga: %w", err)
+	}
+
+	storage := saga.NewMemoryStorage()
+	executor := saga.NewExecutor(storage, saga.WithRegistry(registry))
+
+	err := executor.Start("deprovision-dedicated-postgresql").
+		Input("assocentity", assoc.Entity).
+		Execute(ctx)
+	if err != nil {
+		return err
+	}
+
+	p.log.Info("dedicated PostgreSQL deprovisioned", "assoc", assoc.ID)
+	return nil
 }
