@@ -119,15 +119,14 @@ func mergeServiceEnvVars(existingEnvs []core_v1alpha.ConfigSpecServicesEnv, newE
 	// Build result by merging
 	envMap := make(map[string]core_v1alpha.ConfigSpecServicesEnv)
 
-	// Keep manual vars - they shadow config vars with the same key
+	// Keep manual and addon vars - they shadow config vars with the same key
 	for _, e := range existingEnvs {
 		source := e.Source
 		if source == "" {
 			source = "manual" // backward compatibility: preserve unknown-source vars
 		}
 
-		isManual := source == "manual"
-		if isManual {
+		if source == "manual" || source == "addon" {
 			envMap[e.Key] = e
 		}
 		// config vars only kept if still in app.toml (checked below)
@@ -414,7 +413,7 @@ func mergeVariablesFromAppConfig(existingVars []core_v1alpha.ConfigSpecVariables
 	// Build result by merging
 	varMap := make(map[string]core_v1alpha.ConfigSpecVariables)
 
-	// First, add all existing manual variables - these always persist
+	// First, add all existing manual and addon variables - these always persist
 	for _, v := range existingVars {
 		// Backward compatibility: preserve unknown-source vars as manual
 		source := v.Source
@@ -422,8 +421,8 @@ func mergeVariablesFromAppConfig(existingVars []core_v1alpha.ConfigSpecVariables
 			source = "manual"
 		}
 
-		// Keep manual vars - they shadow config vars with the same key
-		if source == "manual" {
+		// Keep manual and addon vars - they shadow config vars with the same key
+		if source == "manual" || source == "addon" {
 			varMap[v.Key] = v
 		}
 		// config vars are only kept if still in app.toml (checked below)
