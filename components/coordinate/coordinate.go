@@ -36,11 +36,15 @@ import (
 	"miren.dev/runtime/components/autotls"
 	"miren.dev/runtime/components/buildkit"
 	"miren.dev/runtime/components/netresolve"
+	"miren.dev/runtime/api/addon/addon_v1alpha"
 	artifactctrl "miren.dev/runtime/controllers/artifact"
+	addonctrl "miren.dev/runtime/controllers/addon"
 	certctrl "miren.dev/runtime/controllers/certificate"
 	deploymentctrl "miren.dev/runtime/controllers/deployment"
 	"miren.dev/runtime/controllers/sandboxpool"
 	schedulerctrl "miren.dev/runtime/controllers/scheduler"
+	"miren.dev/runtime/pkg/addon"
+	"miren.dev/runtime/pkg/addon/postgresql"
 	"miren.dev/runtime/metrics"
 	"miren.dev/runtime/observability"
 	"miren.dev/runtime/pkg/caauth"
@@ -736,6 +740,16 @@ func (c *Coordinator) Start(ctx context.Context) error {
 		return err
 	}
 
+	// Set up addon registry and register providers
+	addonFw := addon.NewProviderFramework(c.Log, ec, eac)
+	addonRegistry := addon.NewRegistry()
+	addonRegistry.Register(postgresql.AddonName, postgresql.NewProvider(addonFw), postgresql.Definition())
+
+	if err := addonRegistry.EnsureEntities(ctx, ec); err != nil {
+		c.Log.Error("failed to ensure addon entities", "error", err)
+		return err
+	}
+
 	// Migrate app versions before starting components that depend on them
 	migrationCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -830,6 +844,24 @@ func (c *Coordinator) Start(ctx context.Context) error {
 		c.cm.AddController(certCtrl)
 	}
 
+	// Add addon controller (reconciles addon associations for provisioning/deprovisioning)
+	addonController := addonctrl.NewController(c.Log, ec, eac, addonRegistry)
+	if err := addonController.Init(ctx); err != nil {
+		c.Log.Error("failed to initialize addon controller", "error", err)
+		return err
+	}
+
+	addonReconciler := controller.NewReconcileController(
+		"addon",
+		c.Log,
+		entity.Ref(entity.EntityKind, addon_v1alpha.KindAddonAssociation),
+		eac,
+		controller.AdaptReconcileController[addon_v1alpha.AddonAssociation](addonController),
+		time.Minute,
+		1,
+	)
+	c.cm.AddController(addonReconciler)
+
 	// Start the controller manager
 	if err := c.cm.Start(ctx); err != nil {
 		c.Log.Error("failed to start controller manager", "error", err)
@@ -856,6 +888,9 @@ func (c *Coordinator) Start(ctx context.Context) error {
 	ai := app.NewAppInfo(c.Log, ec, c.Cpu, c.Mem, c.HTTP)
 	server.ExposeValue("dev.miren.runtime/app", app_v1alpha.AdaptCrud(ai))
 	server.ExposeValue("dev.miren.runtime/app-status", app_v1alpha.AdaptAppStatus(ai))
+
+	addonsServer := app.NewAddonsServer(c.Log, ec, addonRegistry)
+	server.ExposeValue("dev.miren.runtime/addons", app_v1alpha.AdaptAddons(addonsServer))
 
 	ls := logs.NewServer(c.Log, ec, c.Logs)
 	server.ExposeValue("dev.miren.runtime/logs", app_v1alpha.AdaptLogs(ls))
