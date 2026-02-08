@@ -194,3 +194,31 @@ func (c *Client) DeleteByHost(ctx context.Context, host string) error {
 
 	return nil
 }
+
+// UpdateOIDCConfig updates the OIDC configuration for a route
+func (c *Client) UpdateOIDCConfig(ctx context.Context, host string, config ingress_v1alpha.OidcConfig) (*ingress_v1alpha.HttpRoute, error) {
+	route, err := c.Lookup(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+
+	if route == nil {
+		return nil, fmt.Errorf("route not found: %s", host)
+	}
+
+	// Update OIDC config
+	route.OidcConfig = config
+
+	// Update the route
+	_, err = c.ec.CreateOrUpdate(ctx, string(route.ID), route)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update route OIDC config: %w", err)
+	}
+
+	return route, nil
+}
+
+// ClearOIDCConfig removes OIDC configuration from a route
+func (c *Client) ClearOIDCConfig(ctx context.Context, host string) (*ingress_v1alpha.HttpRoute, error) {
+	return c.UpdateOIDCConfig(ctx, host, ingress_v1alpha.OidcConfig{})
+}

@@ -396,6 +396,17 @@ func (h *Server) serveHTTPWithMetrics(w http.ResponseWriter, req *http.Request, 
 		targetAppId = route.App
 		routeType = "route"
 		h.Log.Debug("using http route", "host", onlyHost, "app", targetAppId)
+
+		// Check if OIDC authentication is required
+		if !route.OidcConfig.Empty() {
+			// Wrap the request handler with OIDC middleware
+			oidcWrapped := h.oidcMiddleware(route, func(w http.ResponseWriter, r *http.Request) {
+				// Continue with normal request handling after auth
+				h.serveAuthenticatedRequest(w, r, targetAppId, routeType, appName)
+			})
+			oidcWrapped(w, req)
+			return
+		}
 	} else {
 		// No route found, try to find a default route
 		h.Log.Debug("no http route found, checking for default route", "host", onlyHost)
@@ -417,6 +428,30 @@ func (h *Server) serveHTTPWithMetrics(w http.ResponseWriter, req *http.Request, 
 		targetAppId = defaultRoute.App
 		routeType = "default"
 		h.Log.Debug("using default route", "host", onlyHost, "app", targetAppId)
+
+		// Check if OIDC authentication is required for default route
+		if !defaultRoute.OidcConfig.Empty() {
+			// Update route reference
+			route = defaultRoute
+			// Wrap with OIDC middleware
+			oidcWrapped := h.oidcMiddleware(route, func(w http.ResponseWriter, r *http.Request) {
+				h.serveAuthenticatedRequest(w, r, targetAppId, routeType, appName)
+			})
+			oidcWrapped(w, req)
+			return
+		}
+	}
+
+	// Continue with normal request handling
+	h.serveAuthenticatedRequest(w, req, targetAppId, routeType, appName)
+}
+
+// serveAuthenticatedRequest handles the request after authentication (if any)
+func (h *Server) serveAuthenticatedRequest(w http.ResponseWriter, req *http.Request, targetAppId entity.Id, routeType string, appName *string) {
+	ctx := req.Context()
+	onlyHost, _, err := net.SplitHostPort(req.Host)
+	if err != nil {
+		onlyHost = req.Host
 	}
 
 	// Get app details first to have the name for metrics
