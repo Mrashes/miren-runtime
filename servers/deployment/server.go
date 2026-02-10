@@ -8,27 +8,39 @@ import (
 	"sort"
 	"time"
 
+	appclient "miren.dev/runtime/api/app"
 	"miren.dev/runtime/api/core/core_v1alpha"
 	deployment_v1alpha "miren.dev/runtime/api/deployment/deployment_v1alpha"
+	aes "miren.dev/runtime/api/entityserver"
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
+	"miren.dev/runtime/api/ingress"
 	"miren.dev/runtime/pkg/cond"
 	"miren.dev/runtime/pkg/entity"
+	"miren.dev/runtime/pkg/idgen"
 	"miren.dev/runtime/pkg/rpc/standard"
 )
 
 type DeploymentServer struct {
-	Log *slog.Logger
-	EAC *entityserver_v1alpha.EntityAccessClient
+	Log           *slog.Logger
+	EAC           *entityserver_v1alpha.EntityAccessClient
+	EC            *aes.Client
+	AppClient     *appclient.Client
+	IngressClient *ingress.Client
+	DNSHostname   string
 }
 
 var _ deployment_v1alpha.Deployment = (*DeploymentServer)(nil)
 
 const deploymentLockTimeout = 30 * time.Minute
 
-func NewDeploymentServer(log *slog.Logger, eac *entityserver_v1alpha.EntityAccessClient) (*DeploymentServer, error) {
+func NewDeploymentServer(log *slog.Logger, eac *entityserver_v1alpha.EntityAccessClient, ec *aes.Client, appClient *appclient.Client, dnsHostname string) (*DeploymentServer, error) {
 	return &DeploymentServer{
-		Log: log.With("module", "deployment"),
-		EAC: eac,
+		Log:           log.With("module", "deployment"),
+		EAC:           eac,
+		EC:            ec,
+		AppClient:     appClient,
+		IngressClient: ingress.NewClient(log, eac),
+		DNSHostname:   dnsHostname,
 	}, nil
 }
 
@@ -269,7 +281,7 @@ func (d *DeploymentServer) UpdateDeploymentStatus(ctx context.Context, req *depl
 
 	// If marking as active, mark all other active deployments for this app/cluster as succeeded
 	if newStatus == "active" {
-		err = d.markPreviousActiveAsSucceeded(ctx, deployment.AppName, deployment.ClusterId, deploymentId)
+		err = d.markPreviousActiveAs(ctx, deployment.AppName, deployment.ClusterId, deploymentId, "succeeded")
 		if err != nil {
 			d.Log.Error("Failed to mark previous active deployments as succeeded", "error", err)
 			// Don't fail the whole operation, just log the error
@@ -652,6 +664,266 @@ func (d *DeploymentServer) CancelDeployment(ctx context.Context, req *deployment
 	return nil
 }
 
+func (d *DeploymentServer) DeployVersion(ctx context.Context, req *deployment_v1alpha.DeploymentDeployVersion) error {
+	args := req.Args()
+	results := req.Results()
+
+	// Validate required fields
+	if !args.HasAppName() || args.AppName() == "" {
+		return cond.ValidationFailure("missing-field", "app_name is required")
+	}
+	if !args.HasClusterId() || args.ClusterId() == "" {
+		return cond.ValidationFailure("missing-field", "cluster_id is required")
+	}
+	if !args.HasAppVersionId() || args.AppVersionId() == "" {
+		return cond.ValidationFailure("missing-field", "app_version_id is required")
+	}
+
+	appName := args.AppName()
+	clusterId := args.ClusterId()
+	appVersionId := args.AppVersionId()
+	sourceVersionId := appVersionId
+	isRollback := args.HasIsRollback() && args.IsRollback()
+
+	// Verify the AppVersion entity exists
+	var appVersion core_v1alpha.AppVersion
+	if err := d.EC.Get(ctx, appVersionId, &appVersion); err != nil {
+		if errors.Is(err, cond.ErrNotFound{}) {
+			results.SetError(fmt.Sprintf("app version %q not found", appVersionId))
+			return nil
+		}
+		d.Log.Error("Failed to look up app version", "app_version_id", appVersionId, "error", err)
+		results.SetError("failed to look up app version")
+		return nil
+	}
+
+	// If env vars are provided, create a derived version with merged variables
+	if args.HasEnvVars() && len(args.EnvVars()) > 0 {
+		derivedVersion, err := d.createDerivedVersion(ctx, &appVersion, args.EnvVars())
+		if err != nil {
+			d.Log.Error("Failed to create derived version with env vars", "error", err)
+			results.SetError(fmt.Sprintf("failed to apply env vars: %v", err))
+			return nil
+		}
+		appVersion = *derivedVersion
+		appVersionId = derivedVersion.Version
+		d.Log.Info("Created derived version with env vars",
+			"original", args.AppVersionId(), "derived", appVersionId,
+			"env_var_count", len(args.EnvVars()))
+	}
+
+	// Check for existing in_progress deployments (deployment lock)
+	existingDeployments, err := d.listDeploymentsInternal(ctx, appName, clusterId, "in_progress", 1)
+	if err != nil {
+		d.Log.Error("Failed to check for existing deployments", "error", err)
+		results.SetError("failed to check deployment lock")
+		return nil
+	}
+
+	if len(existingDeployments) > 0 {
+		existing := existingDeployments[0]
+
+		deploymentTime, parseErr := time.Parse(time.RFC3339, existing.DeployedBy.Timestamp)
+		if parseErr != nil {
+			deploymentTime = time.Time{}
+		}
+
+		isExpired := deploymentTime.IsZero() || time.Since(deploymentTime) >= deploymentLockTimeout
+		if !isExpired {
+			lockExpiresAt := deploymentTime.Add(deploymentLockTimeout)
+
+			displayEmail := existing.DeployedBy.UserEmail
+			if displayEmail == "" || displayEmail == "unknown@example.com" || displayEmail == "user@example.com" {
+				displayEmail = "-"
+			}
+
+			lockInfo := &deployment_v1alpha.DeploymentLockInfo{}
+			lockInfo.SetAppName(appName)
+			lockInfo.SetClusterId(clusterId)
+			lockInfo.SetBlockingDeploymentId(string(existing.ID))
+			lockInfo.SetStartedBy(displayEmail)
+			lockInfo.SetStartedAt(standard.ToTimestamp(deploymentTime))
+			lockInfo.SetCurrentPhase(existing.Phase)
+			lockInfo.SetLockExpiresAt(standard.ToTimestamp(lockExpiresAt))
+
+			results.SetLockInfo(lockInfo)
+			results.SetError("deployment blocked by existing in-progress deployment")
+			return nil
+		}
+
+		// Expired lock — mark as failed and continue
+		d.Log.Warn("Found expired in_progress deployment, marking as failed",
+			"deployment_id", string(existing.ID),
+			"age", time.Since(deploymentTime))
+
+		existing.Status = "failed"
+		existing.ErrorMessage = fmt.Sprintf("Deployment timed out after %v", deploymentLockTimeout)
+		existing.CompletedAt = time.Now().Format(time.RFC3339)
+
+		updateAttrs := existing.Encode()
+		updateEntity := &entityserver_v1alpha.Entity{}
+		updateEntity.SetId(string(existing.ID))
+		updateEntity.SetAttrs(updateAttrs)
+
+		if existingEntity, getErr := d.EAC.Get(ctx, string(existing.ID)); getErr == nil {
+			updateEntity.SetRevision(existingEntity.Entity().Revision())
+			if _, putErr := d.EAC.Put(ctx, updateEntity); putErr != nil {
+				d.Log.Error("Failed to mark expired deployment as failed", "error", putErr)
+			}
+		}
+	}
+
+	// Find the source deployment — the most recent deployment with this app_version_id
+	allDeployments, err := d.listDeploymentsInternal(ctx, appName, clusterId, "", 100)
+	if err != nil {
+		d.Log.Error("Failed to list deployments for source lookup", "error", err)
+		// Continue without source info
+	}
+
+	var sourceDeployment *core_v1alpha.Deployment
+	for _, dep := range allDeployments {
+		if dep.AppVersion == sourceVersionId {
+			sourceDeployment = dep
+			break // listDeploymentsInternal returns newest first
+		}
+	}
+
+	// Create new deployment entity
+	now := time.Now()
+
+	deployment := &core_v1alpha.Deployment{
+		AppName:    appName,
+		AppVersion: appVersionId,
+		ClusterId:  clusterId,
+		Status:     "in_progress",
+		Phase:      "activating",
+		DeployedBy: core_v1alpha.DeployedBy{
+			Timestamp: now.Format(time.RFC3339),
+		},
+	}
+
+	// Copy git info and source ID from the source deployment
+	if sourceDeployment != nil {
+		deployment.GitInfo = sourceDeployment.GitInfo
+		deployment.SourceDeploymentId = string(sourceDeployment.ID)
+	}
+
+	// Create entity
+	attrs := deployment.Encode()
+	rpcEntity := &entityserver_v1alpha.Entity{}
+	rpcEntity.SetAttrs(attrs)
+
+	putResp, err := d.EAC.Put(ctx, rpcEntity)
+	if err != nil {
+		d.Log.Error("Failed to create deployment entity", "error", err)
+		results.SetError("failed to create deployment")
+		return nil
+	}
+
+	deployment.ID = entity.Id(putResp.Id())
+	newDeploymentId := putResp.Id()
+
+	// Activate the version via AppClient
+	if err := d.AppClient.SetActiveVersion(ctx, appName, string(appVersion.ID)); err != nil {
+		d.Log.Error("Failed to set active version", "error", err, "app", appName, "version_id", string(appVersion.ID))
+
+		deployment.Status = "failed"
+		deployment.ErrorMessage = fmt.Sprintf("failed to activate version: %v", err)
+		deployment.CompletedAt = time.Now().Format(time.RFC3339)
+		if current, getErr := d.EAC.Get(ctx, newDeploymentId); getErr == nil {
+			failEntity := &entityserver_v1alpha.Entity{}
+			failEntity.SetId(newDeploymentId)
+			failEntity.SetAttrs(deployment.Encode())
+			failEntity.SetRevision(current.Entity().Revision())
+			if _, putErr := d.EAC.Put(ctx, failEntity); putErr != nil {
+				d.Log.Error("Failed to mark deployment as failed", "error", putErr)
+			}
+		}
+
+		results.SetError(fmt.Sprintf("failed to activate version: %v", err))
+		return nil
+	}
+
+	// Activation succeeded — mark deployment active
+	deployment.Status = "active"
+	deployment.CompletedAt = time.Now().Format(time.RFC3339)
+	if current, getErr := d.EAC.Get(ctx, newDeploymentId); getErr == nil {
+		activeEntity := &entityserver_v1alpha.Entity{}
+		activeEntity.SetId(newDeploymentId)
+		activeEntity.SetAttrs(deployment.Encode())
+		activeEntity.SetRevision(current.Entity().Revision())
+		if _, putErr := d.EAC.Put(ctx, activeEntity); putErr != nil {
+			d.Log.Error("Failed to update deployment status to active", "error", putErr)
+		}
+	}
+
+	// Mark previous active deployments
+	targetStatus := "succeeded"
+	if isRollback {
+		targetStatus = "rolled_back"
+	}
+	if err := d.markPreviousActiveAs(ctx, appName, clusterId, newDeploymentId, targetStatus); err != nil {
+		d.Log.Error("Failed to mark previous active deployments", "error", err)
+		// Don't fail — the new deployment is already created and active
+	}
+
+	deploymentInfo := d.toDeploymentInfo(deployment)
+	results.SetDeployment(deploymentInfo)
+
+	accessInfo := d.getAccessInfo(ctx, appName)
+	results.SetAccessInfo(&accessInfo)
+
+	d.Log.Info("Deployed version",
+		"deployment_id", newDeploymentId,
+		"app", appName,
+		"cluster", clusterId,
+		"version", appVersionId,
+		"is_rollback", isRollback)
+
+	return nil
+}
+
+// getAccessInfo queries routes to determine how the app can be accessed
+func (d *DeploymentServer) getAccessInfo(ctx context.Context, appName string) *deployment_v1alpha.AccessInfo {
+	info := &deployment_v1alpha.AccessInfo{}
+
+	appEntity, err := d.AppClient.GetByName(ctx, appName)
+	if err != nil {
+		d.Log.Debug("could not get app for access info", "app", appName, "error", err)
+		return info
+	}
+
+	routes, err := d.IngressClient.List(ctx)
+	if err != nil {
+		d.Log.Debug("could not list routes for access info", "error", err)
+		return info
+	}
+
+	var hostnames []string
+	var hasDefaultRoute bool
+
+	for _, r := range routes {
+		if r.Route.App != appEntity.ID {
+			continue
+		}
+		if r.Route.Default {
+			hasDefaultRoute = true
+		}
+		if r.Route.Host != "" {
+			hostnames = append(hostnames, r.Route.Host)
+		}
+	}
+
+	info.SetHostnames(&hostnames)
+	info.SetDefaultRoute(hasDefaultRoute)
+
+	if d.DNSHostname != "" {
+		info.SetClusterHostname(d.DNSHostname)
+	}
+
+	return info
+}
+
 // Internal helper methods
 
 func (d *DeploymentServer) listDeploymentsInternal(ctx context.Context, appName, clusterId, status string, limit int) ([]*core_v1alpha.Deployment, error) {
@@ -730,6 +1002,11 @@ func (d *DeploymentServer) toDeploymentInfo(deployment *core_v1alpha.Deployment)
 		info.SetBuildLogs(deployment.BuildLogs)
 	}
 
+	// Add source deployment ID if available (rollback/redeploy provenance)
+	if deployment.SourceDeploymentId != "" {
+		info.SetSourceDeploymentId(deployment.SourceDeploymentId)
+	}
+
 	// Add git info if available
 	if deployment.GitInfo.Sha != "" {
 		gitInfo := &deployment_v1alpha.GitInfo{}
@@ -755,23 +1032,22 @@ func (d *DeploymentServer) toDeploymentInfo(deployment *core_v1alpha.Deployment)
 	return info
 }
 
-// markPreviousActiveAsSucceeded marks all active deployments for the given app/cluster as succeeded,
+// markPreviousActiveAs marks all active deployments for the given app/cluster with the target status,
 // except for the specified currentDeploymentId
-func (d *DeploymentServer) markPreviousActiveAsSucceeded(ctx context.Context, appName, clusterId, currentDeploymentId string) error {
+func (d *DeploymentServer) markPreviousActiveAs(ctx context.Context, appName, clusterId, currentDeploymentId, targetStatus string) error {
 	// List all active deployments for this app/cluster
 	deployments, err := d.listDeploymentsInternal(ctx, appName, clusterId, "active", 100)
 	if err != nil {
 		return err
 	}
 
-	// Update each active deployment (except the current one) to succeeded
+	// Update each active deployment (except the current one) to the target status
 	for _, dep := range deployments {
 		if string(dep.ID) == currentDeploymentId {
 			continue
 		}
 
-		// Update status to succeeded
-		dep.Status = "succeeded"
+		dep.Status = targetStatus
 		if dep.CompletedAt == "" {
 			dep.CompletedAt = time.Now().Format(time.RFC3339)
 		}
@@ -792,12 +1068,13 @@ func (d *DeploymentServer) markPreviousActiveAsSucceeded(ctx context.Context, ap
 
 		_, err = d.EAC.Put(ctx, updateEntity)
 		if err != nil {
-			d.Log.Error("Failed to mark deployment as succeeded", "deployment_id", dep.ID, "error", err)
+			d.Log.Error("Failed to mark deployment", "deployment_id", dep.ID, "target_status", targetStatus, "error", err)
 			continue
 		}
 
-		d.Log.Info("Marked previous active deployment as succeeded",
+		d.Log.Info("Marked previous active deployment",
 			"deployment_id", dep.ID,
+			"target_status", targetStatus,
 			"app", appName,
 			"cluster", clusterId)
 	}
@@ -849,4 +1126,53 @@ func (w *rpcEntityWrapper) GetAll(name entity.Id) []entity.Attr {
 
 func (w *rpcEntityWrapper) Attrs() []entity.Attr {
 	return w.entity.Attrs()
+}
+
+// createDerivedVersion clones an existing AppVersion with CLI env vars merged
+// into its config, creates the new entity, and returns it.
+func (d *DeploymentServer) createDerivedVersion(ctx context.Context, base *core_v1alpha.AppVersion, envVars []*deployment_v1alpha.EnvironmentVariable) (*core_v1alpha.AppVersion, error) {
+	// Extract app name from the base version's App field (e.g. "app/go-server" -> "go-server")
+	appName := string(base.App)
+	if idx := len("app/"); len(appName) > idx && appName[:idx] == "app/" {
+		appName = appName[idx:]
+	}
+
+	newVersionName := appName + "-" + idgen.Gen("v")
+
+	derived := &core_v1alpha.AppVersion{
+		App:            base.App,
+		Version:        newVersionName,
+		Artifact:       base.Artifact,
+		ImageUrl:       base.ImageUrl,
+		Config:         base.Config,
+		AdminToken:     base.AdminToken,
+		Manifest:       base.Manifest,
+		ManifestDigest: base.ManifestDigest,
+	}
+
+	// Merge env vars into config
+	varMap := make(map[string]core_v1alpha.Variable)
+	for _, v := range derived.Config.Variable {
+		varMap[v.Key] = v
+	}
+	for _, ev := range envVars {
+		varMap[ev.Key()] = core_v1alpha.Variable{
+			Key:       ev.Key(),
+			Value:     ev.Value(),
+			Sensitive: ev.Sensitive(),
+			Source:    "manual",
+		}
+	}
+	derived.Config.Variable = make([]core_v1alpha.Variable, 0, len(varMap))
+	for _, v := range varMap {
+		derived.Config.Variable = append(derived.Config.Variable, v)
+	}
+
+	id, err := d.EC.Create(ctx, newVersionName, derived)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create derived version entity: %w", err)
+	}
+	derived.ID = id
+
+	return derived, nil
 }

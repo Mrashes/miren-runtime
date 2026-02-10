@@ -22,6 +22,7 @@ func RegisterAll(d *mflags.Dispatcher) {
 	d.Dispatch("init", Infer("init", "Initialize a new application", Init))
 	d.Dispatch("deploy", Infer("deploy", "Deploy an application", Deploy))
 	d.Dispatch("deploy cancel", Infer("deploy cancel", "Cancel an in-progress deployment", DeployCancel))
+	d.Dispatch("rollback", Infer("rollback", "Roll back to a previous version", Rollback))
 	d.Dispatch("logs", Infer("logs", "Get logs for an application", Logs))
 
 	// App management commands

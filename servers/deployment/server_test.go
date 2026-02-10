@@ -7,12 +7,25 @@ import (
 	"testing"
 	"time"
 
+	appclient "miren.dev/runtime/api/app"
 	"miren.dev/runtime/api/core/core_v1alpha"
 	deployment_v1alpha "miren.dev/runtime/api/deployment/deployment_v1alpha"
+	aes "miren.dev/runtime/api/entityserver"
+	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
 	"miren.dev/runtime/pkg/entity/testutils"
 	"miren.dev/runtime/pkg/rpc"
 	"miren.dev/runtime/pkg/rpc/standard"
 )
+
+// newTestDeploymentServer creates a DeploymentServer with test dependencies.
+// The returned appClient uses the same in-memory entity store for SetActiveVersion calls.
+func newTestDeploymentServer(t *testing.T, logger *slog.Logger, inmem *testutils.InMemEntityServer) (*DeploymentServer, error) {
+	t.Helper()
+	localClient := rpc.LocalClient(entityserver_v1alpha.AdaptEntityAccess(inmem.Server))
+	ec := aes.NewClient(logger, inmem.EAC)
+	ac := appclient.NewClient(logger, localClient)
+	return NewDeploymentServer(logger, inmem.EAC, ec, ac, "")
+}
 
 func TestCreateDeploymentWithGitInfo(t *testing.T) {
 	ctx := context.Background()
@@ -23,7 +36,7 @@ func TestCreateDeploymentWithGitInfo(t *testing.T) {
 
 	// Create deployment server
 	logger := slog.Default()
-	server, err := NewDeploymentServer(logger, inmem.EAC)
+	server, err := newTestDeploymentServer(t, logger, inmem)
 	if err != nil {
 		t.Fatalf("Failed to create deployment server: %v", err)
 	}
@@ -122,7 +135,7 @@ func TestToDeploymentInfo(t *testing.T) {
 	inmem, cleanup := testutils.NewInMemEntityServer(t)
 	defer cleanup()
 
-	server, _ := NewDeploymentServer(logger, inmem.EAC)
+	server, _ := newTestDeploymentServer(t, logger, inmem)
 
 	tests := []struct {
 		name       string
@@ -235,7 +248,7 @@ func TestCreateDeploymentErrorCases(t *testing.T) {
 
 	// Create deployment server
 	logger := slog.Default()
-	server, err := NewDeploymentServer(logger, inmem.EAC)
+	server, err := newTestDeploymentServer(t, logger, inmem)
 	if err != nil {
 		t.Fatalf("Failed to create deployment server: %v", err)
 	}
@@ -299,7 +312,7 @@ func TestListDeployments(t *testing.T) {
 
 	// Create deployment server
 	logger := slog.Default()
-	server, err := NewDeploymentServer(logger, inmem.EAC)
+	server, err := newTestDeploymentServer(t, logger, inmem)
 	if err != nil {
 		t.Fatalf("Failed to create deployment server: %v", err)
 	}
@@ -411,7 +424,7 @@ func TestGetDeploymentById(t *testing.T) {
 
 	// Create deployment server
 	logger := slog.Default()
-	server, err := NewDeploymentServer(logger, inmem.EAC)
+	server, err := newTestDeploymentServer(t, logger, inmem)
 	if err != nil {
 		t.Fatalf("Failed to create deployment server: %v", err)
 	}
@@ -544,7 +557,7 @@ func TestCancelDeployment(t *testing.T) {
 
 	// Create deployment server
 	logger := slog.Default()
-	server, err := NewDeploymentServer(logger, inmem.EAC)
+	server, err := newTestDeploymentServer(t, logger, inmem)
 	if err != nil {
 		t.Fatalf("Failed to create deployment server: %v", err)
 	}
@@ -745,7 +758,7 @@ func TestUpdateDeploymentStatusToInProgress(t *testing.T) {
 
 	// Create deployment server
 	logger := slog.Default()
-	server, err := NewDeploymentServer(logger, inmem.EAC)
+	server, err := newTestDeploymentServer(t, logger, inmem)
 	if err != nil {
 		t.Fatalf("Failed to create deployment server: %v", err)
 	}
@@ -840,7 +853,7 @@ func TestListDeploymentsClusterFilter(t *testing.T) {
 	defer cleanup()
 
 	logger := slog.Default()
-	server, err := NewDeploymentServer(logger, inmem.EAC)
+	server, err := newTestDeploymentServer(t, logger, inmem)
 	if err != nil {
 		t.Fatalf("Failed to create deployment server: %v", err)
 	}
@@ -892,4 +905,244 @@ func TestListDeploymentsClusterFilter(t *testing.T) {
 	if len(result.Deployments()) != 1 {
 		t.Errorf("Expected 1 deployment for cluster-b, got %d", len(result.Deployments()))
 	}
+}
+
+func TestDeployVersion(t *testing.T) {
+	ctx := context.Background()
+
+	inmem, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	logger := slog.Default()
+	server, err := newTestDeploymentServer(t, logger, inmem)
+	if err != nil {
+		t.Fatalf("Failed to create deployment server: %v", err)
+	}
+
+	client := &deployment_v1alpha.DeploymentClient{
+		Client: rpc.LocalClient(deployment_v1alpha.AdaptDeployment(server)),
+	}
+
+	t.Run("missing app_name returns error", func(t *testing.T) {
+		_, err := client.DeployVersion(ctx, "", "cluster1", "myapp-v1", false, nil)
+		if err == nil {
+			t.Fatal("Expected error for empty app_name")
+		}
+	})
+
+	t.Run("missing cluster_id returns error", func(t *testing.T) {
+		_, err := client.DeployVersion(ctx, "myapp", "", "myapp-v1", false, nil)
+		if err == nil {
+			t.Fatal("Expected error for empty cluster_id")
+		}
+	})
+
+	t.Run("missing app_version_id returns error", func(t *testing.T) {
+		_, err := client.DeployVersion(ctx, "myapp", "cluster1", "", false, nil)
+		if err == nil {
+			t.Fatal("Expected error for empty app_version_id")
+		}
+	})
+
+	t.Run("non-existent version returns error in results", func(t *testing.T) {
+		result, err := client.DeployVersion(ctx, "myapp", "cluster1", "nonexistent-version", false, nil)
+		if err != nil {
+			t.Fatalf("Unexpected RPC error: %v", err)
+		}
+		if !result.HasError() || result.Error() == "" {
+			t.Fatal("Expected error for non-existent version")
+		}
+		if !containsString(result.Error(), "not found") {
+			t.Errorf("Expected 'not found' error, got: %s", result.Error())
+		}
+	})
+
+	t.Run("deploy existing version creates active deployment", func(t *testing.T) {
+		// Create an app entity
+		app := &core_v1alpha.App{}
+		_, err := inmem.Client.Create(ctx, "testapp", app)
+		if err != nil {
+			t.Fatalf("Failed to create app: %v", err)
+		}
+
+		// Create an app version entity
+		appVersion := &core_v1alpha.AppVersion{
+			Version: "testapp-v1abc",
+		}
+		versionId, err := inmem.Client.Create(ctx, "testapp-v1abc", appVersion)
+		if err != nil {
+			t.Fatalf("Failed to create app version: %v", err)
+		}
+
+		// Create a prior deployment record for this version (to serve as source)
+		priorDep := &core_v1alpha.Deployment{
+			AppName:    "testapp",
+			ClusterId:  "cluster1",
+			AppVersion: "testapp-v1abc",
+			Status:     "succeeded",
+			GitInfo: core_v1alpha.GitInfo{
+				Sha:    "abc123",
+				Branch: "main",
+			},
+			DeployedBy: core_v1alpha.DeployedBy{
+				Timestamp: time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
+			},
+		}
+		priorId, err := inmem.Client.Create(ctx, "prior-dep", priorDep)
+		if err != nil {
+			t.Fatalf("Failed to create prior deployment: %v", err)
+		}
+
+		// Deploy the version
+		result, err := client.DeployVersion(ctx, "testapp", "cluster1", "testapp-v1abc", false, nil)
+		if err != nil {
+			t.Fatalf("DeployVersion failed: %v", err)
+		}
+		if result.HasError() && result.Error() != "" {
+			t.Fatalf("DeployVersion returned error: %s", result.Error())
+		}
+
+		if !result.HasDeployment() || result.Deployment() == nil {
+			t.Fatal("Expected deployment in results")
+		}
+
+		dep := result.Deployment()
+		if dep.Status() != "active" {
+			t.Errorf("Expected status 'active', got %s", dep.Status())
+		}
+		if dep.AppVersionId() != "testapp-v1abc" {
+			t.Errorf("Expected version 'testapp-v1abc', got %s", dep.AppVersionId())
+		}
+		if dep.SourceDeploymentId() != string(priorId) {
+			t.Errorf("Expected source_deployment_id %s, got %s", priorId, dep.SourceDeploymentId())
+		}
+
+		// Verify git info was copied from source
+		if !dep.HasGitInfo() || dep.GitInfo() == nil {
+			t.Fatal("Expected git info copied from source")
+		}
+		if dep.GitInfo().Sha() != "abc123" {
+			t.Errorf("Expected git SHA 'abc123', got %s", dep.GitInfo().Sha())
+		}
+
+		_ = versionId // used indirectly via entity name lookup
+	})
+
+	t.Run("rollback marks previous as rolled_back", func(t *testing.T) {
+		// Create app and version
+		app := &core_v1alpha.App{}
+		_, err := inmem.Client.Create(ctx, "rollback-app", app)
+		if err != nil {
+			t.Fatalf("Failed to create app: %v", err)
+		}
+
+		appVersion := &core_v1alpha.AppVersion{Version: "rollback-app-v1"}
+		_, err = inmem.Client.Create(ctx, "rollback-app-v1", appVersion)
+		if err != nil {
+			t.Fatalf("Failed to create app version: %v", err)
+		}
+
+		appVersion2 := &core_v1alpha.AppVersion{Version: "rollback-app-v2"}
+		_, err = inmem.Client.Create(ctx, "rollback-app-v2", appVersion2)
+		if err != nil {
+			t.Fatalf("Failed to create app version v2: %v", err)
+		}
+
+		// Create an active deployment for v2 (current)
+		activeDep := &core_v1alpha.Deployment{
+			AppName:    "rollback-app",
+			ClusterId:  "cluster1",
+			AppVersion: "rollback-app-v2",
+			Status:     "active",
+			DeployedBy: core_v1alpha.DeployedBy{
+				Timestamp: time.Now().Format(time.RFC3339),
+			},
+		}
+		activeDepId, err := inmem.Client.Create(ctx, "active-dep-v2", activeDep)
+		if err != nil {
+			t.Fatalf("Failed to create active deployment: %v", err)
+		}
+
+		// Create a succeeded deployment for v1 (source for rollback)
+		_, err = inmem.Client.Create(ctx, "succeeded-dep-v1", &core_v1alpha.Deployment{
+			AppName:    "rollback-app",
+			ClusterId:  "cluster1",
+			AppVersion: "rollback-app-v1",
+			Status:     "succeeded",
+			DeployedBy: core_v1alpha.DeployedBy{
+				Timestamp: time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
+			},
+		})
+		if err != nil {
+			t.Fatalf("Failed to create succeeded deployment: %v", err)
+		}
+
+		// Roll back to v1
+		result, err := client.DeployVersion(ctx, "rollback-app", "cluster1", "rollback-app-v1", true, nil)
+		if err != nil {
+			t.Fatalf("DeployVersion (rollback) failed: %v", err)
+		}
+		if result.HasError() && result.Error() != "" {
+			t.Fatalf("DeployVersion returned error: %s", result.Error())
+		}
+
+		newDep := result.Deployment()
+		if newDep.Status() != "active" {
+			t.Errorf("Expected new deployment status 'active', got %s", newDep.Status())
+		}
+
+		// Verify the previous active deployment was marked as rolled_back
+		prevResult, err := client.GetDeploymentById(ctx, string(activeDepId))
+		if err != nil {
+			t.Fatalf("Failed to get previous deployment: %v", err)
+		}
+		if prevResult.Deployment().Status() != "rolled_back" {
+			t.Errorf("Expected previous deployment status 'rolled_back', got %s", prevResult.Deployment().Status())
+		}
+	})
+
+	t.Run("deploy version blocked by in-progress deployment", func(t *testing.T) {
+		// Create app and version
+		app := &core_v1alpha.App{}
+		_, err := inmem.Client.Create(ctx, "locked-app", app)
+		if err != nil {
+			t.Fatalf("Failed to create app: %v", err)
+		}
+
+		appVersion := &core_v1alpha.AppVersion{Version: "locked-app-v1"}
+		_, err = inmem.Client.Create(ctx, "locked-app-v1", appVersion)
+		if err != nil {
+			t.Fatalf("Failed to create app version: %v", err)
+		}
+
+		// Create an in-progress deployment (blocking)
+		_, err = inmem.Client.Create(ctx, "blocking-dep", &core_v1alpha.Deployment{
+			AppName:    "locked-app",
+			ClusterId:  "cluster1",
+			AppVersion: "pending-build",
+			Status:     "in_progress",
+			Phase:      "building",
+			DeployedBy: core_v1alpha.DeployedBy{
+				Timestamp: time.Now().Format(time.RFC3339),
+			},
+		})
+		if err != nil {
+			t.Fatalf("Failed to create blocking deployment: %v", err)
+		}
+
+		// Try to deploy — should be blocked
+		result, err := client.DeployVersion(ctx, "locked-app", "cluster1", "locked-app-v1", false, nil)
+		if err != nil {
+			t.Fatalf("Unexpected RPC error: %v", err)
+		}
+		if !result.HasError() || result.Error() == "" {
+			t.Fatal("Expected error for blocked deployment")
+		}
+		if !containsString(result.Error(), "blocked") {
+			t.Errorf("Expected 'blocked' in error, got: %s", result.Error())
+		}
+		if !result.HasLockInfo() || result.LockInfo() == nil {
+			t.Error("Expected lock info in response")
+		}
+	})
 }

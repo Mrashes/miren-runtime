@@ -254,7 +254,11 @@ kinds:
     build_logs:
       type: string
       doc: Build logs concatenated with newlines (especially useful for failed deployments)
-      
+
+    source_deployment_id:
+      type: string
+      doc: ID of the deployment this was based on (for rollback/redeploy provenance)
+
     git_info:
       type: component
       doc: Git information at time of deployment
