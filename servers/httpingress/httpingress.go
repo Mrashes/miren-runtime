@@ -29,6 +29,7 @@ import (
 	"miren.dev/runtime/observability"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/httputil"
+	"miren.dev/runtime/pkg/oidc"
 	"miren.dev/runtime/pkg/rpc"
 )
 
@@ -41,6 +42,7 @@ const (
 
 type IngressConfig struct {
 	RequestTimeout time.Duration
+	DataPath       string
 }
 
 type Server struct {
@@ -60,6 +62,8 @@ type Server struct {
 
 	mu   sync.Mutex
 	apps map[string]*appUsage
+
+	oidcSessionManager *oidc.SessionManager
 }
 
 type appUsage struct {
@@ -84,17 +88,27 @@ func NewServer(
 		config.RequestTimeout = 60 * time.Second
 	}
 
+	var signingKey []byte
+	if config.DataPath != "" {
+		var err error
+		signingKey, err = loadOrGenerateSigningKey(config.DataPath)
+		if err != nil {
+			log.Error("failed to load OIDC signing key, sessions will not survive restarts", "error", err)
+		}
+	}
+
 	serv := &Server{
-		Log:           log.With("module", "httpingress"),
-		config:        config,
-		rpcClient:     rpcClient,
-		eac:           eac,
-		ingressClient: ingress.NewClient(log, rpcClient),
-		appClient:     app.NewClient(log, rpcClient),
-		aa:            aa,
-		httpMetrics:   httpMetrics,
-		logWriter:     logWriter,
-		apps:          make(map[string]*appUsage),
+		Log:                log.With("module", "httpingress"),
+		config:             config,
+		rpcClient:          rpcClient,
+		eac:                eac,
+		ingressClient:      ingress.NewClient(log, rpcClient),
+		appClient:          app.NewClient(log, rpcClient),
+		aa:                 aa,
+		httpMetrics:        httpMetrics,
+		logWriter:          logWriter,
+		apps:               make(map[string]*appUsage),
+		oidcSessionManager: oidc.NewSessionManager(false, "", signingKey),
 	}
 
 	// Build the timeout handler once at initialization

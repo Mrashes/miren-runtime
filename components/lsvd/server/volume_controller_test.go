@@ -484,4 +484,3 @@ func TestVolumeControllerMultipleVolumes(t *testing.T) {
 	assert.Len(t, ops.initedVolumes, 3)
 	assert.Len(t, state.Volumes, 3)
 }
-

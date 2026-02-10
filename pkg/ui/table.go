@@ -285,15 +285,12 @@ func (t *Table) Render() string {
 
 	var lines []string
 
-	// Render title if set
 	if t.title != "" {
 		lines = append(lines, t.styles.Title.Render(t.title))
 	}
 
-	// Render header
 	lines = append(lines, t.renderHeader())
 
-	// Render rows
 	for _, row := range t.rows {
 		lines = append(lines, t.renderRow(row))
 	}

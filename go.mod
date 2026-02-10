@@ -36,6 +36,7 @@ require (
 	github.com/flannel-io/flannel v0.26.7
 	github.com/fxamacker/cbor/v2 v2.9.0
 	github.com/go-acme/lego/v4 v4.28.1
+	github.com/go-jose/go-jose/v4 v4.1.3
 	github.com/go-logr/logr v1.4.3
 	github.com/go-ozzo/ozzo-validation/v4 v4.3.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
@@ -221,7 +222,6 @@ require (
 	github.com/go-acme/tencentclouddnspod v1.1.10 // indirect
 	github.com/go-acme/tencentedgdeone v1.1.48 // indirect
 	github.com/go-errors/errors v1.0.1 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect

@@ -2,10 +2,13 @@ package httpingress
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"miren.dev/runtime/api/ingress/ingress_v1alpha"
@@ -19,6 +22,32 @@ const (
 	oidcCallbackPath = "/.well-known/miren/oidc/callback"
 )
 
+// loadOrGenerateSigningKey reads the OIDC cookie signing key from disk,
+// or generates and persists a new 32-byte random key if none exists.
+func loadOrGenerateSigningKey(dataPath string) ([]byte, error) {
+	keyPath := filepath.Join(dataPath, "server", "oidc-signing.key")
+
+	data, err := os.ReadFile(keyPath)
+	if err == nil && len(data) == 32 {
+		return data, nil
+	}
+
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("generating OIDC signing key: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0700); err != nil {
+		return nil, fmt.Errorf("creating directory for OIDC signing key: %w", err)
+	}
+
+	if err := os.WriteFile(keyPath, key, 0600); err != nil {
+		return nil, fmt.Errorf("writing OIDC signing key: %w", err)
+	}
+
+	return key, nil
+}
+
 // oidcHandler manages OIDC authentication for a route
 type oidcHandler struct {
 	route          *ingress_v1alpha.HttpRoute
@@ -30,22 +59,28 @@ type oidcHandler struct {
 }
 
 // newOIDCHandler creates a new OIDC handler for a route with a resolved provider.
+// The baseURL is used to construct the redirect URL for OAuth2 callbacks.
 // The resource parameter is the RFC 8707 resource indicator for the authorization request.
-func newOIDCHandler(route *ingress_v1alpha.HttpRoute, provider *ingress_v1alpha.OidcProvider, baseURL, resource string, logger *slog.Logger) (*oidcHandler, error) {
+func newOIDCHandler(route *ingress_v1alpha.HttpRoute, provider *ingress_v1alpha.OidcProvider, sessionManager *oidc.SessionManager, baseURL, resource string, logger *slog.Logger) (*oidcHandler, error) {
 	if provider.ProviderUrl == "" || provider.ClientId == "" {
 		return nil, fmt.Errorf("OIDC provider missing required fields")
 	}
 
-	// Parse scopes
-	scopes := []string{"openid"}
-	if provider.Scopes != "" {
-		scopes = strings.Fields(provider.Scopes)
+	// Parse scopes, ensuring "openid" is always included
+	scopes := strings.Fields(provider.Scopes)
+	hasOpenID := false
+	for _, s := range scopes {
+		if s == "openid" {
+			hasOpenID = true
+			break
+		}
+	}
+	if !hasOpenID {
+		scopes = append([]string{"openid"}, scopes...)
 	}
 
-	// Build redirect URL
 	redirectURL := fmt.Sprintf("%s%s", baseURL, oidcCallbackPath)
 
-	// Create OIDC client
 	client := oidc.NewClient(
 		provider.ProviderUrl,
 		provider.ClientId,
@@ -54,11 +89,6 @@ func newOIDCHandler(route *ingress_v1alpha.HttpRoute, provider *ingress_v1alpha.
 		scopes,
 		logger,
 	)
-
-	// Create session manager
-	// Use secure cookies if we're on HTTPS
-	cookieSecure := strings.HasPrefix(baseURL, "https://")
-	sessionManager := oidc.NewSessionManager(cookieSecure, "")
 
 	return &oidcHandler{
 		route:          route,
@@ -73,7 +103,6 @@ func newOIDCHandler(route *ingress_v1alpha.HttpRoute, provider *ingress_v1alpha.
 // checkAuth verifies if the request has a valid OIDC session.
 // Returns true if authenticated, false if redirect to OIDC provider is needed.
 func (h *oidcHandler) checkAuth(w http.ResponseWriter, r *http.Request) (authenticated bool, claims map[string]interface{}) {
-	// Check for existing session
 	session, err := h.sessionManager.GetSession(r)
 	if err != nil {
 		h.logger.Error("failed to get session", "error", err)
@@ -81,11 +110,15 @@ func (h *oidcHandler) checkAuth(w http.ResponseWriter, r *http.Request) (authent
 	}
 
 	if session != nil {
-		// Parse claims from ID token
+		// Use stored claims from session (verified at token exchange time)
+		if session.Claims != nil {
+			return true, session.Claims
+		}
+
+		// Fallback: parse claims from ID token
 		claims, err := h.client.ParseIDToken(session.IDToken)
 		if err != nil {
 			h.logger.Error("failed to parse ID token", "error", err)
-			// Clear invalid session and redirect to login
 			h.sessionManager.ClearSession(w)
 			return false, nil
 		}
@@ -176,12 +209,16 @@ func (h *oidcHandler) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse claims from ID token (without verification for now)
-	claims, err := h.client.ParseIDToken(idToken)
+	// Verify and parse claims from ID token
+	claims, err := h.client.VerifyIDToken(ctx, idToken)
 	if err != nil {
-		h.logger.Error("failed to parse ID token", "error", err)
-		http.Error(w, "Failed to parse ID token", http.StatusInternalServerError)
-		return
+		h.logger.Warn("ID token verification failed, falling back to unverified parse", "error", err)
+		claims, err = h.client.ParseIDToken(idToken)
+		if err != nil {
+			h.logger.Error("failed to parse ID token", "error", err)
+			http.Error(w, "Failed to parse ID token", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Create session
@@ -256,6 +293,30 @@ func (h *oidcHandler) injectClaims(r *http.Request, claims map[string]interface{
 	}
 }
 
+// requestScheme determines the scheme of the incoming request by checking
+// proxy headers (X-Forwarded-Proto, Forwarded), the TLS state, and
+// falling back to http.
+func requestScheme(r *http.Request) string {
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+		return proto
+	}
+
+	if fwd := r.Header.Get("Forwarded"); fwd != "" {
+		for _, part := range strings.Split(fwd, ";") {
+			part = strings.TrimSpace(part)
+			if strings.HasPrefix(part, "proto=") {
+				return strings.TrimPrefix(part, "proto=")
+			}
+		}
+	}
+
+	if r.TLS != nil {
+		return "https"
+	}
+
+	return "http"
+}
+
 // oidcMiddleware wraps the request handling with OIDC authentication
 func (s *Server) oidcMiddleware(route *ingress_v1alpha.HttpRoute, next http.HandlerFunc) http.HandlerFunc {
 	// Check if OIDC feature is enabled
@@ -288,35 +349,31 @@ func (s *Server) oidcMiddleware(route *ingress_v1alpha.HttpRoute, next http.Hand
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Build base URL from the request host, which works for both
-		// named routes and the default route (which has no static host)
-		baseURL := fmt.Sprintf("https://%s", r.Host)
+		scheme := requestScheme(r)
+		baseURL := fmt.Sprintf("%s://%s", scheme, r.Host)
 
-		// Create OIDC handler per-request so the base URL matches the actual host
-		handler, err := newOIDCHandler(route, &provider, baseURL, resource, s.Log)
+		// Update cookie secure flag based on actual request scheme
+		s.oidcSessionManager.SetSecure(scheme == "https")
+
+		handler, err := newOIDCHandler(route, &provider, s.oidcSessionManager, baseURL, resource, s.Log)
 		if err != nil {
 			s.Log.Error("failed to create OIDC handler", "error", err, "host", r.Host)
 			next(w, r)
 			return
 		}
 
-		// Handle callback path specially
 		if r.URL.Path == oidcCallbackPath {
 			handler.handleCallback(w, r)
 			return
 		}
 
-		// Check authentication
 		authenticated, claims := handler.checkAuth(w, r)
 		if !authenticated {
 			handler.redirectToProvider(w, r)
 			return
 		}
 
-		// Inject claims as headers
 		handler.injectClaims(r, claims)
-
-		// Continue to app
 		next(w, r)
 	}
 }

@@ -28,7 +28,7 @@ func TestInjectClaims(t *testing.T) {
 			},
 			wantHeaders: map[string]string{
 				"X-User-Email": "alice@example.com",
-				"X-User-ID":   "user-123",
+				"X-User-ID":    "user-123",
 			},
 		},
 		{

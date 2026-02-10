@@ -83,15 +83,19 @@ func RouteOidcEnable(ctx *Context, opts struct {
 			return fmt.Errorf("--client-id and --client-secret are required with --provider-url")
 		}
 
-		// Build scopes string
-		scopes := "openid"
-		if len(opts.Scopes) > 0 {
-			scopes = strings.Join(opts.Scopes, " ")
-			// Ensure openid is included
-			if !strings.Contains(scopes, "openid") {
-				scopes = "openid " + scopes
+		// Build scopes, ensuring "openid" is always included
+		hasOpenID := false
+		for _, s := range opts.Scopes {
+			if s == "openid" {
+				hasOpenID = true
+				break
 			}
 		}
+		scopeList := opts.Scopes
+		if !hasOpenID {
+			scopeList = append([]string{"openid"}, scopeList...)
+		}
+		scopes := strings.Join(scopeList, " ")
 
 		// Create or update provider
 		provider := &ingress_v1alpha.OidcProvider{

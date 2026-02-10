@@ -7,7 +7,7 @@ import (
 )
 
 func TestSessionManager_SetAndGetSession(t *testing.T) {
-	sm := NewSessionManager(false, "")
+	sm := NewSessionManager(false, "", nil)
 
 	// Create test session
 	session := &SessionData{
@@ -58,7 +58,7 @@ func TestSessionManager_SetAndGetSession(t *testing.T) {
 }
 
 func TestSessionManager_ClearSession(t *testing.T) {
-	sm := NewSessionManager(false, "")
+	sm := NewSessionManager(false, "", nil)
 
 	// Set session first
 	session := &SessionData{
@@ -88,7 +88,7 @@ func TestSessionManager_ClearSession(t *testing.T) {
 }
 
 func TestSessionManager_GenerateState(t *testing.T) {
-	sm := NewSessionManager(false, "")
+	sm := NewSessionManager(false, "", nil)
 
 	state, err := sm.GenerateState("/return-path")
 	if err != nil {
@@ -113,7 +113,7 @@ func TestSessionManager_GenerateState(t *testing.T) {
 }
 
 func TestSessionManager_SetAndGetState(t *testing.T) {
-	sm := NewSessionManager(false, "")
+	sm := NewSessionManager(false, "", nil)
 
 	state := &StateData{
 		State:        "test-state",
@@ -161,7 +161,7 @@ func TestSessionManager_SetAndGetState(t *testing.T) {
 }
 
 func TestSessionManager_GetSession_NoSession(t *testing.T) {
-	sm := NewSessionManager(false, "")
+	sm := NewSessionManager(false, "", nil)
 
 	req := httptest.NewRequest("GET", "/", nil)
 
@@ -176,7 +176,7 @@ func TestSessionManager_GetSession_NoSession(t *testing.T) {
 }
 
 func TestSessionManager_GetSession_ExpiredSession(t *testing.T) {
-	sm := NewSessionManager(false, "")
+	sm := NewSessionManager(false, "", nil)
 
 	// Create expired session
 	session := &SessionData{

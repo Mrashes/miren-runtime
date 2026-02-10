@@ -1,7 +1,9 @@
 package oidc
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -20,17 +22,12 @@ const (
 	pkceVerifierLength = 64
 )
 
-// SessionManager handles OIDC session lifecycle using secure cookies.
-// Sessions are stored as encrypted cookies with HttpOnly and Secure flags.
+// SessionManager handles OIDC session lifecycle using HMAC-signed cookies.
 type SessionManager struct {
-	// cookieSecure controls whether cookies require HTTPS
-	cookieSecure bool
-
-	// cookieDomain is the domain for session cookies
-	cookieDomain string
-
-	// sessionDuration controls how long sessions last
+	cookieSecure    bool
+	cookieDomain    string
 	sessionDuration time.Duration
+	signingKey      []byte
 }
 
 // SessionData contains the authenticated session information
@@ -66,13 +63,74 @@ type StateData struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// NewSessionManager creates a new session manager
-func NewSessionManager(cookieSecure bool, cookieDomain string) *SessionManager {
+// SetSecure updates whether cookies should be marked Secure.
+func (sm *SessionManager) SetSecure(secure bool) {
+	sm.cookieSecure = secure
+}
+
+// NewSessionManager creates a new session manager.
+// If signingKey is nil, a random 32-byte key is generated. This means sessions
+// won't survive server restarts; pass a persistent key for durable sessions.
+func NewSessionManager(cookieSecure bool, cookieDomain string, signingKey []byte) *SessionManager {
+	if signingKey == nil {
+		signingKey = make([]byte, 32)
+		rand.Read(signingKey)
+	}
 	return &SessionManager{
 		cookieSecure:    cookieSecure,
 		cookieDomain:    cookieDomain,
 		sessionDuration: defaultSessionDuration,
+		signingKey:      signingKey,
 	}
+}
+
+// signCookie produces "base64(json).base64(hmac-sha256)" from data.
+func (sm *SessionManager) signCookie(data []byte) string {
+	encoded := base64.RawURLEncoding.EncodeToString(data)
+	mac := hmac.New(sha256.New, sm.signingKey)
+	mac.Write([]byte(encoded))
+	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return encoded + "." + sig
+}
+
+// verifyCookie splits "payload.sig", verifies the HMAC, and returns the decoded payload.
+func (sm *SessionManager) verifyCookie(value string) ([]byte, error) {
+	parts := splitCookieValue(value)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("malformed signed cookie")
+	}
+
+	mac := hmac.New(sha256.New, sm.signingKey)
+	mac.Write([]byte(parts[0]))
+	expectedSig := mac.Sum(nil)
+
+	sig, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode signature: %w", err)
+	}
+
+	if !hmac.Equal(sig, expectedSig) {
+		return nil, fmt.Errorf("cookie signature verification failed")
+	}
+
+	data, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode cookie payload: %w", err)
+	}
+
+	return data, nil
+}
+
+// splitCookieValue splits on the last '.' to separate payload from signature.
+func splitCookieValue(s string) []string {
+	idx := len(s) - 1
+	for idx >= 0 && s[idx] != '.' {
+		idx--
+	}
+	if idx <= 0 {
+		return nil
+	}
+	return []string{s[:idx], s[idx+1:]}
 }
 
 // GetSession retrieves the current session from cookies
@@ -85,19 +143,16 @@ func (sm *SessionManager) GetSession(r *http.Request) (*SessionData, error) {
 		return nil, fmt.Errorf("failed to read session cookie: %w", err)
 	}
 
-	// Decode base64
-	data, err := base64.RawURLEncoding.DecodeString(cookie.Value)
+	data, err := sm.verifyCookie(cookie.Value)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode session cookie: %w", err)
+		return nil, fmt.Errorf("invalid session cookie: %w", err)
 	}
 
-	// Parse JSON
 	var session SessionData
 	if err := json.Unmarshal(data, &session); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal session: %w", err)
 	}
 
-	// Check expiration
 	if time.Now().After(session.ExpiresAt) {
 		return nil, nil
 	}
@@ -105,26 +160,20 @@ func (sm *SessionManager) GetSession(r *http.Request) (*SessionData, error) {
 	return &session, nil
 }
 
-// SetSession stores a new session in a secure cookie
+// SetSession stores a new session in an HMAC-signed cookie
 func (sm *SessionManager) SetSession(w http.ResponseWriter, session *SessionData) error {
-	// Set expiration if not set
 	if session.ExpiresAt.IsZero() {
 		session.ExpiresAt = time.Now().Add(sm.sessionDuration)
 	}
 
-	// Marshal to JSON
 	data, err := json.Marshal(session)
 	if err != nil {
 		return fmt.Errorf("failed to marshal session: %w", err)
 	}
 
-	// Encode as base64
-	encoded := base64.RawURLEncoding.EncodeToString(data)
-
-	// Set cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
-		Value:    encoded,
+		Value:    sm.signCookie(data),
 		Path:     "/",
 		Domain:   sm.cookieDomain,
 		Expires:  session.ExpiresAt,
@@ -174,21 +223,16 @@ func (sm *SessionManager) GenerateState(returnPath string) (*StateData, error) {
 	}, nil
 }
 
-// SetState stores OIDC flow state in a cookie
+// SetState stores OIDC flow state in an HMAC-signed cookie
 func (sm *SessionManager) SetState(w http.ResponseWriter, state *StateData) error {
-	// Marshal to JSON
 	data, err := json.Marshal(state)
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
 
-	// Encode as base64
-	encoded := base64.RawURLEncoding.EncodeToString(data)
-
-	// Set cookie (shorter-lived than session)
 	http.SetCookie(w, &http.Cookie{
 		Name:     stateCookieName,
-		Value:    encoded,
+		Value:    sm.signCookie(data),
 		Path:     "/",
 		Domain:   sm.cookieDomain,
 		Expires:  state.ExpiresAt,
@@ -210,19 +254,16 @@ func (sm *SessionManager) GetState(r *http.Request) (*StateData, error) {
 		return nil, fmt.Errorf("failed to read state cookie: %w", err)
 	}
 
-	// Decode base64
-	data, err := base64.RawURLEncoding.DecodeString(cookie.Value)
+	data, err := sm.verifyCookie(cookie.Value)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode state cookie: %w", err)
+		return nil, fmt.Errorf("invalid state cookie: %w", err)
 	}
 
-	// Parse JSON
 	var state StateData
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal state: %w", err)
 	}
 
-	// Check expiration
 	if time.Now().After(state.ExpiresAt) {
 		return nil, fmt.Errorf("state has expired")
 	}

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-jose/go-jose/v4"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/oauth2"
 )
@@ -282,7 +283,9 @@ func (c *Client) getDiscoveryLocked(ctx context.Context) (*discoveryData, error)
 	return &data, nil
 }
 
-// getJWKSKeyFunc returns a key function for JWT validation using JWKS
+// getJWKSKeyFunc returns a key function for JWT validation using JWKS.
+// It fetches the JWKS document and parses keys into proper crypto types
+// using go-jose so that jwt-go can verify signatures.
 func (c *Client) getJWKSKeyFunc(ctx context.Context, jwksURI string) (jwt.Keyfunc, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", jwksURI, nil)
 	if err != nil {
@@ -300,30 +303,28 @@ func (c *Client) getJWKSKeyFunc(ctx context.Context, jwksURI string) (jwt.Keyfun
 		return nil, fmt.Errorf("JWKS endpoint returned status %d", resp.StatusCode)
 	}
 
-	var jwks struct {
-		Keys []map[string]interface{} `json:"keys"`
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read JWKS response: %w", err)
 	}
-	if err := parseJSON(resp.Body, &jwks); err != nil {
+
+	var jwks jose.JSONWebKeySet
+	if err := json.Unmarshal(body, &jwks); err != nil {
 		return nil, fmt.Errorf("failed to parse JWKS: %w", err)
 	}
 
-	// Create key function that looks up keys by kid
 	return func(token *jwt.Token) (interface{}, error) {
 		kid, ok := token.Header["kid"].(string)
 		if !ok {
 			return nil, fmt.Errorf("token missing kid header")
 		}
 
-		// Find matching key
-		for _, key := range jwks.Keys {
-			if keyID, ok := key["kid"].(string); ok && keyID == kid {
-				// Return the key data for jwt library to parse
-				// The jwt library will handle RSA/EC key parsing
-				return key, nil
-			}
+		keys := jwks.Key(kid)
+		if len(keys) == 0 {
+			return nil, fmt.Errorf("key with kid %s not found in JWKS", kid)
 		}
 
-		return nil, fmt.Errorf("key with kid %s not found in JWKS", kid)
+		return keys[0].Key, nil
 	}, nil
 }
 
