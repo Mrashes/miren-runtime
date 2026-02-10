@@ -1,0 +1,176 @@
+package httpingress
+
+import (
+	"net/http/httptest"
+	"testing"
+
+	"miren.dev/runtime/api/ingress/ingress_v1alpha"
+)
+
+func TestInjectClaims(t *testing.T) {
+	tests := []struct {
+		name            string
+		claimMappings   []ingress_v1alpha.ClaimMappings
+		claims          map[string]interface{}
+		existingHeaders map[string]string
+		wantHeaders     map[string]string
+		wantAbsent      []string
+	}{
+		{
+			name: "basic string claims",
+			claimMappings: []ingress_v1alpha.ClaimMappings{
+				{Claim: "email", Header: "X-User-Email"},
+				{Claim: "sub", Header: "X-User-ID"},
+			},
+			claims: map[string]interface{}{
+				"email": "alice@example.com",
+				"sub":   "user-123",
+			},
+			wantHeaders: map[string]string{
+				"X-User-Email": "alice@example.com",
+				"X-User-ID":   "user-123",
+			},
+		},
+		{
+			name: "missing claim is skipped",
+			claimMappings: []ingress_v1alpha.ClaimMappings{
+				{Claim: "email", Header: "X-User-Email"},
+				{Claim: "groups", Header: "X-User-Groups"},
+			},
+			claims: map[string]interface{}{
+				"email": "alice@example.com",
+			},
+			wantHeaders: map[string]string{
+				"X-User-Email": "alice@example.com",
+			},
+			wantAbsent: []string{"X-User-Groups"},
+		},
+		{
+			name: "spoofed header is stripped when claim is missing",
+			claimMappings: []ingress_v1alpha.ClaimMappings{
+				{Claim: "email", Header: "X-User-Email"},
+				{Claim: "groups", Header: "X-User-Groups"},
+			},
+			claims: map[string]interface{}{
+				"email": "alice@example.com",
+				// no "groups" claim
+			},
+			existingHeaders: map[string]string{
+				"X-User-Groups": "admin",
+			},
+			wantHeaders: map[string]string{
+				"X-User-Email": "alice@example.com",
+			},
+			wantAbsent: []string{"X-User-Groups"},
+		},
+		{
+			name: "spoofed header is overwritten when claim is present",
+			claimMappings: []ingress_v1alpha.ClaimMappings{
+				{Claim: "email", Header: "X-User-Email"},
+			},
+			claims: map[string]interface{}{
+				"email": "alice@example.com",
+			},
+			existingHeaders: map[string]string{
+				"X-User-Email": "evil@attacker.com",
+			},
+			wantHeaders: map[string]string{
+				"X-User-Email": "alice@example.com",
+			},
+		},
+		{
+			name: "numeric claim",
+			claimMappings: []ingress_v1alpha.ClaimMappings{
+				{Claim: "iat", Header: "X-Token-Issued"},
+			},
+			claims: map[string]interface{}{
+				"iat": float64(1700000000),
+			},
+			wantHeaders: map[string]string{
+				"X-Token-Issued": "1.7e+09",
+			},
+		},
+		{
+			name: "boolean claim",
+			claimMappings: []ingress_v1alpha.ClaimMappings{
+				{Claim: "email_verified", Header: "X-Email-Verified"},
+			},
+			claims: map[string]interface{}{
+				"email_verified": true,
+			},
+			wantHeaders: map[string]string{
+				"X-Email-Verified": "true",
+			},
+		},
+		{
+			name: "array claim is JSON-encoded",
+			claimMappings: []ingress_v1alpha.ClaimMappings{
+				{Claim: "groups", Header: "X-User-Groups"},
+			},
+			claims: map[string]interface{}{
+				"groups": []interface{}{"engineering", "platform"},
+			},
+			wantHeaders: map[string]string{
+				"X-User-Groups": `["engineering","platform"]`,
+			},
+		},
+		{
+			name: "object claim is JSON-encoded",
+			claimMappings: []ingress_v1alpha.ClaimMappings{
+				{Claim: "address", Header: "X-User-Address"},
+			},
+			claims: map[string]interface{}{
+				"address": map[string]interface{}{"city": "Portland"},
+			},
+			wantHeaders: map[string]string{
+				"X-User-Address": `{"city":"Portland"}`,
+			},
+		},
+		{
+			name: "empty claim or header in mapping is skipped",
+			claimMappings: []ingress_v1alpha.ClaimMappings{
+				{Claim: "", Header: "X-User-Email"},
+				{Claim: "email", Header: ""},
+				{Claim: "sub", Header: "X-User-ID"},
+			},
+			claims: map[string]interface{}{
+				"email": "alice@example.com",
+				"sub":   "user-123",
+			},
+			wantHeaders: map[string]string{
+				"X-User-ID": "user-123",
+			},
+			wantAbsent: []string{"X-User-Email"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/", nil)
+			for k, v := range tt.existingHeaders {
+				req.Header.Set(k, v)
+			}
+
+			h := &oidcHandler{
+				route: &ingress_v1alpha.HttpRoute{
+					ClaimMappings: tt.claimMappings,
+				},
+			}
+
+			h.injectClaims(req, tt.claims)
+
+			for header, want := range tt.wantHeaders {
+				got := req.Header.Get(header)
+				if got != want {
+					t.Errorf("header %s = %q, want %q", header, got, want)
+				}
+			}
+
+			for _, header := range tt.wantAbsent {
+				if got := req.Header.Get(header); got != "" {
+					t.Errorf("header %s should be absent, got %q", header, got)
+				}
+			}
+		})
+	}
+}

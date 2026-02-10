@@ -2,6 +2,7 @@ package httpingress
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -211,20 +212,29 @@ func (h *oidcHandler) handleCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, returnPath, http.StatusFound)
 }
 
-// injectClaims adds JWT claims as HTTP headers based on the route configuration
+// injectClaims adds JWT claims as HTTP headers based on the route configuration.
+// All configured claim headers are first stripped from the request to prevent
+// clients from spoofing identity headers.
 func (h *oidcHandler) injectClaims(r *http.Request, claims map[string]interface{}) {
+	// Strip all configured claim headers to prevent spoofing.
+	// This is important for claims not present in the JWT — without stripping,
+	// a client-provided header would pass through to the app.
+	for _, mapping := range h.route.ClaimMappings {
+		if mapping.Header != "" {
+			r.Header.Del(mapping.Header)
+		}
+	}
+
 	for _, mapping := range h.route.ClaimMappings {
 		if mapping.Claim == "" || mapping.Header == "" {
 			continue
 		}
 
-		// Get claim value
 		value, ok := claims[mapping.Claim]
 		if !ok {
 			continue
 		}
 
-		// Convert to string
 		var strValue string
 		switch v := value.(type) {
 		case string:
@@ -234,11 +244,14 @@ func (h *oidcHandler) injectClaims(r *http.Request, claims map[string]interface{
 		case bool:
 			strValue = fmt.Sprintf("%v", v)
 		default:
-			// For complex types, skip
-			continue
+			// Structured types (arrays, objects) are JSON-encoded
+			b, err := json.Marshal(v)
+			if err != nil {
+				continue
+			}
+			strValue = string(b)
 		}
 
-		// Set header
 		r.Header.Set(mapping.Header, strValue)
 	}
 }
