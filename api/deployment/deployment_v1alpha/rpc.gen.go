@@ -25,6 +25,7 @@ type deploymentInfoData struct {
 	BuildLogs           *string             `cbor:"11,keyasint,omitempty" json:"build_logs,omitempty"`
 	GitInfo             *GitInfo            `cbor:"12,keyasint,omitempty" json:"git_info,omitempty"`
 	DeployedByUserName  *string             `cbor:"21,keyasint,omitempty" json:"deployed_by_user_name,omitempty"`
+	SourceDeploymentId  *string             `cbor:"22,keyasint,omitempty" json:"source_deployment_id,omitempty"`
 }
 
 type DeploymentInfo struct {
@@ -230,6 +231,21 @@ func (v *DeploymentInfo) DeployedByUserName() string {
 
 func (v *DeploymentInfo) SetDeployedByUserName(deployed_by_user_name string) {
 	v.data.DeployedByUserName = &deployed_by_user_name
+}
+
+func (v *DeploymentInfo) HasSourceDeploymentId() bool {
+	return v.data.SourceDeploymentId != nil
+}
+
+func (v *DeploymentInfo) SourceDeploymentId() string {
+	if v.data.SourceDeploymentId == nil {
+		return ""
+	}
+	return *v.data.SourceDeploymentId
+}
+
+func (v *DeploymentInfo) SetSourceDeploymentId(source_deployment_id string) {
+	v.data.SourceDeploymentId = &source_deployment_id
 }
 
 func (v *DeploymentInfo) MarshalCBOR() ([]byte, error) {
@@ -1323,6 +1339,117 @@ func (v *DeploymentCancelDeploymentResults) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, &v.data)
 }
 
+type deploymentDeployVersionArgsData struct {
+	AppName      *string `cbor:"0,keyasint,omitempty" json:"app_name,omitempty"`
+	ClusterId    *string `cbor:"1,keyasint,omitempty" json:"cluster_id,omitempty"`
+	AppVersionId *string `cbor:"2,keyasint,omitempty" json:"app_version_id,omitempty"`
+	IsRollback   *bool   `cbor:"3,keyasint,omitempty" json:"is_rollback,omitempty"`
+}
+
+type DeploymentDeployVersionArgs struct {
+	call rpc.Call
+	data deploymentDeployVersionArgsData
+}
+
+func (v *DeploymentDeployVersionArgs) HasAppName() bool {
+	return v.data.AppName != nil
+}
+
+func (v *DeploymentDeployVersionArgs) AppName() string {
+	if v.data.AppName == nil {
+		return ""
+	}
+	return *v.data.AppName
+}
+
+func (v *DeploymentDeployVersionArgs) HasClusterId() bool {
+	return v.data.ClusterId != nil
+}
+
+func (v *DeploymentDeployVersionArgs) ClusterId() string {
+	if v.data.ClusterId == nil {
+		return ""
+	}
+	return *v.data.ClusterId
+}
+
+func (v *DeploymentDeployVersionArgs) HasAppVersionId() bool {
+	return v.data.AppVersionId != nil
+}
+
+func (v *DeploymentDeployVersionArgs) AppVersionId() string {
+	if v.data.AppVersionId == nil {
+		return ""
+	}
+	return *v.data.AppVersionId
+}
+
+func (v *DeploymentDeployVersionArgs) HasIsRollback() bool {
+	return v.data.IsRollback != nil
+}
+
+func (v *DeploymentDeployVersionArgs) IsRollback() bool {
+	if v.data.IsRollback == nil {
+		return false
+	}
+	return *v.data.IsRollback
+}
+
+func (v *DeploymentDeployVersionArgs) MarshalCBOR() ([]byte, error) {
+	return cbor.Marshal(v.data)
+}
+
+func (v *DeploymentDeployVersionArgs) UnmarshalCBOR(data []byte) error {
+	return cbor.Unmarshal(data, &v.data)
+}
+
+func (v *DeploymentDeployVersionArgs) MarshalJSON() ([]byte, error) {
+	return json.Marshal(v.data)
+}
+
+func (v *DeploymentDeployVersionArgs) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &v.data)
+}
+
+type deploymentDeployVersionResultsData struct {
+	Deployment *DeploymentInfo     `cbor:"0,keyasint,omitempty" json:"deployment,omitempty"`
+	Error      *string             `cbor:"1,keyasint,omitempty" json:"error,omitempty"`
+	LockInfo   *DeploymentLockInfo `cbor:"2,keyasint,omitempty" json:"lock_info,omitempty"`
+}
+
+type DeploymentDeployVersionResults struct {
+	call rpc.Call
+	data deploymentDeployVersionResultsData
+}
+
+func (v *DeploymentDeployVersionResults) SetDeployment(deployment *DeploymentInfo) {
+	v.data.Deployment = deployment
+}
+
+func (v *DeploymentDeployVersionResults) SetError(error string) {
+	v.data.Error = &error
+}
+
+func (v *DeploymentDeployVersionResults) SetLockInfo(lock_info *DeploymentLockInfo) {
+	v.data.LockInfo = lock_info
+}
+
+func (v *DeploymentDeployVersionResults) MarshalCBOR() ([]byte, error) {
+	return cbor.Marshal(v.data)
+}
+
+func (v *DeploymentDeployVersionResults) UnmarshalCBOR(data []byte) error {
+	return cbor.Unmarshal(data, &v.data)
+}
+
+func (v *DeploymentDeployVersionResults) MarshalJSON() ([]byte, error) {
+	return json.Marshal(v.data)
+}
+
+func (v *DeploymentDeployVersionResults) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &v.data)
+}
+
 type DeploymentCreateDeployment struct {
 	rpc.Call
 	args    DeploymentCreateDeploymentArgs
@@ -1557,6 +1684,32 @@ func (t *DeploymentCancelDeployment) Results() *DeploymentCancelDeploymentResult
 	return results
 }
 
+type DeploymentDeployVersion struct {
+	rpc.Call
+	args    DeploymentDeployVersionArgs
+	results DeploymentDeployVersionResults
+}
+
+func (t *DeploymentDeployVersion) Args() *DeploymentDeployVersionArgs {
+	args := &t.args
+	if args.call != nil {
+		return args
+	}
+	args.call = t.Call
+	t.Call.Args(args)
+	return args
+}
+
+func (t *DeploymentDeployVersion) Results() *DeploymentDeployVersionResults {
+	results := &t.results
+	if results.call != nil {
+		return results
+	}
+	results.call = t.Call
+	t.Call.Results(results)
+	return results
+}
+
 type Deployment interface {
 	CreateDeployment(ctx context.Context, state *DeploymentCreateDeployment) error
 	UpdateDeploymentStatus(ctx context.Context, state *DeploymentUpdateDeploymentStatus) error
@@ -1567,6 +1720,7 @@ type Deployment interface {
 	GetDeploymentById(ctx context.Context, state *DeploymentGetDeploymentById) error
 	GetActiveDeployment(ctx context.Context, state *DeploymentGetActiveDeployment) error
 	CancelDeployment(ctx context.Context, state *DeploymentCancelDeployment) error
+	DeployVersion(ctx context.Context, state *DeploymentDeployVersion) error
 }
 
 type reexportDeployment struct {
@@ -1606,6 +1760,10 @@ func (reexportDeployment) GetActiveDeployment(ctx context.Context, state *Deploy
 }
 
 func (reexportDeployment) CancelDeployment(ctx context.Context, state *DeploymentCancelDeployment) error {
+	panic("not implemented")
+}
+
+func (reexportDeployment) DeployVersion(ctx context.Context, state *DeploymentDeployVersion) error {
 	panic("not implemented")
 }
 
@@ -1694,6 +1852,15 @@ func AdaptDeployment(t Deployment) *rpc.Interface {
 			Public:        false,
 			Handler: func(ctx context.Context, call rpc.Call) error {
 				return t.CancelDeployment(ctx, &DeploymentCancelDeployment{Call: call})
+			},
+		},
+		{
+			Name:          "DeployVersion",
+			InterfaceName: "Deployment",
+			Index:         9,
+			Public:        false,
+			Handler: func(ctx context.Context, call rpc.Call) error {
+				return t.DeployVersion(ctx, &DeploymentDeployVersion{Call: call})
 			},
 		},
 	}
@@ -2004,4 +2171,53 @@ func (v DeploymentClient) CancelDeployment(ctx context.Context, deployment_id st
 	}
 
 	return &DeploymentClientCancelDeploymentResults{client: v.Client, data: ret}, nil
+}
+
+type DeploymentClientDeployVersionResults struct {
+	client rpc.Client
+	data   deploymentDeployVersionResultsData
+}
+
+func (v *DeploymentClientDeployVersionResults) HasDeployment() bool {
+	return v.data.Deployment != nil
+}
+
+func (v *DeploymentClientDeployVersionResults) Deployment() *DeploymentInfo {
+	return v.data.Deployment
+}
+
+func (v *DeploymentClientDeployVersionResults) HasError() bool {
+	return v.data.Error != nil
+}
+
+func (v *DeploymentClientDeployVersionResults) Error() string {
+	if v.data.Error == nil {
+		return ""
+	}
+	return *v.data.Error
+}
+
+func (v *DeploymentClientDeployVersionResults) HasLockInfo() bool {
+	return v.data.LockInfo != nil
+}
+
+func (v *DeploymentClientDeployVersionResults) LockInfo() *DeploymentLockInfo {
+	return v.data.LockInfo
+}
+
+func (v DeploymentClient) DeployVersion(ctx context.Context, app_name string, cluster_id string, app_version_id string, is_rollback bool) (*DeploymentClientDeployVersionResults, error) {
+	args := DeploymentDeployVersionArgs{}
+	args.data.AppName = &app_name
+	args.data.ClusterId = &cluster_id
+	args.data.AppVersionId = &app_version_id
+	args.data.IsRollback = &is_rollback
+
+	var ret deploymentDeployVersionResultsData
+
+	err := v.Call(ctx, "DeployVersion", &args, &ret)
+	if err != nil {
+		return nil, err
+	}
+
+	return &DeploymentClientDeployVersionResults{client: v.Client, data: ret}, nil
 }

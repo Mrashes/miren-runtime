@@ -33,6 +33,7 @@ import (
 func Deploy(ctx *Context, opts struct {
 	AppCentric
 
+	Version       string   `short:"v" long:"version" description:"Deploy an existing version (skip build)"`
 	Analyze       bool     `long:"analyze" description:"Analyze the app without building (show detected stack, services, etc.)"`
 	Explain       bool     `short:"x" long:"explain" description:"Explain the build process"`
 	ExplainFormat string   `long:"explain-format" description:"Explain format" choice:"auto" choice:"plain" choice:"tty" choice:"rawjson" default:"auto"` //nolint
@@ -103,6 +104,51 @@ func Deploy(ctx *Context, opts struct {
 
 		bc := build_v1alpha.NewBuilderClient(cl)
 		return analyzeApp(ctx, bc, dir)
+	}
+
+	// Handle --version flag: deploy an existing version (skip build)
+	if opts.Version != "" {
+		depCl, err := ctx.RPCClient("dev.miren.runtime/deployment")
+		if err != nil {
+			return fmt.Errorf("failed to connect to deployment service: %w", err)
+		}
+		depClient := deployment_v1alpha.NewDeploymentClient(depCl)
+
+		result, err := depClient.DeployVersion(ctx, name, ctx.ClusterName, opts.Version, false)
+		if err != nil {
+			return fmt.Errorf("failed to deploy version: %w", err)
+		}
+
+		if result.HasError() && result.Error() != "" {
+			if result.HasLockInfo() && result.LockInfo() != nil {
+				lockInfo := result.LockInfo()
+				ctx.Printf("\n❌ Deployment blocked:\n\n")
+				ctx.Printf("Another deployment is already in progress for app '%s' on cluster '%s'.\n\n",
+					lockInfo.AppName(), lockInfo.ClusterId())
+				ctx.Printf("Existing deployment details:\n")
+				ctx.Printf("  • Deployment ID: %s\n", lockInfo.BlockingDeploymentId())
+				ctx.Printf("  • Started by: %s\n", lockInfo.StartedBy())
+				if lockInfo.HasStartedAt() && lockInfo.StartedAt() != nil {
+					startedAt := time.Unix(lockInfo.StartedAt().Seconds(), 0)
+					ctx.Printf("  • Started at: %s (%s ago)\n",
+						startedAt.Format("2006-01-02 15:04:05 MST"),
+						time.Since(startedAt).Round(time.Second))
+				}
+				ctx.Printf("  • Current phase: %s\n", lockInfo.CurrentPhase())
+				if lockInfo.HasLockExpiresAt() && lockInfo.LockExpiresAt() != nil {
+					expiresAt := time.Unix(lockInfo.LockExpiresAt().Seconds(), 0)
+					ctx.Printf("  • Lock expires in: %s\n\n", time.Until(expiresAt).Round(time.Second))
+				}
+			} else {
+				ctx.Printf("\n❌ Deploy failed: %s\n", result.Error())
+			}
+			return fmt.Errorf("deploy version failed")
+		}
+
+		if result.HasDeployment() && result.Deployment() != nil {
+			ctx.Printf("✓ Deployed version %s to %s\n", opts.Version, ctx.ClusterName)
+		}
+		return nil
 	}
 
 	// Confirm deployment unless --force is used, stdin is not a TTY, or only one cluster is configured

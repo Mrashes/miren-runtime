@@ -171,6 +171,33 @@ interfaces:
             type: string
             doc: Error message if cancellation failed
 
+      - name: DeployVersion
+        index: 9
+        doc: Deploy an existing app version (used for rollback and redeploy). Server handles everything — creates deployment record, activates version, marks previous deployment.
+        parameters:
+          - name: app_name
+            type: string
+            doc: The application name
+          - name: cluster_id
+            type: string
+            doc: The cluster to deploy to
+          - name: app_version_id
+            type: string
+            doc: The version string to deploy (e.g. myapp-v3k7n2p)
+          - name: is_rollback
+            type: bool
+            doc: If true, previous active deployment marked as rolled_back instead of succeeded
+        results:
+          - name: deployment
+            type: DeploymentInfo
+            doc: The newly created deployment record
+          - name: error
+            type: string
+            doc: Error message if deploy failed
+          - name: lock_info
+            type: DeploymentLockInfo
+            doc: Structured information about the deployment lock (if blocked)
+
 types:
   - type: DeploymentInfo
     doc: Information about a deployment
@@ -231,6 +258,10 @@ types:
         type: GitInfo
         index: 12
         doc: Git information at time of deployment (optional)
+      - name: source_deployment_id
+        type: string
+        index: 22
+        doc: ID of the source deployment (set for rollback/redeploy, empty for fresh builds)
 
   - type: GitInfo
     doc: Git repository information
