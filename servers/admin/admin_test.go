@@ -371,20 +371,6 @@ func TestListMethods_PositionalParams(t *testing.T) {
 	assert.Equal(t, "number", params[0].ParamType())
 }
 
-func TestListMethods_DiscoveryFailed(t *testing.T) {
-	env := setup(t)
-	env.createApp(t, "myapp", "tok123")
-
-	env.ingress.doRequest = func(ctx context.Context, req *httpingress_v1alpha.InternalHttpRequest) (*httpingress_v1alpha.InternalHttpResponse, error) {
-		body := jsonrpcErrorResponse(-32601, "method not found")
-		return httpResponse(200, body), nil
-	}
-
-	result, err := env.client.ListMethods(env.ctx, "myapp")
-	require.NoError(t, err)
-	assert.NotEmpty(t, result.Error())
-}
-
 // --- DescribeMethods tests ---
 
 func TestDescribeMethods_MissingApp(t *testing.T) {

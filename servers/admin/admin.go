@@ -375,18 +375,20 @@ func (s *Server) fetchMethods(ctx context.Context, appName string) ([]*admin_v1a
 		return nil, "", fmt.Errorf("method discovery failed: %s", rpcResp.Error.Message)
 	}
 
-	var methodInfos []struct {
+	type methodInfo struct {
 		Name        string `json:"name"`
 		Description string `json:"description,omitempty"`
 		Category    string `json:"category,omitempty"`
 		Params      any    `json:"params,omitempty"`
 	}
 
-	resultJSON, err := json.Marshal(rpcResp.Result)
-	if err != nil {
-		return nil, "", fmt.Errorf("method discovery not supported by app (invalid response)")
-	}
+	resultJSON := rpcResp.Result
+
+	var methodInfos []methodInfo
+
+	// Try decoding as array first (standard format)
 	if err := json.Unmarshal(resultJSON, &methodInfos); err != nil {
+		s.Log.Info("failed to unmarshal $methods result", "error", "value was not an array of objects", "app", appName, "result", string(resultJSON))
 		return nil, "", fmt.Errorf("method discovery not supported by app (invalid response)")
 	}
 
