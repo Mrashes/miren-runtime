@@ -19,10 +19,11 @@ import (
 )
 
 type AppCentric struct {
-	ConfigCentric
+	ConfigCentric `group:"Config Options"`
 
-	App string `short:"a" long:"app" env:"MIREN_APP" description:"Application get info about"`
-	Dir string `short:"d" long:"dir" description:"Directory to run from" default:"."`
+	_   struct{} `group:"App Options"`
+	App string   `short:"a" long:"app" env:"MIREN_APP" description:"Application get info about"`
+	Dir string   `short:"d" long:"dir" description:"Directory to run from" default:"."`
 
 	config *appconfig.AppConfig
 }
