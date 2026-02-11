@@ -60,7 +60,7 @@ func Infer(name, syn string, f interface{}) *Cmd {
 	var globalFlags GlobalFlags
 
 	// Parse global flags from struct
-	err := fs.FromStruct(&globalFlags)
+	err := fs.FromStruct(&globalFlags, mflags.InGroup("Global Options"))
 	if err != nil {
 		panic(fmt.Sprintf("error parsing global flags: %v", err))
 	}

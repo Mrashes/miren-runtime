@@ -117,7 +117,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/klog/v2 v2.130.1
 	miren.dev/jsonrpc3/go/jsonrpc3 v0.0.0-20260106052505-c98e2702b093
-	miren.dev/mflags v0.0.0-20260211211925-f9634cd4c5c1
+	miren.dev/mflags v0.0.0-20260211221842-4aada8513dd3
 )
 
 require (
