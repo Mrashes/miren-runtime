@@ -870,6 +870,7 @@ func (c *Coordinator) Start(ctx context.Context) error {
 	// Create httpingress server for internal HTTP requests
 	ingressConfig := httpingress.IngressConfig{
 		RequestTimeout: c.HTTPRequestTimeout,
+		DataPath:       c.DataPath,
 	}
 	c.hs = httpingress.NewServer(ctx, c.Log, ingressConfig, loopback, aa, c.HTTP, c.LogWriter)
 

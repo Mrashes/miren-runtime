@@ -29,6 +29,7 @@ import (
 	"miren.dev/runtime/observability"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/httputil"
+	"miren.dev/runtime/pkg/oidc"
 	"miren.dev/runtime/pkg/rpc"
 )
 
@@ -41,6 +42,7 @@ const (
 
 type IngressConfig struct {
 	RequestTimeout time.Duration
+	DataPath       string
 }
 
 type Server struct {
@@ -60,6 +62,10 @@ type Server struct {
 
 	mu   sync.Mutex
 	apps map[string]*appUsage
+
+	oidcSessionManager *oidc.SessionManager
+	oidcMu             sync.RWMutex
+	oidcHandlers       map[string]*oidcHandler
 }
 
 type appUsage struct {
@@ -84,17 +90,28 @@ func NewServer(
 		config.RequestTimeout = 60 * time.Second
 	}
 
+	var signingKey []byte
+	if config.DataPath != "" {
+		var err error
+		signingKey, err = loadOrGenerateSigningKey(config.DataPath)
+		if err != nil {
+			log.Error("failed to load OIDC signing key, sessions will not survive restarts", "error", err)
+		}
+	}
+
 	serv := &Server{
-		Log:           log.With("module", "httpingress"),
-		config:        config,
-		rpcClient:     rpcClient,
-		eac:           eac,
-		ingressClient: ingress.NewClient(log, rpcClient),
-		appClient:     app.NewClient(log, rpcClient),
-		aa:            aa,
-		httpMetrics:   httpMetrics,
-		logWriter:     logWriter,
-		apps:          make(map[string]*appUsage),
+		Log:                log.With("module", "httpingress"),
+		config:             config,
+		rpcClient:          rpcClient,
+		eac:                eac,
+		ingressClient:      ingress.NewClient(log, rpcClient),
+		appClient:          app.NewClient(log, rpcClient),
+		aa:                 aa,
+		httpMetrics:        httpMetrics,
+		logWriter:          logWriter,
+		apps:               make(map[string]*appUsage),
+		oidcSessionManager: oidc.NewSessionManager(false, "", signingKey),
+		oidcHandlers:       make(map[string]*oidcHandler),
 	}
 
 	// Build the timeout handler once at initialization
@@ -396,6 +413,17 @@ func (h *Server) serveHTTPWithMetrics(w http.ResponseWriter, req *http.Request, 
 		targetAppId = route.App
 		routeType = "route"
 		h.Log.Debug("using http route", "host", onlyHost, "app", targetAppId)
+
+		// Check if OIDC authentication is required
+		if !entity.Empty(route.OidcProvider) {
+			// Wrap the request handler with OIDC middleware
+			oidcWrapped := h.oidcMiddleware(route, func(w http.ResponseWriter, r *http.Request) {
+				// Continue with normal request handling after auth
+				h.serveAuthenticatedRequest(w, r, targetAppId, routeType, appName)
+			})
+			oidcWrapped(w, req)
+			return
+		}
 	} else {
 		// No route found, try to find a default route
 		h.Log.Debug("no http route found, checking for default route", "host", onlyHost)
@@ -417,6 +445,30 @@ func (h *Server) serveHTTPWithMetrics(w http.ResponseWriter, req *http.Request, 
 		targetAppId = defaultRoute.App
 		routeType = "default"
 		h.Log.Debug("using default route", "host", onlyHost, "app", targetAppId)
+
+		// Check if OIDC authentication is required for default route
+		if !entity.Empty(defaultRoute.OidcProvider) {
+			// Update route reference
+			route = defaultRoute
+			// Wrap with OIDC middleware
+			oidcWrapped := h.oidcMiddleware(route, func(w http.ResponseWriter, r *http.Request) {
+				h.serveAuthenticatedRequest(w, r, targetAppId, routeType, appName)
+			})
+			oidcWrapped(w, req)
+			return
+		}
+	}
+
+	// Continue with normal request handling
+	h.serveAuthenticatedRequest(w, req, targetAppId, routeType, appName)
+}
+
+// serveAuthenticatedRequest handles the request after authentication (if any)
+func (h *Server) serveAuthenticatedRequest(w http.ResponseWriter, req *http.Request, targetAppId entity.Id, routeType string, appName *string) {
+	ctx := req.Context()
+	onlyHost, _, err := net.SplitHostPort(req.Host)
+	if err != nil {
+		onlyHost = req.Host
 	}
 
 	// Get app details first to have the name for metrics

@@ -79,6 +79,7 @@ type Row []string
 type Table struct {
 	columns []Column
 	rows    []Row
+	title   string
 	styles  TableStyles
 }
 
@@ -86,6 +87,7 @@ type Table struct {
 type TableStyles struct {
 	Header lipgloss.Style
 	Cell   lipgloss.Style
+	Title  lipgloss.Style
 }
 
 // DefaultTableStyles returns the default styling for tables
@@ -96,7 +98,8 @@ func DefaultTableStyles() TableStyles {
 			Underline(true).
 			UnderlineSpaces(true).
 			Foreground(lipgloss.Color("220")),
-		Cell: lipgloss.NewStyle(),
+		Cell:  lipgloss.NewStyle(),
+		Title: lipgloss.NewStyle().Bold(true),
 	}
 }
 
@@ -114,6 +117,13 @@ func WithColumns(cols []Column) TableOption {
 func WithRows(rows []Row) TableOption {
 	return func(t *Table) {
 		t.rows = rows
+	}
+}
+
+// WithTableTitle sets a title displayed above the table header
+func WithTableTitle(title string) TableOption {
+	return func(t *Table) {
+		t.title = title
 	}
 }
 
@@ -275,10 +285,12 @@ func (t *Table) Render() string {
 
 	var lines []string
 
-	// Render header
+	if t.title != "" {
+		lines = append(lines, t.styles.Title.Render(t.title))
+	}
+
 	lines = append(lines, t.renderHeader())
 
-	// Render rows
 	for _, row := range t.rows {
 		lines = append(lines, t.renderRow(row))
 	}

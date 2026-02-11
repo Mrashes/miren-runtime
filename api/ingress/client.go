@@ -34,6 +34,11 @@ func NewClient(log *slog.Logger, client rpc.Client) *Client {
 	}
 }
 
+// GetEntityStore returns the underlying entity store
+func (c *Client) GetEntityStore() *entityserver.Client {
+	return c.ec
+}
+
 // Lookup finds an http_route by hostname, returns nil if not found
 func (c *Client) Lookup(ctx context.Context, host string) (*ingress_v1alpha.HttpRoute, error) {
 	ia := entity.String(ingress_v1alpha.HttpRouteHostId, strings.ToLower(host))
@@ -193,4 +198,142 @@ func (c *Client) DeleteByHost(ctx context.Context, host string) error {
 	}
 
 	return nil
+}
+
+// CreateOrUpdateOIDCProvider creates or updates an OIDC provider
+func (c *Client) CreateOrUpdateOIDCProvider(ctx context.Context, provider *ingress_v1alpha.OidcProvider) (*ingress_v1alpha.OidcProvider, error) {
+	if provider.Name == "" {
+		return nil, fmt.Errorf("provider name is required")
+	}
+
+	_, err := c.ec.CreateOrUpdate(ctx, provider.Name, provider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create/update OIDC provider: %w", err)
+	}
+
+	return provider, nil
+}
+
+// GetOIDCProvider looks up an OIDC provider by name
+func (c *Client) GetOIDCProvider(ctx context.Context, name string) (*ingress_v1alpha.OidcProvider, error) {
+	ia := entity.String(ingress_v1alpha.OidcProviderNameId, name)
+
+	var provider ingress_v1alpha.OidcProvider
+	err := c.ec.OneAtIndex(ctx, ia, &provider)
+	if err != nil {
+		if errors.Is(err, cond.ErrNotFound{}) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to lookup OIDC provider %s: %w", name, err)
+	}
+
+	return &provider, nil
+}
+
+// ListOIDCProviders returns all OIDC providers
+func (c *Client) ListOIDCProviders(ctx context.Context) ([]*ingress_v1alpha.OidcProvider, error) {
+	kindRes, err := c.eac.LookupKind(ctx, "oidc_provider")
+	if err != nil {
+		return nil, fmt.Errorf("failed to lookup oidc_provider kind: %w", err)
+	}
+
+	res, err := c.eac.List(ctx, kindRes.Attr())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list OIDC providers: %w", err)
+	}
+
+	var providers []*ingress_v1alpha.OidcProvider
+	for _, e := range res.Values() {
+		var provider ingress_v1alpha.OidcProvider
+		provider.Decode(e.Entity())
+		providers = append(providers, &provider)
+	}
+
+	return providers, nil
+}
+
+// DeleteOIDCProvider deletes an OIDC provider by name
+func (c *Client) DeleteOIDCProvider(ctx context.Context, name string) error {
+	provider, err := c.GetOIDCProvider(ctx, name)
+	if err != nil {
+		return err
+	}
+
+	if provider == nil {
+		return fmt.Errorf("OIDC provider not found: %s", name)
+	}
+
+	if err := c.ec.Delete(ctx, provider.ID); err != nil {
+		return fmt.Errorf("failed to delete OIDC provider: %w", err)
+	}
+
+	return nil
+}
+
+// AttachOIDCProvider associates an OIDC provider with a route and sets claim mappings
+func (c *Client) AttachOIDCProvider(ctx context.Context, host string, providerName string, claimMappings []ingress_v1alpha.ClaimMappings) (*ingress_v1alpha.HttpRoute, error) {
+	route, err := c.Lookup(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+
+	if route == nil {
+		return nil, fmt.Errorf("route not found: %s", host)
+	}
+
+	return c.AttachOIDCProviderToRoute(ctx, route, providerName, claimMappings)
+}
+
+// AttachOIDCProviderToRoute associates an OIDC provider with an already-resolved route
+func (c *Client) AttachOIDCProviderToRoute(ctx context.Context, route *ingress_v1alpha.HttpRoute, providerName string, claimMappings []ingress_v1alpha.ClaimMappings) (*ingress_v1alpha.HttpRoute, error) {
+	// Look up provider
+	provider, err := c.GetOIDCProvider(ctx, providerName)
+	if err != nil {
+		return nil, err
+	}
+
+	if provider == nil {
+		return nil, fmt.Errorf("OIDC provider not found: %s", providerName)
+	}
+
+	// Update route with provider reference and claim mappings
+	route.OidcProvider = provider.ID
+	route.ClaimMappings = claimMappings
+
+	// Update the route
+	_, err = c.ec.CreateOrUpdate(ctx, string(route.ID), route)
+	if err != nil {
+		return nil, fmt.Errorf("failed to attach OIDC provider to route: %w", err)
+	}
+
+	return route, nil
+}
+
+// DetachOIDCProvider removes OIDC provider association from a route
+func (c *Client) DetachOIDCProvider(ctx context.Context, host string) (*ingress_v1alpha.HttpRoute, error) {
+	route, err := c.Lookup(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+
+	if route == nil {
+		return nil, fmt.Errorf("route not found: %s", host)
+	}
+
+	return c.DetachOIDCProviderFromRoute(ctx, route)
+}
+
+// DetachOIDCProviderFromRoute removes OIDC provider association from an already-resolved route
+func (c *Client) DetachOIDCProviderFromRoute(ctx context.Context, route *ingress_v1alpha.HttpRoute) (*ingress_v1alpha.HttpRoute, error) {
+	// Clear provider reference and claim mappings
+	route.OidcProvider = ""
+	route.ClaimMappings = nil
+
+	// Update the route
+	_, err := c.ec.CreateOrUpdate(ctx, string(route.ID), route)
+	if err != nil {
+		return nil, fmt.Errorf("failed to detach OIDC provider from route: %w", err)
+	}
+
+	return route, nil
 }
