@@ -1021,7 +1021,7 @@ func (c *SandboxController) updateServices(
 		var srv network_v1alpha.Service
 		srv.Decode(ent.Entity())
 
-		if !srv.Match.Equal(md.Labels) {
+		if !srv.Match.SubsetOf(md.Labels) {
 			c.Log.Debug("skipping service, labels do not match", "service", srv.ID, "labels", srv.Match, "entity", md.Labels)
 			continue
 		}
@@ -2302,6 +2302,13 @@ func (c *SandboxController) stopSandbox(ctx context.Context, id entity.Id) error
 		c.Log.Error("failed to remove monitoring metrics", "id", id, "error", err)
 	}
 
+	// Release disk leases early so replacement sandboxes can acquire them
+	// while we wait for container shutdown
+	if err := c.releaseDiskLeases(ctx, id); err != nil {
+		c.Log.Error("failed to release disk leases", "id", id, "error", err)
+		// Continue with cleanup even if this fails
+	}
+
 	// Destroy subcontainers - this will discover them from containerd
 	c.Log.Debug("destroying subcontainers", "id", id)
 	err = c.destroySubContainers(ctx, id)
@@ -2348,12 +2355,6 @@ func (c *SandboxController) stopSandbox(ctx context.Context, id entity.Id) error
 		}
 
 		c.Log.Info("container stopped", "id", id)
-	}
-
-	// Release disk leases owned by this sandbox
-	if err := c.releaseDiskLeases(ctx, id); err != nil {
-		c.Log.Error("failed to release disk leases", "id", id, "error", err)
-		// Continue with cleanup even if this fails
 	}
 
 	// Clean up temp directory

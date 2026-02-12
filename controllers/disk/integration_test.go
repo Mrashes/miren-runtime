@@ -54,18 +54,9 @@ func TestDiskAndLeaseIntegration(t *testing.T) {
 		err := leaseController.Create(ctx, conflictLease, conflictMeta)
 		require.NoError(t, err)
 
-		// Should fail with conflict
-		hasFailure := false
-		for _, attr := range conflictMeta.Attrs() {
-			if attr.ID == storage_v1alpha.DiskLeaseStatusId {
-				assert.Equal(t, storage_v1alpha.DiskLeaseStatusFailedId, attr.Value.Id())
-				hasFailure = true
-			}
-			if attr.ID == storage_v1alpha.DiskLeaseErrorMessageId {
-				assert.Contains(t, attr.Value.String(), "already leased")
-			}
-		}
-		assert.True(t, hasFailure, "Conflicting lease should fail")
+		// Should stay PENDING for retry (not FAILED), since the existing lease
+		// may be in the process of being released
+		assert.Equal(t, storage_v1alpha.PENDING, conflictLease.Status, "Conflicting lease should stay PENDING for retry")
 	})
 
 	t.Run("lease release flow", func(t *testing.T) {

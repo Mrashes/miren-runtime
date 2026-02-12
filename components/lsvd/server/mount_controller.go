@@ -232,7 +232,11 @@ func (c *MountController) reconcileMountMounted(ctx context.Context, mount *stor
 	case storage_v1alpha.MNT_ERROR:
 		// Error state, try to recover
 		c.log.Info("mount in error state, attempting recovery", "entity_id", entityId)
-		// Clean up any existing handler before retrying to avoid leaking NBD devices
+		c.cleanupHandler(ctx, entityId)
+		return c.attachAndMount(ctx, mount)
+	case storage_v1alpha.MNT_DETACHED:
+		// Detached but desired mounted — recover by re-attaching from scratch
+		c.log.Info("mount detached but desired mounted, recovering", "entity_id", entityId)
 		c.cleanupHandler(ctx, entityId)
 		return c.attachAndMount(ctx, mount)
 	default:
@@ -596,11 +600,30 @@ func (c *MountController) unmountAndDetach(ctx context.Context, mount *storage_v
 		return nil
 	}
 
-	// Unmount if mounted
+	// Unmount if mounted, but skip the filesystem unmount if another mount
+	// entity is actively using the same path (e.g., during rapid sandbox
+	// replacement where two mount entities reference the same disk/volume).
 	if mountState.Mounted {
-		if err := c.ops.Unmount(mountState.MountPath); err != nil {
-			c.log.Warn("failed to unmount", "error", err)
-			return fmt.Errorf("failed to unmount: %w", err)
+		skipUnmount := false
+		for _, otherMount := range c.state.ListMounts() {
+			if otherMount.EntityId != entityId && otherMount.MountPath == mountState.MountPath && otherMount.Mounted {
+				c.log.Info("skipping unmount, path in use by another mount",
+					"entity_id", entityId,
+					"other_entity_id", otherMount.EntityId,
+					"mount_path", mountState.MountPath,
+				)
+				skipUnmount = true
+				break
+			}
+		}
+
+		if !skipUnmount {
+			c.log.Debug("unmounting filesystem", "entity_id", entityId, "mount_path", mountState.MountPath)
+			if err := c.ops.Unmount(mountState.MountPath); err != nil {
+				c.log.Warn("failed to unmount", "error", err)
+				return fmt.Errorf("failed to unmount: %w", err)
+			}
+			c.log.Debug("filesystem unmounted", "entity_id", entityId, "mount_path", mountState.MountPath)
 		}
 		mountState.Mounted = false
 		c.state.SetMount(entityId, mountState)
@@ -622,19 +645,27 @@ func (c *MountController) unmountAndDetach(ctx context.Context, mount *storage_v
 	}
 	c.handlersMu.Unlock()
 
-	// Wait for handler goroutine to exit before closing disk
+	// Disconnect NBD device BEFORE waiting for handler — this unblocks
+	// HandleNBD's read loop (HandleTransport polls with 500ms deadlines
+	// and only exits when the connection breaks).
+	if mountState.DevicePath != "" {
+		if err := c.ops.NBDDisconnect(mountState.NbdIndex); err != nil {
+			c.log.Warn("failed to disconnect NBD", "error", err)
+		}
+	}
+
+	// Now safe to wait for handler goroutine to exit
 	if hasHandler && h.done != nil {
+		c.log.Info("waiting for NBD handler to exit", "entity_id", entityId)
 		<-h.done
+		c.log.Info("NBD handler exited", "entity_id", entityId)
 	}
 	if hasHandler && h.disk != nil {
 		h.disk.Close(ctx)
 	}
 
-	// Disconnect NBD device and remove device node
+	// Remove device node
 	if mountState.DevicePath != "" {
-		if err := c.ops.NBDDisconnect(mountState.NbdIndex); err != nil {
-			c.log.Warn("failed to disconnect NBD", "error", err)
-		}
 		c.ops.RemoveFile(mountState.DevicePath)
 	}
 
@@ -684,7 +715,16 @@ func (c *MountController) cleanupHandler(ctx context.Context, entityId string) {
 	}
 	c.handlersMu.Unlock()
 
-	// Wait for handler goroutine to exit before closing disk
+	// Disconnect NBD device BEFORE waiting for handler — this unblocks
+	// HandleNBD's read loop.
+	mountState := c.state.GetMount(entityId)
+	if mountState != nil && mountState.DevicePath != "" {
+		c.log.Info("disconnecting stale NBD device", "entity_id", entityId, "nbd_index", mountState.NbdIndex)
+		_ = c.ops.NBDDisconnect(mountState.NbdIndex)
+		c.ops.RemoveFile(mountState.DevicePath)
+	}
+
+	// Now safe to wait for handler goroutine to exit
 	if ok && h.done != nil {
 		c.log.Info("waiting for NBD handler to exit", "entity_id", entityId)
 		<-h.done
@@ -693,14 +733,6 @@ func (c *MountController) cleanupHandler(ctx context.Context, entityId string) {
 	// Now safe to close the disk
 	if ok && h.disk != nil {
 		h.disk.Close(ctx)
-	}
-
-	// Also clean up the NBD device if we have mount state with an assigned device
-	mountState := c.state.GetMount(entityId)
-	if mountState != nil && mountState.DevicePath != "" {
-		c.log.Info("disconnecting stale NBD device", "entity_id", entityId, "nbd_index", mountState.NbdIndex)
-		_ = c.ops.NBDDisconnect(mountState.NbdIndex)
-		c.ops.RemoveFile(mountState.DevicePath)
 	}
 
 	// Release lease if present
@@ -728,7 +760,11 @@ func (c *MountController) runNBDHandler(ctx context.Context, entityId string, di
 	defer conn.Close()
 
 	if err := disk.HandleNBD(ctx, conn, clientFile); err != nil {
-		c.log.Warn("NBD handler error", "entity_id", entityId, "error", err)
+		if ctx.Err() != nil {
+			c.log.Debug("NBD handler stopped due to context cancellation", "entity_id", entityId)
+		} else {
+			c.log.Warn("NBD handler error", "entity_id", entityId, "error", err)
+		}
 	}
 }
 
@@ -759,6 +795,16 @@ func (c *MountController) ReconcileWithSystem(ctx context.Context) error {
 		c.handlersMu.RUnlock()
 
 		if !hasHandler {
+			// Before reconnecting, check whether this mount is being unmounted.
+			// There is a race window where unmountAndDetach has deleted the handler
+			// from the map but hasn't yet cleaned up local state. Reconnecting
+			// in that window wastes time and can leak NBD devices.
+			if c.eac != nil {
+				if skip := c.shouldSkipReconnect(ctx, entityId); skip {
+					continue
+				}
+			}
+
 			c.log.Info("no NBD handler found, reconnecting",
 				"entity_id", entityId,
 				"nbd_index", mountState.NbdIndex,
@@ -832,17 +878,18 @@ func (c *MountController) reconnectNBD(ctx context.Context, entityId string, mou
 	}
 	c.handlersMu.Unlock()
 
-	// Wait for handler goroutine to exit before closing disk
+	// Disconnect old NBD device BEFORE waiting for handler — this unblocks
+	// HandleNBD's read loop.
+	if mountState.DevicePath != "" {
+		_ = c.ops.NBDDisconnect(mountState.NbdIndex)
+	}
+
+	// Now safe to wait for handler goroutine to exit
 	if hasHandler && h.done != nil {
 		<-h.done
 	}
 	if hasHandler && h.disk != nil {
 		h.disk.Close(context.Background())
-	}
-
-	// Disconnect old NBD device if still partially connected
-	if mountState.DevicePath != "" {
-		_ = c.ops.NBDDisconnect(mountState.NbdIndex)
 	}
 
 	// Open LSVD disk with stored lease nonce
@@ -927,6 +974,32 @@ func (c *MountController) reconnectNBD(ctx context.Context, entityId string, mou
 	)
 
 	return nil
+}
+
+// shouldSkipReconnect checks the entity store to determine if a mount should
+// not be reconnected. Returns true if the entity doesn't exist (already cleaned
+// up) or has desired_state=MNT_WANT_UNMOUNTED (being torn down).
+func (c *MountController) shouldSkipReconnect(ctx context.Context, entityId string) bool {
+	resp, err := c.eac.Get(ctx, entityId)
+	if err != nil {
+		c.log.Info("mount entity not found, skipping reconnect",
+			"entity_id", entityId,
+			"error", err,
+		)
+		return true
+	}
+
+	var mount storage_v1alpha.LsvdMount
+	mount.Decode(resp.Entity().Entity())
+
+	if mount.DesiredState == storage_v1alpha.MNT_WANT_UNMOUNTED {
+		c.log.Info("mount is being unmounted, skipping reconnect",
+			"entity_id", entityId,
+		)
+		return true
+	}
+
+	return false
 }
 
 // remountFilesystem remounts the filesystem after recovery

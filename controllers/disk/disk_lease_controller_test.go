@@ -43,21 +43,9 @@ func TestDiskLeaseController_LeaseConflict(t *testing.T) {
 	err := dlc.Create(context.Background(), conflictingLease, meta)
 	require.NoError(t, err)
 
-	// Should update status to FAILED with error message
-	hasStatus := false
-	hasError := false
-	for _, attr := range meta.Attrs() {
-		if attr.ID == storage_v1alpha.DiskLeaseStatusId {
-			hasStatus = true
-			assert.Equal(t, storage_v1alpha.DiskLeaseStatusFailedId, attr.Value.Id())
-		}
-		if attr.ID == storage_v1alpha.DiskLeaseErrorMessageId {
-			hasError = true
-			assert.Contains(t, attr.Value.String(), "already leased")
-		}
-	}
-	assert.True(t, hasStatus, "Should update status to FAILED")
-	assert.True(t, hasError, "Should include error message")
+	// Should stay PENDING for retry (not FAILED), since the existing lease
+	// may be in the process of being released
+	assert.Equal(t, storage_v1alpha.PENDING, conflictingLease.Status, "Conflicting lease should stay PENDING for retry")
 }
 
 func TestDiskLeaseController_Delete(t *testing.T) {

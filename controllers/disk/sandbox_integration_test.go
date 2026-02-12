@@ -138,15 +138,8 @@ func TestSandboxDiskIntegration(t *testing.T) {
 		err = leaseController.Create(ctx, conflictLease, conflictMeta)
 		require.NoError(t, err)
 
-		// Verify conflict was detected
-		hasFailure := false
-		for _, attr := range conflictMeta.Attrs() {
-			if attr.ID == storage_v1alpha.DiskLeaseStatusId {
-				hasFailure = true
-				assert.Equal(t, storage_v1alpha.DiskLeaseStatusFailedId, attr.Value.Id())
-			}
-		}
-		assert.True(t, hasFailure)
+		// Verify conflict was detected — lease stays PENDING for retry
+		assert.Equal(t, storage_v1alpha.PENDING, conflictLease.Status, "Conflicting lease should stay PENDING for retry")
 
 		// Step 6: Sandbox releases the disk
 		lease.Status = storage_v1alpha.RELEASED

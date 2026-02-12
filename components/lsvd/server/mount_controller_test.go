@@ -611,8 +611,23 @@ func TestMountControllerReconcileWithSystemNBDDisconnected(t *testing.T) {
 
 	mc := newTestMountController(log, dataPath, nodeId, es.EAC, state, ops)
 
+	// Create entity in store with desired_state=MNT_WANT_MOUNTED so that
+	// ReconcileWithSystem knows this mount should be reconnected (not being torn down).
+	mount := &storage_v1alpha.LsvdMount{
+		DesiredState: storage_v1alpha.MNT_WANT_MOUNTED,
+		ActualState:  storage_v1alpha.MNT_MOUNTED,
+		NodeId:       entity.Id("node/" + nodeId),
+		VolumeId:     "lsvd_volume/vol-sys",
+		MountPath:    "/mnt/sys",
+	}
+	_, err := es.EAC.Create(ctx, entity.New(
+		entity.DBId, entity.Id("lsvd_mount/mnt-sys"),
+		mount.Encode,
+	).Attrs())
+	require.NoError(t, err)
+
 	// Run system reconciliation
-	err := mc.ReconcileWithSystem(ctx)
+	err = mc.ReconcileWithSystem(ctx)
 	require.NoError(t, err)
 
 	// Verify reconnection was attempted (no handler exists, so reconnect triggers)
