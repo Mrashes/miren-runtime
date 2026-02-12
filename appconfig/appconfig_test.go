@@ -678,13 +678,13 @@ func TestParseAppConfigWithAddons(t *testing.T) {
 name = "my-app"
 
 [addons.miren-postgresql]
-variant = "small-local"
+variant = "small"
 `
 		ac, err := Parse([]byte(config))
 		require.NoError(t, err)
 		require.NotNil(t, ac.Addons)
 		require.Contains(t, ac.Addons, "miren-postgresql")
-		assert.Equal(t, "small-local", ac.Addons["miren-postgresql"].Variant)
+		assert.Equal(t, "small", ac.Addons["miren-postgresql"].Variant)
 	})
 
 	t.Run("parse multiple addons", func(t *testing.T) {
@@ -692,7 +692,7 @@ variant = "small-local"
 name = "my-app"
 
 [addons.miren-postgresql]
-variant = "small-local"
+variant = "small"
 
 [addons.miren-redis]
 variant = "shared"
@@ -700,7 +700,7 @@ variant = "shared"
 		ac, err := Parse([]byte(config))
 		require.NoError(t, err)
 		require.Len(t, ac.Addons, 2)
-		assert.Equal(t, "small-local", ac.Addons["miren-postgresql"].Variant)
+		assert.Equal(t, "small", ac.Addons["miren-postgresql"].Variant)
 		assert.Equal(t, "shared", ac.Addons["miren-redis"].Variant)
 	})
 

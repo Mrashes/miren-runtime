@@ -11,25 +11,21 @@ func TestDefinitionHasAllVariants(t *testing.T) {
 
 	assert.Equal(t, AddonName, def.Name)
 	assert.Equal(t, "Miren PostgreSQL", def.DisplayName)
-	assert.Equal(t, "small-local", def.DefaultVariant)
-	assert.Len(t, def.Variants, 4)
+	assert.Equal(t, "small", def.DefaultVariant)
+	assert.Len(t, def.Variants, 2)
 
 	variantNames := make(map[string]bool)
 	for _, v := range def.Variants {
 		variantNames[v.Name] = true
 	}
 
-	assert.True(t, variantNames["small-local"])
-	assert.True(t, variantNames["medium-local"])
-	assert.True(t, variantNames["large-local"])
+	assert.True(t, variantNames["small"])
 	assert.True(t, variantNames["shared"])
 }
 
 func TestIsSharedVariant(t *testing.T) {
 	assert.True(t, IsSharedVariant("shared"))
-	assert.False(t, IsSharedVariant("small-local"))
-	assert.False(t, IsSharedVariant("medium-local"))
-	assert.False(t, IsSharedVariant("large-local"))
+	assert.False(t, IsSharedVariant("small"))
 }
 
 func TestSanitizeIdentifier(t *testing.T) {
@@ -98,8 +94,6 @@ func TestVariantConfigContainsExpectedKeys(t *testing.T) {
 			if variant.Name == "shared" {
 				assert.Equal(t, "true", variant.Config[ConfigShared])
 			} else {
-				assert.NotEmpty(t, variant.Config[ConfigCPU])
-				assert.NotEmpty(t, variant.Config[ConfigMemory])
 				assert.NotEmpty(t, variant.Config[ConfigStorage])
 				assert.Equal(t, "false", variant.Config[ConfigShared])
 			}

@@ -46,9 +46,9 @@ func setupAddonsTest(t *testing.T) (context.Context, *app_v1alpha.AddonsClient, 
 	registry.Register("miren-postgresql", &mockProvider{}, addon.AddonDefinition{
 		Name:        "miren-postgresql",
 		DisplayName: "PostgreSQL",
-		DefaultVariant: "small-local",
+		DefaultVariant: "small",
 		Variants: []addon.VariantDefinition{
-			{Name: "small-local", Description: "Small local"},
+			{Name: "small", Description: "Small"},
 			{Name: "shared", Description: "Shared"},
 		},
 	})
@@ -74,7 +74,7 @@ func TestAddonsCreateInstance(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create addon instance
-	result, err := client.CreateInstance(ctx, "test", "miren-postgresql", "small-local", "myapp")
+	result, err := client.CreateInstance(ctx, "test", "miren-postgresql", "small", "myapp")
 	require.NoError(t, err)
 	assert.NotEmpty(t, result.Id())
 }
@@ -100,11 +100,11 @@ func TestAddonsCreateInstanceDuplicatePrevented(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create first instance
-	_, err = client.CreateInstance(ctx, "test", "miren-postgresql", "small-local", "myapp")
+	_, err = client.CreateInstance(ctx, "test", "miren-postgresql", "small", "myapp")
 	require.NoError(t, err)
 
 	// Attempt duplicate
-	_, err = client.CreateInstance(ctx, "test2", "miren-postgresql", "small-local", "myapp")
+	_, err = client.CreateInstance(ctx, "test2", "miren-postgresql", "small", "myapp")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already attached")
 }
@@ -134,7 +134,7 @@ func TestAddonsListInstances(t *testing.T) {
 	assert.Empty(t, result.Addons())
 
 	// Create an addon instance
-	_, err = client.CreateInstance(ctx, "test", "miren-postgresql", "small-local", "myapp")
+	_, err = client.CreateInstance(ctx, "test", "miren-postgresql", "small", "myapp")
 	require.NoError(t, err)
 
 	// List again
@@ -142,7 +142,7 @@ func TestAddonsListInstances(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, result.Addons(), 1)
 	assert.Equal(t, "miren-postgresql", result.Addons()[0].Name())
-	assert.Equal(t, "small-local", result.Addons()[0].Variant())
+	assert.Equal(t, "small", result.Addons()[0].Variant())
 }
 
 func TestAddonsDeleteInstance(t *testing.T) {
@@ -153,7 +153,7 @@ func TestAddonsDeleteInstance(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create an addon instance
-	createResult, err := client.CreateInstance(ctx, "test", "miren-postgresql", "small-local", "myapp")
+	createResult, err := client.CreateInstance(ctx, "test", "miren-postgresql", "small", "myapp")
 	require.NoError(t, err)
 
 	// Delete it

@@ -90,7 +90,7 @@ func (r *Registry) EnsureEntities(ctx context.Context, ec *entityserver.Client) 
 	return nil
 }
 
-// ResolveAddonAndVariant parses a spec like "miren-postgresql:small-local" into
+// ResolveAddonAndVariant parses a spec like "miren-postgresql:small" into
 // addon name and variant name. If no variant is specified, the default variant is used.
 func (r *Registry) ResolveAddonAndVariant(spec string) (addonName, variantName string, err error) {
 	parts := strings.SplitN(spec, ":", 2)

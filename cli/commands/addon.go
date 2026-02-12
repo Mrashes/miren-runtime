@@ -185,7 +185,7 @@ func AddonVariants(ctx *Context, opts struct {
 
 func AddonCreate(ctx *Context, opts struct {
 	AppCentric
-	Spec string `position:"0" usage:"Addon spec (e.g., miren-postgresql:small-local)" required:"true"`
+	Spec string `position:"0" usage:"Addon spec (e.g., miren-postgresql:small)" required:"true"`
 }) error {
 	cl, err := ctx.RPCClient("dev.miren.runtime/addons")
 	if err != nil {
