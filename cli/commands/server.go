@@ -22,6 +22,7 @@ import (
 	containerd "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/pkg/namespaces"
 	"github.com/go-logr/logr"
+	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/errgroup"
 	"k8s.io/klog/v2"
 	"miren.dev/runtime/api/entityserver"
@@ -73,23 +74,6 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 
 	versionInfo := version.GetInfo()
 	ctx.UILog.Info("starting miren server", "version", versionInfo.Version, "commit", versionInfo.Commit)
-
-	// Auto-enable OTel tracing when the standard OTLP endpoint env var is set
-	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
-		tracingShutdown, err := rpc.SetupTracing(sub)
-		if err != nil {
-			ctx.Log.Error("failed to set up tracing", "error", err)
-			return err
-		}
-		defer func() {
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := tracingShutdown(shutdownCtx); err != nil {
-				ctx.Log.Error("failed to shut down tracing", "error", err)
-			}
-		}()
-		ctx.Log.Info("OTel tracing enabled", "endpoint", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
-	}
 
 	switch cfg.GetMode() {
 	case "standalone":
@@ -586,6 +570,34 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 			"expires-at", reg.ExpiresAt)
 	} else {
 		ctx.Log.Info("no cluster registration found")
+	}
+
+	// Auto-enable OTel tracing when the standard OTLP endpoint env var is set.
+	// Placed after registration loading so we can identify the cluster in traces.
+	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
+		// Determine cluster identity: registration name → first DNS name → config cluster name
+		clusterName := cfg.Server.GetConfigClusterName()
+		if cloudAuthConfig.Enabled {
+			clusterName = cloudAuthConfig.Tags["cluster_name"]
+		} else if len(cfg.TLS.AdditionalNames) > 0 {
+			clusterName = cfg.TLS.AdditionalNames[0]
+		}
+
+		tracingShutdown, err := rpc.SetupTracing(sub,
+			attribute.String("miren.cluster.name", clusterName),
+		)
+		if err != nil {
+			ctx.Log.Error("failed to set up tracing", "error", err)
+			return err
+		}
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := tracingShutdown(shutdownCtx); err != nil {
+				ctx.Log.Error("failed to shut down tracing", "error", err)
+			}
+		}()
+		ctx.Log.Info("OTel tracing enabled", "endpoint", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), "cluster", clusterName)
 	}
 
 	srvaddr := cfg.Server.GetAddress()

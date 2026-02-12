@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
@@ -80,15 +81,17 @@ func SetupOTelSDK(ctx context.Context) (shutdown func(context.Context) error, er
 // SetupTracing configures OpenTelemetry tracing with an OTLP HTTP exporter.
 // The exporter reads standard OTel env vars (OTEL_EXPORTER_OTLP_ENDPOINT,
 // OTEL_EXPORTER_OTLP_HEADERS, etc.) so no explicit configuration is needed.
+// Extra resource attributes (e.g. cluster identity) can be passed in.
 // Returns a shutdown function that flushes pending spans.
-func SetupTracing(ctx context.Context) (shutdown func(context.Context) error, err error) {
+func SetupTracing(ctx context.Context, attrs ...attribute.KeyValue) (shutdown func(context.Context) error, err error) {
 	exporter, err := otlptracehttp.New(ctx)
 	if err != nil {
 		return nil, err
 	}
 
+	resAttrs := append([]attribute.KeyValue{semconv.ServiceName("miren")}, attrs...)
 	res, err := sdkresource.New(ctx,
-		sdkresource.WithAttributes(semconv.ServiceName("miren")),
+		sdkresource.WithAttributes(resAttrs...),
 	)
 	if err != nil {
 		return nil, err
