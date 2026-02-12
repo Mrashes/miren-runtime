@@ -105,10 +105,14 @@ func RunNested(ctx context.Context, sagaName string, opts ...NestedOption) (*Nes
 func (e *Executor) createChildExecution(ctx context.Context, def *Definition, inputs map[string]any, id, parentExecID string) (*Execution, error) {
 	exec, err := e.storage.Get(ctx, id)
 	if err == nil {
-		// Execution already exists (idempotent retry) — validate it matches the expected definition.
+		// Execution already exists (idempotent retry) — validate it matches the expected definition and parent.
 		if exec.DefinitionName != def.Name || exec.DefinitionVersion != def.Version {
 			return nil, fmt.Errorf("existing execution %s has definition %s@%d, expected %s@%d",
 				id, exec.DefinitionName, exec.DefinitionVersion, def.Name, def.Version)
+		}
+		if exec.ParentExecutionID != parentExecID {
+			return nil, fmt.Errorf("execution %s already exists for parent %s, expected parent %s",
+				id, exec.ParentExecutionID, parentExecID)
 		}
 		return exec, nil
 	}
