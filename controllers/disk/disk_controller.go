@@ -62,6 +62,13 @@ func NewDiskController(log *slog.Logger, eac *entityserver_v1alpha.EntityAccessC
 	}
 }
 
+// ForceLSVDMode forces the controller to use lsvd_volume entities instead of
+// directory mode, regardless of NBD availability. This is used by integration
+// tests where the LSVD volume/mount ops are mocked.
+func (d *DiskController) ForceLSVDMode() {
+	d.directoryMode = false
+}
+
 // Init initializes the disk controller
 func (d *DiskController) Init(ctx context.Context) error {
 	// Check if NBD is available
@@ -215,7 +222,7 @@ func (d *DiskController) handleProvisioning(ctx context.Context, disk *storage_v
 	// Build entity with id and encoded attributes
 	volumeId := idgen.GenNS("lsvd-vol")
 	createAttrs := entity.New(
-		entity.DBId, storage_v1alpha.KindLsvdVolume.String()+"/"+volumeId,
+		entity.DBId, entity.Id(storage_v1alpha.KindLsvdVolume.String()+"/"+volumeId),
 		lsvdVolume.Encode,
 	).Attrs()
 
