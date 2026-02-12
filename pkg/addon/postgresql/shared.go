@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"miren.dev/runtime/api/addon/addon_v1alpha"
+	"miren.dev/runtime/api/compute/compute_v1alpha"
 	"miren.dev/runtime/pkg/addon"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/entity/types"
@@ -18,11 +19,240 @@ const (
 	poolReadyTimeout = 5 * time.Minute
 )
 
+// --- EnsureSharedServerSaga Actions ---
+//
+// When no active shared server exists, this saga creates one:
+//   step 1: Create PostgresServer entity       → compensate: Delete entity
+//   step 2: Create SandboxPool                 → compensate: Delete pool
+//   step 3: Wait for pool sandbox to reach RUNNING
+//   step 4: Create Service                     → compensate: Delete service
+//   step 5: Wait for service address
+//   step 6: Activate PostgresServer entity (set refs, status: active)
+//
+// The saga captures its output into ensureServerCapture so the calling
+// action can return ServerID, SuperuserPassword, and ServiceHost.
+
+type CreateSharedServerEntityIn struct {
+	SuperuserPassword string
+}
+
+type CreateSharedServerEntityOut struct {
+	ServerID entity.Id
+}
+
+func CreateSharedServerEntity(ctx context.Context, in CreateSharedServerEntityIn) (CreateSharedServerEntityOut, error) {
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+
+	server := &addon_v1alpha.PostgresServer{
+		AddonName:         AddonName,
+		Variant:           "shared",
+		Status:            "provisioning",
+		AssociationCount:  0,
+		SuperuserPassword: in.SuperuserPassword,
+	}
+
+	serverID, err := fw.EC.Create(ctx, sharedServerName, server)
+	if err != nil {
+		return CreateSharedServerEntityOut{}, fmt.Errorf("creating shared server entity: %w", err)
+	}
+
+	return CreateSharedServerEntityOut{ServerID: serverID}, nil
+}
+
+func UndoCreateSharedServerEntity(ctx context.Context, in CreateSharedServerEntityIn, out CreateSharedServerEntityOut) error {
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+	return fw.EC.Delete(ctx, out.ServerID)
+}
+
+type CreateSharedPoolIn struct {
+	SuperuserPassword string
+}
+
+type CreateSharedPoolOut struct {
+	PoolID entity.Id
+}
+
+func CreateSharedPool(ctx context.Context, in CreateSharedPoolIn) (CreateSharedPoolOut, error) {
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+
+	labels := types.LabelSet(
+		"addon", AddonName,
+		"server", sharedServerName,
+		"shared", "true",
+	)
+
+	mountPath := "/var/lib/postgresql/data"
+
+	env := []string{
+		"POSTGRES_PASSWORD=" + in.SuperuserPassword,
+		"PGDATA=" + mountPath + "/pgdata",
+	}
+
+	poolID, err := fw.CreateSandboxPool(ctx, addon.CreateSandboxPoolSpec{
+		Name:             sharedServerName,
+		Image:            DefaultImage,
+		Env:              env,
+		Ports:            postgresContainerPorts(),
+		DesiredInstances: 1,
+		Labels:           labels,
+		SandboxPrefix:    "pg-shared",
+		Mounts: []compute_v1alpha.SandboxSpecContainerMount{
+			{Source: "pgdata", Destination: mountPath},
+		},
+		Volumes: []compute_v1alpha.SandboxSpecVolume{
+			{
+				Name:         "pgdata",
+				Provider:     "miren",
+				DiskName:     "pg-shared-data",
+				MountPath:    mountPath,
+				SizeGb:       sharedDefaultStorageGb,
+				Filesystem:   "ext4",
+				LeaseTimeout: "5m",
+			},
+		},
+	})
+	if err != nil {
+		return CreateSharedPoolOut{}, fmt.Errorf("creating shared pool: %w", err)
+	}
+
+	return CreateSharedPoolOut{PoolID: poolID}, nil
+}
+
+func UndoCreateSharedPool(ctx context.Context, in CreateSharedPoolIn, out CreateSharedPoolOut) error {
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+	return fw.DeleteSandboxPool(ctx, out.PoolID)
+}
+
+type WaitForSharedPoolIn struct {
+	PoolID entity.Id
+}
+
+type WaitForSharedPoolOut struct {
+	PoolReady bool
+}
+
+func WaitForSharedPool(ctx context.Context, in WaitForSharedPoolIn) (WaitForSharedPoolOut, error) {
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+
+	if err := fw.WaitForPool(ctx, in.PoolID, poolReadyTimeout); err != nil {
+		return WaitForSharedPoolOut{}, fmt.Errorf("waiting for shared pool: %w", err)
+	}
+
+	return WaitForSharedPoolOut{PoolReady: true}, nil
+}
+
+func UndoWaitForSharedPool(ctx context.Context, in WaitForSharedPoolIn, out WaitForSharedPoolOut) error {
+	return nil
+}
+
+type CreateSharedServiceIn struct{}
+
+type CreateSharedServiceOut struct {
+	ServiceID entity.Id
+}
+
+func CreateSharedService(ctx context.Context, in CreateSharedServiceIn) (CreateSharedServiceOut, error) {
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+
+	labels := types.LabelSet(
+		"addon", AddonName,
+		"server", sharedServerName,
+		"shared", "true",
+	)
+
+	serviceName := sharedServerName + "-postgresql"
+	svcID, err := fw.CreateService(ctx, serviceName, labels, postgresPort)
+	if err != nil {
+		return CreateSharedServiceOut{}, fmt.Errorf("creating shared service: %w", err)
+	}
+
+	return CreateSharedServiceOut{ServiceID: svcID}, nil
+}
+
+func UndoCreateSharedService(ctx context.Context, in CreateSharedServiceIn, out CreateSharedServiceOut) error {
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+	return fw.DeleteService(ctx, out.ServiceID)
+}
+
+type WaitForSharedServiceIn struct {
+	ServiceID entity.Id
+}
+
+type WaitForSharedServiceOut struct {
+	ServiceHost string
+}
+
+func WaitForSharedService(ctx context.Context, in WaitForSharedServiceIn) (WaitForSharedServiceOut, error) {
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+
+	serviceHost, err := fw.WaitForServiceAddress(ctx, in.ServiceID, poolReadyTimeout)
+	if err != nil {
+		return WaitForSharedServiceOut{}, fmt.Errorf("waiting for shared service address: %w", err)
+	}
+
+	return WaitForSharedServiceOut{ServiceHost: serviceHost}, nil
+}
+
+func UndoWaitForSharedService(ctx context.Context, in WaitForSharedServiceIn, out WaitForSharedServiceOut) error {
+	return nil
+}
+
+type ActivateSharedServerIn struct {
+	ServerID          entity.Id
+	PoolID            entity.Id
+	ServiceID         entity.Id
+	SuperuserPassword string
+	ServiceHost       string
+}
+
+type ActivateSharedServerOut struct {
+	Activated bool
+}
+
+func ActivateSharedServer(ctx context.Context, in ActivateSharedServerIn) (ActivateSharedServerOut, error) {
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+
+	server := &addon_v1alpha.PostgresServer{
+		AddonName:         AddonName,
+		Variant:           "shared",
+		Status:            "active",
+		AssociationCount:  0,
+		SuperuserPassword: in.SuperuserPassword,
+		SandboxPool:       in.PoolID,
+		Service:           in.ServiceID,
+	}
+	server.ID = in.ServerID
+
+	if err := fw.EC.Update(ctx, server); err != nil {
+		return ActivateSharedServerOut{}, fmt.Errorf("activating shared server: %w", err)
+	}
+
+	return ActivateSharedServerOut{Activated: true}, nil
+}
+
+func UndoActivateSharedServer(ctx context.Context, in ActivateSharedServerIn, out ActivateSharedServerOut) error {
+	return nil
+}
+
+// RegisterEnsureSharedServerSaga registers the saga that creates the shared
+// PostgreSQL server infrastructure (entity, pool, service).
+func RegisterEnsureSharedServerSaga(registry *saga.Registry, fw *addon.ProviderFramework) error {
+	return saga.Define("ensure-shared-server").
+		Using(fw).
+		Action(CreateSharedServerEntity).Undo(UndoCreateSharedServerEntity).
+		Action(CreateSharedPool).Undo(UndoCreateSharedPool).
+		Action(WaitForSharedPool).Undo(UndoWaitForSharedPool).
+		Action(CreateSharedService).Undo(UndoCreateSharedService).
+		Action(WaitForSharedService).Undo(UndoWaitForSharedService).
+		Action(ActivateSharedServer).Undo(UndoActivateSharedServer).
+		RegisterTo(registry)
+}
+
 // --- Shared Provisioning Saga Actions ---
 
 // Step 1: Find or create the shared PostgresServer.
-// If no active shared server exists, this creates the server entity,
-// sandbox pool, service, and activates it (inline EnsureSharedServerSaga).
+// If no active shared server exists, executes the EnsureSharedServerSaga
+// as a nested saga to create the server entity, sandbox pool, and service.
 
 type FindOrCreateSharedServerIn struct {
 	AppName string
@@ -31,6 +261,7 @@ type FindOrCreateSharedServerIn struct {
 type FindOrCreateSharedServerOut struct {
 	ServerID          entity.Id
 	SuperuserPassword string
+	ServiceHost       string
 }
 
 func FindOrCreateSharedServer(ctx context.Context, in FindOrCreateSharedServerIn) (FindOrCreateSharedServerOut, error) {
@@ -40,91 +271,49 @@ func FindOrCreateSharedServer(ctx context.Context, in FindOrCreateSharedServerIn
 	var server addon_v1alpha.PostgresServer
 	err := fw.EC.Get(ctx, sharedServerName, &server)
 	if err == nil && server.Status == "active" {
+		serviceHost, err := fw.GetServiceAddress(ctx, server.Service)
+		if err != nil {
+			return FindOrCreateSharedServerOut{}, fmt.Errorf("resolving existing shared service address: %w", err)
+		}
+
 		return FindOrCreateSharedServerOut{
 			ServerID:          server.ID,
 			SuperuserPassword: server.SuperuserPassword,
+			ServiceHost:       serviceHost,
 		}, nil
 	}
 
-	// No active shared server exists — run EnsureSharedServerSaga inline.
+	// No active shared server — run the EnsureSharedServerSaga as a nested saga.
 	superuserPassword := idgen.Gen("su")
 
-	newServer := &addon_v1alpha.PostgresServer{
-		AddonName:         AddonName,
-		Plan:              "shared",
-		Status:            "provisioning",
-		AssociationCount:  0,
-		SuperuserPassword: superuserPassword,
-	}
-
-	serverID, err := fw.EC.Create(ctx, sharedServerName, newServer)
-	if err != nil {
-		return FindOrCreateSharedServerOut{}, fmt.Errorf("creating shared server entity: %w", err)
-	}
-
-	// Create sandbox pool
-	labels := types.LabelSet(
-		"addon", AddonName,
-		"server", sharedServerName,
-		"shared", "true",
+	result, err := saga.RunNested(ctx, "ensure-shared-server",
+		saga.WithNestedInput("superuserpassword", superuserPassword),
 	)
-
-	env := []string{
-		"POSTGRES_PASSWORD=" + superuserPassword,
-	}
-
-	poolID, err := fw.CreateSandboxPool(ctx, addon.CreateSandboxPoolSpec{
-		Name:             sharedServerName,
-		Image:            DefaultImage,
-		Env:              env,
-		DesiredInstances: 1,
-		Labels:           labels,
-		SandboxPrefix:    "pg-shared",
-	})
 	if err != nil {
-		_ = fw.EC.Delete(ctx, serverID)
-		return FindOrCreateSharedServerOut{}, fmt.Errorf("creating shared pool: %w", err)
+		return FindOrCreateSharedServerOut{}, fmt.Errorf("ensuring shared server: %w", err)
 	}
 
-	// Wait for pool to be ready
-	if err := fw.WaitForPool(ctx, poolID, poolReadyTimeout); err != nil {
-		_ = fw.DeleteSandboxPool(ctx, poolID)
-		_ = fw.EC.Delete(ctx, serverID)
-		return FindOrCreateSharedServerOut{}, fmt.Errorf("waiting for shared pool: %w", err)
+	var serverID entity.Id
+	if err := result.Get("serverid", &serverID); err != nil {
+		return FindOrCreateSharedServerOut{}, fmt.Errorf("reading server ID from nested result: %w", err)
 	}
 
-	// Create service
-	serviceName := sharedServerName + "-postgresql"
-	svcID, err := fw.CreateService(ctx, serviceName, labels, postgresPort)
-	if err != nil {
-		_ = fw.DeleteSandboxPool(ctx, poolID)
-		_ = fw.EC.Delete(ctx, serverID)
-		return FindOrCreateSharedServerOut{}, fmt.Errorf("creating shared service: %w", err)
-	}
-
-	// Activate the server
-	newServer.SandboxPool = poolID
-	newServer.Service = svcID
-	newServer.Status = "active"
-	newServer.ID = serverID
-
-	if err := fw.EC.Update(ctx, newServer); err != nil {
-		_ = fw.DeleteService(ctx, svcID)
-		_ = fw.DeleteSandboxPool(ctx, poolID)
-		_ = fw.EC.Delete(ctx, serverID)
-		return FindOrCreateSharedServerOut{}, fmt.Errorf("activating shared server: %w", err)
+	var serviceHost string
+	if err := result.Get("servicehost", &serviceHost); err != nil {
+		return FindOrCreateSharedServerOut{}, fmt.Errorf("reading service host from nested result: %w", err)
 	}
 
 	return FindOrCreateSharedServerOut{
 		ServerID:          serverID,
 		SuperuserPassword: superuserPassword,
+		ServiceHost:       serviceHost,
 	}, nil
 }
 
 func UndoFindOrCreateSharedServer(ctx context.Context, in FindOrCreateSharedServerIn, out FindOrCreateSharedServerOut) error {
 	// The shared server is intentionally not torn down if a later provisioning
 	// step fails — it may be serving other applications. The EnsureSharedServerSaga
-	// handles its own compensations inline above.
+	// handles its own compensations if server creation fails.
 	return nil
 }
 
@@ -135,16 +324,16 @@ type GenerateSharedCredentialsIn struct {
 }
 
 type GenerateSharedCredentialsOut struct {
-	SharedPassword     string
-	SharedDatabaseName string
-	SharedUsername     string
+	SharedPassword          string
+	SharedDatabaseName      string
+	GeneratedSharedUsername string
 }
 
 func GenerateSharedCredentials(ctx context.Context, in GenerateSharedCredentialsIn) (GenerateSharedCredentialsOut, error) {
 	return GenerateSharedCredentialsOut{
-		SharedPassword:     idgen.Gen("pw"),
-		SharedDatabaseName: sanitizeIdentifier(in.AppName),
-		SharedUsername:     sanitizeIdentifier(in.AppName),
+		SharedPassword:          idgen.Gen("pw"),
+		SharedDatabaseName:      sanitizeIdentifier(in.AppName),
+		GeneratedSharedUsername: sanitizeIdentifier(in.AppName),
 	}, nil
 }
 
@@ -155,39 +344,49 @@ func UndoGenerateSharedCredentials(ctx context.Context, in GenerateSharedCredent
 // Step 3: Connect to the shared server and CREATE USER.
 
 type CreateSharedUserIn struct {
-	ServerID          entity.Id
-	SuperuserPassword string
-	SharedUsername    string
-	SharedPassword    string
+	ServiceHost            string
+	SuperuserPassword      string
+	GeneratedSharedUsername string
+	SharedPassword         string
 }
 
 type CreateSharedUserOut struct {
-	UserCreated bool
+	SharedUsername string
 }
 
 func CreateSharedUser(ctx context.Context, in CreateSharedUserIn) (CreateSharedUserOut, error) {
-	// TODO: Connect to the shared PostgreSQL server via the Service endpoint
-	// and execute: CREATE USER {username} WITH PASSWORD '{password}'
-	//
-	// This requires network connectivity to the postgres sandbox, which will
-	// be available once the Service entity is routing traffic.
-	// For now, the credentials are set up but the SQL DDL is deferred.
-	return CreateSharedUserOut{UserCreated: true}, nil
+	conn, err := connectAsSuperuser(ctx, in.ServiceHost, in.SuperuserPassword)
+	if err != nil {
+		return CreateSharedUserOut{}, fmt.Errorf("connecting to shared server: %w", err)
+	}
+	defer conn.Close(ctx)
+
+	if err := createPostgresUser(ctx, conn, in.GeneratedSharedUsername, in.SharedPassword); err != nil {
+		return CreateSharedUserOut{}, err
+	}
+
+	return CreateSharedUserOut{SharedUsername: in.GeneratedSharedUsername}, nil
 }
 
 func UndoCreateSharedUser(ctx context.Context, in CreateSharedUserIn, out CreateSharedUserOut) error {
-	if !out.UserCreated {
+	if out.SharedUsername == "" {
 		return nil
 	}
-	// TODO: Connect and execute DROP USER {username}
-	return nil
+
+	conn, err := connectAsSuperuser(ctx, in.ServiceHost, in.SuperuserPassword)
+	if err != nil {
+		return fmt.Errorf("connecting for user cleanup: %w", err)
+	}
+	defer conn.Close(ctx)
+
+	return dropPostgresUser(ctx, conn, in.GeneratedSharedUsername)
 }
 
 // Step 4: Connect to the shared server and CREATE DATABASE.
 
 type CreateSharedDatabaseIn struct {
-	ServerID          entity.Id
-	SuperuserPassword string
+	ServiceHost        string
+	SuperuserPassword  string
 	SharedDatabaseName string
 	SharedUsername     string
 }
@@ -197,11 +396,16 @@ type CreateSharedDatabaseOut struct {
 }
 
 func CreateSharedDatabase(ctx context.Context, in CreateSharedDatabaseIn) (CreateSharedDatabaseOut, error) {
-	// TODO: Connect to the shared PostgreSQL server via the Service endpoint
-	// and execute: CREATE DATABASE {dbname} OWNER {username}
-	//
-	// This requires network connectivity to the postgres sandbox.
-	// For now, the database name is recorded but the SQL DDL is deferred.
+	conn, err := connectAsSuperuser(ctx, in.ServiceHost, in.SuperuserPassword)
+	if err != nil {
+		return CreateSharedDatabaseOut{}, fmt.Errorf("connecting to shared server: %w", err)
+	}
+	defer conn.Close(ctx)
+
+	if err := createPostgresDatabase(ctx, conn, in.SharedDatabaseName, in.SharedUsername); err != nil {
+		return CreateSharedDatabaseOut{}, err
+	}
+
 	return CreateSharedDatabaseOut{DatabaseCreated: true}, nil
 }
 
@@ -209,8 +413,14 @@ func UndoCreateSharedDatabase(ctx context.Context, in CreateSharedDatabaseIn, ou
 	if !out.DatabaseCreated {
 		return nil
 	}
-	// TODO: Connect and execute DROP DATABASE {dbname}
-	return nil
+
+	conn, err := connectAsSuperuser(ctx, in.ServiceHost, in.SuperuserPassword)
+	if err != nil {
+		return fmt.Errorf("connecting for database cleanup: %w", err)
+	}
+	defer conn.Close(ctx)
+
+	return dropPostgresDatabase(ctx, conn, in.SharedDatabaseName)
 }
 
 // Step 5: Increment association_count on the shared PostgresServer.
@@ -259,6 +469,7 @@ func UndoIncrementAssociationCount(ctx context.Context, in IncrementAssociationC
 
 type BuildSharedResultIn struct {
 	ServerID           entity.Id
+	ServiceHost        string
 	SharedDatabaseName string
 	SharedUsername     string
 	SharedPassword     string
@@ -271,9 +482,7 @@ type BuildSharedResultOut struct {
 func BuildSharedResult(ctx context.Context, in BuildSharedResultIn) (BuildSharedResultOut, error) {
 	rc := saga.Get[*resultCapture](ctx)
 
-	serviceName := sharedServerName + "-postgresql"
-	host := serviceName + ".addon.app.miren"
-	envVars := buildEnvVars(host, postgresPort, in.SharedUsername, in.SharedPassword, in.SharedDatabaseName)
+	envVars := buildEnvVars(in.ServiceHost, postgresPort, in.SharedUsername, in.SharedPassword, in.SharedDatabaseName)
 
 	sharedData := &addon_v1alpha.PostgresqlSharedData{
 		PostgresServer: in.ServerID,
@@ -294,7 +503,12 @@ func UndoBuildSharedResult(ctx context.Context, in BuildSharedResultIn, out Buil
 }
 
 // RegisterSharedSaga registers the shared PostgreSQL provisioning saga.
+// This also registers the nested ensure-shared-server saga in the same registry.
 func RegisterSharedSaga(registry *saga.Registry, fw *addon.ProviderFramework, rc *resultCapture) error {
+	if err := RegisterEnsureSharedServerSaga(registry, fw); err != nil {
+		return err
+	}
+
 	return saga.Define("provision-shared-postgresql").
 		Using(fw).
 		Using(rc).
@@ -314,9 +528,9 @@ type DecodeSharedAttrsIn struct {
 }
 
 type DecodeSharedAttrsOut struct {
-	SharedServerRef  entity.Id
-	SharedDbName     string
-	SharedUserName   string
+	SharedServerRef entity.Id
+	SharedDbName    string
+	SharedUserName  string
 }
 
 func DecodeSharedAttrs(ctx context.Context, in DecodeSharedAttrsIn) (DecodeSharedAttrsOut, error) {
@@ -330,9 +544,9 @@ func DecodeSharedAttrs(ctx context.Context, in DecodeSharedAttrsIn) (DecodeShare
 	}
 
 	return DecodeSharedAttrsOut{
-		SharedServerRef:  data.PostgresServer,
-		SharedDbName:     data.DatabaseName,
-		SharedUserName:   data.Username,
+		SharedServerRef: data.PostgresServer,
+		SharedDbName:    data.DatabaseName,
+		SharedUserName:  data.Username,
 	}, nil
 }
 
@@ -349,6 +563,7 @@ type LookupSharedServerOut struct {
 	SharedServiceRef        entity.Id
 	SharedPoolRef           entity.Id
 	SharedAssocCount        int64
+	SharedServiceHost       string
 }
 
 func LookupSharedServer(ctx context.Context, in LookupSharedServerIn) (LookupSharedServerOut, error) {
@@ -359,11 +574,17 @@ func LookupSharedServer(ctx context.Context, in LookupSharedServerIn) (LookupSha
 		return LookupSharedServerOut{}, fmt.Errorf("looking up shared server: %w", err)
 	}
 
+	serviceHost, err := fw.GetServiceAddress(ctx, server.Service)
+	if err != nil {
+		return LookupSharedServerOut{}, fmt.Errorf("resolving shared service address: %w", err)
+	}
+
 	return LookupSharedServerOut{
 		SharedSuperuserPassword: server.SuperuserPassword,
 		SharedServiceRef:        server.Service,
 		SharedPoolRef:           server.SandboxPool,
 		SharedAssocCount:        server.AssociationCount,
+		SharedServiceHost:       serviceHost,
 	}, nil
 }
 
@@ -372,21 +593,27 @@ func UndoLookupSharedServer(ctx context.Context, in LookupSharedServerIn, out Lo
 }
 
 type TerminateConnectionsIn struct {
-	SharedServerRef         entity.Id
+	SharedServiceHost       string
 	SharedSuperuserPassword string
 	SharedDbName            string
 }
 
 type TerminateConnectionsOut struct {
-	Done bool
+	ConnectionsTerminated bool
 }
 
 func TerminateConnections(ctx context.Context, in TerminateConnectionsIn) (TerminateConnectionsOut, error) {
-	// TODO: Connect to the shared server and execute:
-	// SELECT pg_terminate_backend(pid)
-	// FROM pg_stat_activity
-	// WHERE datname = '{dbname}' AND pid <> pg_backend_pid()
-	return TerminateConnectionsOut{Done: true}, nil
+	conn, err := connectAsSuperuser(ctx, in.SharedServiceHost, in.SharedSuperuserPassword)
+	if err != nil {
+		return TerminateConnectionsOut{}, fmt.Errorf("connecting to terminate connections: %w", err)
+	}
+	defer conn.Close(ctx)
+
+	if err := terminatePostgresConnections(ctx, conn, in.SharedDbName); err != nil {
+		return TerminateConnectionsOut{}, err
+	}
+
+	return TerminateConnectionsOut{ConnectionsTerminated: true}, nil
 }
 
 func UndoTerminateConnections(ctx context.Context, in TerminateConnectionsIn, out TerminateConnectionsOut) error {
@@ -394,9 +621,10 @@ func UndoTerminateConnections(ctx context.Context, in TerminateConnectionsIn, ou
 }
 
 type DropSharedDatabaseIn struct {
-	SharedServerRef         entity.Id
+	SharedServiceHost       string
 	SharedSuperuserPassword string
 	SharedDbName            string
+	ConnectionsTerminated   bool
 }
 
 type DropSharedDatabaseOut struct {
@@ -404,8 +632,16 @@ type DropSharedDatabaseOut struct {
 }
 
 func DropSharedDatabase(ctx context.Context, in DropSharedDatabaseIn) (DropSharedDatabaseOut, error) {
-	// TODO: Connect to the shared server and execute:
-	// DROP DATABASE {dbname}
+	conn, err := connectAsSuperuser(ctx, in.SharedServiceHost, in.SharedSuperuserPassword)
+	if err != nil {
+		return DropSharedDatabaseOut{}, fmt.Errorf("connecting to drop database: %w", err)
+	}
+	defer conn.Close(ctx)
+
+	if err := dropPostgresDatabase(ctx, conn, in.SharedDbName); err != nil {
+		return DropSharedDatabaseOut{}, err
+	}
+
 	return DropSharedDatabaseOut{DatabaseDropped: true}, nil
 }
 
@@ -414,9 +650,10 @@ func UndoDropSharedDatabase(ctx context.Context, in DropSharedDatabaseIn, out Dr
 }
 
 type DropSharedUserIn struct {
-	SharedServerRef         entity.Id
+	SharedServiceHost       string
 	SharedSuperuserPassword string
 	SharedUserName          string
+	ConnectionsTerminated   bool
 }
 
 type DropSharedUserOut struct {
@@ -424,8 +661,16 @@ type DropSharedUserOut struct {
 }
 
 func DropSharedUser(ctx context.Context, in DropSharedUserIn) (DropSharedUserOut, error) {
-	// TODO: Connect to the shared server and execute:
-	// DROP USER {username}
+	conn, err := connectAsSuperuser(ctx, in.SharedServiceHost, in.SharedSuperuserPassword)
+	if err != nil {
+		return DropSharedUserOut{}, fmt.Errorf("connecting to drop user: %w", err)
+	}
+	defer conn.Close(ctx)
+
+	if err := dropPostgresUser(ctx, conn, in.SharedUserName); err != nil {
+		return DropSharedUserOut{}, err
+	}
+
 	return DropSharedUserOut{UserDropped: true}, nil
 }
 
@@ -435,6 +680,8 @@ func UndoDropSharedUser(ctx context.Context, in DropSharedUserIn, out DropShared
 
 type DecrementAssociationCountIn struct {
 	SharedServerRef entity.Id
+	DatabaseDropped bool
+	UserDropped     bool
 }
 
 type DecrementAssociationCountOut struct {
@@ -516,10 +763,10 @@ func RegisterDeprovisionSharedSaga(registry *saga.Registry, fw *addon.ProviderFr
 		RegisterTo(registry)
 }
 
-func (p *Provider) provisionShared(ctx context.Context, app addon.App, plan addon.Plan) (*addon.ProvisionResult, error) {
+func (p *Provider) provisionShared(ctx context.Context, app addon.App, variant addon.Variant) (*addon.ProvisionResult, error) {
 	p.log.Info("provisioning shared PostgreSQL",
 		"app", app.Name,
-		"plan", plan.Name)
+		"variant", variant.Name)
 
 	rc := &resultCapture{}
 	registry := saga.NewRegistry()
@@ -529,7 +776,7 @@ func (p *Provider) provisionShared(ctx context.Context, app addon.App, plan addo
 	}
 
 	storage := saga.NewMemoryStorage()
-	executor := saga.NewExecutor(storage, saga.WithRegistry(registry))
+	executor := saga.NewExecutor(storage, saga.WithRegistry(registry), saga.WithLogger(p.log))
 
 	err := executor.Start("provision-shared-postgresql").
 		Input("appname", app.Name).
@@ -556,7 +803,7 @@ func (p *Provider) deprovisionShared(ctx context.Context, assoc addon.AddonAssoc
 	}
 
 	storage := saga.NewMemoryStorage()
-	executor := saga.NewExecutor(storage, saga.WithRegistry(registry))
+	executor := saga.NewExecutor(storage, saga.WithRegistry(registry), saga.WithLogger(p.log))
 
 	err := executor.Start("deprovision-shared-postgresql").
 		Input("assocentity", assoc.Entity).

@@ -1,13 +1,18 @@
 package postgresql
 
-import "miren.dev/runtime/pkg/addon"
+import (
+	"strconv"
+	"strings"
+
+	"miren.dev/runtime/pkg/addon"
+)
 
 const (
 	AddonName    = "miren-postgresql"
-	DefaultImage = "postgres:17"
+	DefaultImage = "docker.io/library/postgres:17"
 )
 
-// Plan configuration keys
+// Variant configuration keys
 const (
 	ConfigCPU     = "cpu"
 	ConfigMemory  = "memory"
@@ -18,11 +23,11 @@ const (
 // Definition returns the addon definition for PostgreSQL.
 func Definition() addon.AddonDefinition {
 	return addon.AddonDefinition{
-		Name:        AddonName,
-		DisplayName: "Miren PostgreSQL",
-		Description: "Managed PostgreSQL database",
-		DefaultPlan: "small-local",
-		Plans: []addon.PlanDefinition{
+		Name:           AddonName,
+		DisplayName:    "Miren PostgreSQL",
+		Description:    "Managed PostgreSQL database",
+		DefaultVariant: "small-local",
+		Variants: []addon.VariantDefinition{
 			{
 				Name:        "small-local",
 				Description: "Development and testing",
@@ -83,7 +88,22 @@ func Definition() addon.AddonDefinition {
 	}
 }
 
-// IsSharedPlan returns true if the plan is a shared-server plan.
-func IsSharedPlan(planName string) bool {
-	return planName == "shared"
+const sharedDefaultStorageGb int64 = 10
+
+// parseStorageGb converts a Kubernetes-style size string (e.g. "1Gi", "50Gi")
+// to an int64 value in gigabytes. Returns 1 if the string cannot be parsed.
+func parseStorageGb(s string) int64 {
+	s = strings.TrimSpace(s)
+	if strings.HasSuffix(s, "Gi") {
+		n, err := strconv.ParseInt(strings.TrimSuffix(s, "Gi"), 10, 64)
+		if err == nil && n > 0 {
+			return n
+		}
+	}
+	return 1
+}
+
+// IsSharedVariant returns true if the variant is a shared-server variant.
+func IsSharedVariant(variantName string) bool {
+	return variantName == "shared"
 }

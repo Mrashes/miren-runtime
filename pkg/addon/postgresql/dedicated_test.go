@@ -21,7 +21,7 @@ func TestRegisterDedicatedSaga(t *testing.T) {
 	def, ok := registry.Get("provision-dedicated-postgresql")
 	require.True(t, ok)
 	assert.Equal(t, "provision-dedicated-postgresql", def.Name)
-	assert.Len(t, def.Actions, 7)
+	assert.Len(t, def.Actions, 8)
 }
 
 func TestRegisterDeprovisionDedicatedSaga(t *testing.T) {
@@ -55,6 +55,7 @@ func TestDedicatedSagaActionOrder(t *testing.T) {
 		"create-dedicated-pool",
 		"wait-for-dedicated-pool",
 		"create-dedicated-service",
+		"wait-for-dedicated-service",
 		"update-dedicated-server",
 		"build-dedicated-result",
 	}
@@ -64,4 +65,3 @@ func TestDedicatedSagaActionOrder(t *testing.T) {
 		assert.True(t, exists, "expected action %q to exist", name)
 	}
 }
-

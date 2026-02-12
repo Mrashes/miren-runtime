@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"miren.dev/runtime/api/addon/addon_v1alpha"
+	"miren.dev/runtime/api/compute/compute_v1alpha"
 	"miren.dev/runtime/pkg/addon"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/entity/types"
@@ -13,6 +14,16 @@ import (
 )
 
 const postgresPort = 5432
+
+func postgresContainerPorts() []compute_v1alpha.SandboxSpecContainerPort {
+	return []compute_v1alpha.SandboxSpecContainerPort{
+		{
+			Name:     "postgres",
+			Port:     postgresPort,
+			Protocol: compute_v1alpha.SandboxSpecContainerPortTCP,
+		},
+	}
+}
 
 // resultCapture is injected as a saga dependency so the final action
 // can pass the ProvisionResult back to the caller.
@@ -49,9 +60,9 @@ func UndoGenerateCredentials(ctx context.Context, in GenerateCredentialsIn, out 
 }
 
 type CreatePostgresServerIn struct {
-	ServerName string
-	PlanName   string
-	Password   string
+	ServerName  string
+	VariantName string
+	Password    string
 }
 
 type CreatePostgresServerOut struct {
@@ -63,7 +74,7 @@ func CreatePostgresServer(ctx context.Context, in CreatePostgresServerIn) (Creat
 
 	server := &addon_v1alpha.PostgresServer{
 		AddonName:         AddonName,
-		Plan:              in.PlanName,
+		Variant:           in.VariantName,
 		Status:            "provisioning",
 		AssociationCount:  1,
 		SuperuserPassword: in.Password,
@@ -83,11 +94,12 @@ func UndoCreatePostgresServer(ctx context.Context, in CreatePostgresServerIn, ou
 }
 
 type CreateDedicatedPoolIn struct {
-	ServerName   string
-	AppName      string
+	ServerName string
+	AppName    string
 	DatabaseName string
 	Username     string
 	Password     string
+	VariantConfig map[string]string
 }
 
 type CreateDedicatedPoolOut struct {
@@ -103,19 +115,39 @@ func CreateDedicatedPool(ctx context.Context, in CreateDedicatedPoolIn) (CreateD
 		"server", in.ServerName,
 	)
 
+	sizeGb := parseStorageGb(in.VariantConfig[ConfigStorage])
+	diskName := fmt.Sprintf("pg-%s-data", in.ServerName)
+	mountPath := "/var/lib/postgresql/data"
+
 	env := []string{
 		"POSTGRES_DB=" + in.DatabaseName,
 		"POSTGRES_USER=" + in.Username,
 		"POSTGRES_PASSWORD=" + in.Password,
+		"PGDATA=" + mountPath + "/pgdata",
 	}
 
 	poolID, err := fw.CreateSandboxPool(ctx, addon.CreateSandboxPoolSpec{
 		Name:             in.ServerName,
 		Image:            DefaultImage,
 		Env:              env,
+		Ports:            postgresContainerPorts(),
 		DesiredInstances: 1,
 		Labels:           labels,
 		SandboxPrefix:    fmt.Sprintf("%s-pg", in.AppName),
+		Mounts: []compute_v1alpha.SandboxSpecContainerMount{
+			{Source: "pgdata", Destination: mountPath},
+		},
+		Volumes: []compute_v1alpha.SandboxSpecVolume{
+			{
+				Name:         "pgdata",
+				Provider:     "miren",
+				DiskName:     diskName,
+				MountPath:    mountPath,
+				SizeGb:       sizeGb,
+				Filesystem:   "ext4",
+				LeaseTimeout: "5m",
+			},
+		},
 	})
 	if err != nil {
 		return CreateDedicatedPoolOut{}, fmt.Errorf("creating sandbox pool: %w", err)
@@ -183,11 +215,34 @@ func UndoCreateDedicatedService(ctx context.Context, in CreateDedicatedServiceIn
 	return fw.DeleteService(ctx, out.ServiceID)
 }
 
+type WaitForDedicatedServiceIn struct {
+	ServiceID entity.Id
+}
+
+type WaitForDedicatedServiceOut struct {
+	ServiceHost string
+}
+
+func WaitForDedicatedService(ctx context.Context, in WaitForDedicatedServiceIn) (WaitForDedicatedServiceOut, error) {
+	fw := saga.Get[*addon.ProviderFramework](ctx)
+
+	serviceHost, err := fw.WaitForServiceAddress(ctx, in.ServiceID, poolReadyTimeout)
+	if err != nil {
+		return WaitForDedicatedServiceOut{}, fmt.Errorf("waiting for dedicated service address: %w", err)
+	}
+
+	return WaitForDedicatedServiceOut{ServiceHost: serviceHost}, nil
+}
+
+func UndoWaitForDedicatedService(ctx context.Context, in WaitForDedicatedServiceIn, out WaitForDedicatedServiceOut) error {
+	return nil
+}
+
 type UpdateDedicatedServerIn struct {
 	ServerID  entity.Id
 	PoolID    entity.Id
 	ServiceID entity.Id
-	PlanName  string
+	VariantName string
 	Password  string
 }
 
@@ -200,7 +255,7 @@ func UpdateDedicatedServer(ctx context.Context, in UpdateDedicatedServerIn) (Upd
 
 	server := &addon_v1alpha.PostgresServer{
 		AddonName:         AddonName,
-		Plan:              in.PlanName,
+		Variant:           in.VariantName,
 		Status:            "active",
 		AssociationCount:  1,
 		SuperuserPassword: in.Password,
@@ -221,7 +276,7 @@ func UndoUpdateDedicatedServer(ctx context.Context, in UpdateDedicatedServerIn, 
 }
 
 type BuildDedicatedResultIn struct {
-	ServiceName  string
+	ServiceHost  string
 	Username     string
 	Password     string
 	DatabaseName string
@@ -235,7 +290,7 @@ type BuildDedicatedResultOut struct {
 func BuildDedicatedResult(ctx context.Context, in BuildDedicatedResultIn) (BuildDedicatedResultOut, error) {
 	rc := saga.Get[*resultCapture](ctx)
 
-	host := in.ServiceName + ".addon.app.miren"
+	host := in.ServiceHost
 	envVars := buildEnvVars(host, postgresPort, in.Username, in.Password, in.DatabaseName)
 
 	dedicatedData := &addon_v1alpha.PostgresqlDedicatedData{
@@ -264,6 +319,7 @@ func RegisterDedicatedSaga(registry *saga.Registry, fw *addon.ProviderFramework,
 		Action(CreateDedicatedPool).Undo(UndoCreateDedicatedPool).
 		Action(WaitForDedicatedPool).Undo(UndoWaitForDedicatedPool).
 		Action(CreateDedicatedService).Undo(UndoCreateDedicatedService).
+		Action(WaitForDedicatedService).Undo(UndoWaitForDedicatedService).
 		Action(UpdateDedicatedServer).Undo(UndoUpdateDedicatedServer).
 		Action(BuildDedicatedResult).Undo(UndoBuildDedicatedResult).
 		RegisterTo(registry)
@@ -429,10 +485,10 @@ func sanitizeIdentifier(name string) string {
 	return string(result)
 }
 
-func (p *Provider) provisionDedicated(ctx context.Context, app addon.App, plan addon.Plan) (*addon.ProvisionResult, error) {
+func (p *Provider) provisionDedicated(ctx context.Context, app addon.App, variant addon.Variant) (*addon.ProvisionResult, error) {
 	p.log.Info("provisioning dedicated PostgreSQL",
 		"app", app.Name,
-		"plan", plan.Name)
+		"variant", variant.Name)
 
 	rc := &resultCapture{}
 	registry := saga.NewRegistry()
@@ -442,11 +498,12 @@ func (p *Provider) provisionDedicated(ctx context.Context, app addon.App, plan a
 	}
 
 	storage := saga.NewMemoryStorage()
-	executor := saga.NewExecutor(storage, saga.WithRegistry(registry))
+	executor := saga.NewExecutor(storage, saga.WithRegistry(registry), saga.WithLogger(p.log))
 
 	err := executor.Start("provision-dedicated-postgresql").
 		Input("appname", app.Name).
-		Input("planname", plan.Name).
+		Input("variantname", variant.Name).
+		Input("variantconfig", variant.Config).
 		Execute(ctx)
 	if err != nil {
 		return nil, err
@@ -470,7 +527,7 @@ func (p *Provider) deprovisionDedicated(ctx context.Context, assoc addon.AddonAs
 	}
 
 	storage := saga.NewMemoryStorage()
-	executor := saga.NewExecutor(storage, saga.WithRegistry(registry))
+	executor := saga.NewExecutor(storage, saga.WithRegistry(registry), saga.WithLogger(p.log))
 
 	err := executor.Start("deprovision-dedicated-postgresql").
 		Input("assocentity", assoc.Entity).

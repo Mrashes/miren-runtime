@@ -22,11 +22,11 @@ func NewProvider(fw *addon.ProviderFramework) *Provider {
 	}
 }
 
-func (p *Provider) Provision(ctx context.Context, app addon.App, plan addon.Plan) (*addon.ProvisionResult, error) {
-	if IsSharedPlan(plan.Name) {
-		return p.provisionShared(ctx, app, plan)
+func (p *Provider) Provision(ctx context.Context, app addon.App, variant addon.Variant) (*addon.ProvisionResult, error) {
+	if IsSharedVariant(variant.Name) {
+		return p.provisionShared(ctx, app, variant)
 	}
-	return p.provisionDedicated(ctx, app, plan)
+	return p.provisionDedicated(ctx, app, variant)
 }
 
 func (p *Provider) AdjustEnvVars(ctx context.Context, result *addon.ProvisionResult, assoc addon.AddonAssociation, collisions []string) ([]addon.Variable, error) {
@@ -37,8 +37,8 @@ func (p *Provider) AdjustEnvVars(ctx context.Context, result *addon.ProvisionRes
 }
 
 func (p *Provider) Deprovision(ctx context.Context, assoc addon.AddonAssociation) error {
-	plan := assoc.Plan
-	if IsSharedPlan(plan) {
+	variant := assoc.Variant
+	if IsSharedVariant(variant) {
 		return p.deprovisionShared(ctx, assoc)
 	}
 	return p.deprovisionDedicated(ctx, assoc)

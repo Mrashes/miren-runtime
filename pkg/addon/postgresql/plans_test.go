@@ -6,30 +6,30 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestDefinitionHasAllPlans(t *testing.T) {
+func TestDefinitionHasAllVariants(t *testing.T) {
 	def := Definition()
 
 	assert.Equal(t, AddonName, def.Name)
 	assert.Equal(t, "Miren PostgreSQL", def.DisplayName)
-	assert.Equal(t, "small-local", def.DefaultPlan)
-	assert.Len(t, def.Plans, 4)
+	assert.Equal(t, "small-local", def.DefaultVariant)
+	assert.Len(t, def.Variants, 4)
 
-	planNames := make(map[string]bool)
-	for _, p := range def.Plans {
-		planNames[p.Name] = true
+	variantNames := make(map[string]bool)
+	for _, v := range def.Variants {
+		variantNames[v.Name] = true
 	}
 
-	assert.True(t, planNames["small-local"])
-	assert.True(t, planNames["medium-local"])
-	assert.True(t, planNames["large-local"])
-	assert.True(t, planNames["shared"])
+	assert.True(t, variantNames["small-local"])
+	assert.True(t, variantNames["medium-local"])
+	assert.True(t, variantNames["large-local"])
+	assert.True(t, variantNames["shared"])
 }
 
-func TestIsSharedPlan(t *testing.T) {
-	assert.True(t, IsSharedPlan("shared"))
-	assert.False(t, IsSharedPlan("small-local"))
-	assert.False(t, IsSharedPlan("medium-local"))
-	assert.False(t, IsSharedPlan("large-local"))
+func TestIsSharedVariant(t *testing.T) {
+	assert.True(t, IsSharedVariant("shared"))
+	assert.False(t, IsSharedVariant("small-local"))
+	assert.False(t, IsSharedVariant("medium-local"))
+	assert.False(t, IsSharedVariant("large-local"))
 }
 
 func TestSanitizeIdentifier(t *testing.T) {
@@ -90,18 +90,18 @@ func TestBuildDatabaseURL(t *testing.T) {
 	assert.Equal(t, "postgres://user:pass@host.example.com:5432/dbname", url)
 }
 
-func TestPlanConfigContainsExpectedKeys(t *testing.T) {
+func TestVariantConfigContainsExpectedKeys(t *testing.T) {
 	def := Definition()
 
-	for _, plan := range def.Plans {
-		t.Run(plan.Name, func(t *testing.T) {
-			if plan.Name == "shared" {
-				assert.Equal(t, "true", plan.Config[ConfigShared])
+	for _, variant := range def.Variants {
+		t.Run(variant.Name, func(t *testing.T) {
+			if variant.Name == "shared" {
+				assert.Equal(t, "true", variant.Config[ConfigShared])
 			} else {
-				assert.NotEmpty(t, plan.Config[ConfigCPU])
-				assert.NotEmpty(t, plan.Config[ConfigMemory])
-				assert.NotEmpty(t, plan.Config[ConfigStorage])
-				assert.Equal(t, "false", plan.Config[ConfigShared])
+				assert.NotEmpty(t, variant.Config[ConfigCPU])
+				assert.NotEmpty(t, variant.Config[ConfigMemory])
+				assert.NotEmpty(t, variant.Config[ConfigStorage])
+				assert.Equal(t, "false", variant.Config[ConfigShared])
 			}
 		})
 	}
