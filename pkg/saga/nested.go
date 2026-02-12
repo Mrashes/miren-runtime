@@ -2,9 +2,13 @@ package saga
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
+
+	"github.com/mr-tron/base58"
 )
 
 // NestedResult wraps the outputs from a completed child saga execution.
@@ -75,14 +79,15 @@ func RunNested(ctx context.Context, sagaName string, opts ...NestedOption) (*Nes
 		return nil, fmt.Errorf("nested saga definition %q not found in registry", sagaName)
 	}
 
-	// Generate child execution ID
-	childID := cfg.id
-	if childID == "" {
-		childID = generateID()
-	}
-
 	// Create child execution with parent link
 	parentExecID, _ := executionIDFromContext(ctx)
+
+	// Generate child execution ID — deterministic by default for idempotent recovery
+	childID := cfg.id
+	if childID == "" {
+		actionName, _ := actionNameFromContext(ctx)
+		childID = deriveChildID(parentExecID, sagaName, actionName)
+	}
 	exec, err := parent.createChildExecution(ctx, def, cfg.inputs, childID, parentExecID)
 	if err != nil {
 		return nil, fmt.Errorf("creating nested execution: %w", err)
@@ -100,8 +105,15 @@ func RunNested(ctx context.Context, sagaName string, opts ...NestedOption) (*Nes
 func (e *Executor) createChildExecution(ctx context.Context, def *Definition, inputs map[string]any, id, parentExecID string) (*Execution, error) {
 	exec, err := e.storage.Get(ctx, id)
 	if err == nil {
-		// Execution already exists (idempotent retry)
+		// Execution already exists (idempotent retry) — validate it matches the expected definition.
+		if exec.DefinitionName != def.Name || exec.DefinitionVersion != def.Version {
+			return nil, fmt.Errorf("existing execution %s has definition %s@%d, expected %s@%d",
+				id, exec.DefinitionName, exec.DefinitionVersion, def.Name, def.Version)
+		}
 		return exec, nil
+	}
+	if !errors.Is(err, ErrExecutionNotFound) {
+		return nil, fmt.Errorf("checking for existing execution: %w", err)
 	}
 
 	now := time.Now()
@@ -144,4 +156,13 @@ func UndoNested(ctx context.Context, executionID string) error {
 	}
 
 	return parent.runUndo(ctx, def, exec)
+}
+
+// deriveChildID produces a deterministic execution ID from the parent execution,
+// the child saga name, and the calling action name. This ensures that re-executing
+// a parent action during recovery produces the same child ID, enabling
+// createChildExecution's idempotency check to find the prior child execution.
+func deriveChildID(parentExecID, sagaName, actionName string) string {
+	h := sha256.Sum256([]byte(parentExecID + "\x00" + sagaName + "\x00" + actionName))
+	return "saga" + base58.Encode(h[:16])
 }

@@ -312,6 +312,88 @@ func TestRunNested_WithNestedID(t *testing.T) {
 	assert.Equal(t, "id-child", childExec.DefinitionName)
 }
 
+func TestRunNested_DeterministicChildID(t *testing.T) {
+	ctrl := &nestedTestController{}
+	registry, storage := setupNestedSagas(t, ctrl)
+
+	// Run the parent saga twice with the same parent ID.
+	// The second run should produce the same child ID (idempotent retry).
+	executor := NewExecutor(storage, WithRegistry(registry))
+	err := executor.Start("parent-saga").
+		Input("value", 5).
+		WithID("det-parent-1").
+		Execute(context.Background())
+	require.NoError(t, err)
+
+	// Get the child execution ID from parent outputs
+	result1, err := executor.ExecutionOutputs(context.Background(), "det-parent-1")
+	require.NoError(t, err)
+	var childID1 string
+	require.NoError(t, result1.Get("childexecid", &childID1))
+	require.NotEmpty(t, childID1)
+
+	// Verify the child ID is deterministic (derived from parent exec ID + saga name + action name)
+	expectedID := deriveChildID("det-parent-1", "child-saga", "parent-step")
+	assert.Equal(t, expectedID, childID1)
+
+	// Run again with a different parent ID — child ID should differ
+	err = executor.Start("parent-saga").
+		Input("value", 5).
+		WithID("det-parent-2").
+		Execute(context.Background())
+	require.NoError(t, err)
+
+	result2, err := executor.ExecutionOutputs(context.Background(), "det-parent-2")
+	require.NoError(t, err)
+	var childID2 string
+	require.NoError(t, result2.Get("childexecid", &childID2))
+	assert.NotEqual(t, childID1, childID2, "different parent IDs should produce different child IDs")
+}
+
+func TestRecover_SkipsChildExecutions(t *testing.T) {
+	ctrl := &nestedTestController{}
+	registry, storage := setupNestedSagas(t, ctrl)
+
+	// Simulate a crash mid-way: both parent and child are incomplete.
+	// The child has ParentExecutionID set.
+	childExec := &Execution{
+		ID:                "child-crash-1",
+		DefinitionName:    "child-saga",
+		DefinitionVersion: 1,
+		ParentExecutionID: "parent-crash-1",
+		Status:            StatusRunning,
+		ExecutedActions:   map[string]*ActionResult{},
+		ExecutionOrder:    []string{},
+	}
+	parentExec := &Execution{
+		ID:                "parent-crash-1",
+		DefinitionName:    "parent-saga",
+		DefinitionVersion: 1,
+		Status:            StatusRunning,
+		InitialInputs:     map[string]any{"value": float64(5)},
+		ExecutedActions:   map[string]*ActionResult{},
+		ExecutionOrder:    []string{},
+	}
+
+	require.NoError(t, storage.Save(context.Background(), childExec))
+	require.NoError(t, storage.Save(context.Background(), parentExec))
+
+	executor := NewExecutor(storage, WithRegistry(registry))
+	err := executor.Recover(context.Background())
+	require.NoError(t, err)
+
+	// Parent should have been recovered (re-executed its actions)
+	assert.Equal(t, 1, ctrl.parentCalls, "parent should be recovered")
+
+	// The child-crash-1 execution should NOT have been independently recovered.
+	// Instead, RunNested inside parent created a new child execution.
+	// The original child-crash-1 should still be in its crashed state (Running)
+	// because Recover() skipped it.
+	crashedChild, err := storage.Get(context.Background(), "child-crash-1")
+	require.NoError(t, err)
+	assert.Equal(t, StatusRunning, crashedChild.Status, "original child should be untouched by Recover()")
+}
+
 func TestNestedResult_Get(t *testing.T) {
 	nr := &NestedResult{
 		ExecutionID: "test",

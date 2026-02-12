@@ -3,6 +3,7 @@ package saga
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -10,8 +11,12 @@ import (
 	"miren.dev/runtime/pkg/idgen"
 )
 
+// ErrExecutionNotFound is returned by Storage.Get when no execution exists for the given ID.
+var ErrExecutionNotFound = errors.New("execution not found")
+
 type executorCtxKey struct{}
 type executionIDCtxKey struct{}
+type actionNameCtxKey struct{}
 
 func executorFromContext(ctx context.Context) (*Executor, bool) {
 	e, ok := ctx.Value(executorCtxKey{}).(*Executor)
@@ -21,6 +26,11 @@ func executorFromContext(ctx context.Context) (*Executor, bool) {
 func executionIDFromContext(ctx context.Context) (string, bool) {
 	id, ok := ctx.Value(executionIDCtxKey{}).(string)
 	return id, ok
+}
+
+func actionNameFromContext(ctx context.Context) (string, bool) {
+	name, ok := ctx.Value(actionNameCtxKey{}).(string)
+	return name, ok
 }
 
 // Storage persists saga execution state.
@@ -206,7 +216,8 @@ func (e *Executor) runExecution(ctx context.Context, def *Definition, exec *Exec
 		log.Info("executing action", "action", actionName)
 
 		// Execute the action
-		output, err := node.Action.Execute(ctx, actionInputs)
+		actionCtx := context.WithValue(ctx, actionNameCtxKey{}, actionName)
+		output, err := node.Action.Execute(actionCtx, actionInputs)
 		now := time.Now()
 
 		if err != nil {
@@ -395,7 +406,8 @@ func (e *Executor) runUndo(ctx context.Context, def *Definition, exec *Execution
 		log.Info("undoing action", "action", actionName)
 
 		// Execute undo
-		if err := node.Action.Undo(ctx, actionInputs, output); err != nil {
+		actionCtx := context.WithValue(ctx, actionNameCtxKey{}, actionName)
+		if err := node.Action.Undo(actionCtx, actionInputs, output); err != nil {
 			log.Error("undo failed", "action", actionName, "error", err)
 			undoErrors = append(undoErrors, fmt.Errorf("undo %q: %w", actionName, err))
 			// Continue with other undos even on failure
@@ -445,6 +457,14 @@ func (e *Executor) Recover(ctx context.Context) error {
 
 	var recoverErrors []error
 	for _, exec := range incomplete {
+		// Skip child executions — they will be driven by their parent's recovery
+		// via RunNested. Recovering them independently would cause double-execution.
+		if exec.ParentExecutionID != "" {
+			e.log.Info("skipping child execution (will be recovered by parent)",
+				"execution", exec.ID, "parent", exec.ParentExecutionID)
+			continue
+		}
+
 		e.log.Info("recovering saga", "saga", exec.DefinitionName, "execution", exec.ID, "status", exec.Status)
 
 		def, ok := e.registry.Get(exec.DefinitionName)
