@@ -54,6 +54,7 @@ import (
 	"miren.dev/runtime/pkg/entity/schema"
 	"miren.dev/runtime/pkg/labs"
 	"miren.dev/runtime/pkg/rpc"
+	"miren.dev/runtime/pkg/saga"
 	"miren.dev/runtime/pkg/sysstats"
 	"miren.dev/runtime/servers/admin"
 	"miren.dev/runtime/servers/app"
@@ -740,14 +741,16 @@ func (c *Coordinator) Start(ctx context.Context) error {
 		return err
 	}
 
-	// Set up addon registry and register providers
-	addonFw := addon.NewProviderFramework(c.Log, ec, eac, etcdStore)
+	// Set up addon registry; only register providers when the addons lab flag is enabled
 	addonRegistry := addon.NewRegistry()
-	addonRegistry.Register(postgresql.AddonName, postgresql.NewProvider(addonFw), postgresql.Definition())
+	if labs.Addons() {
+		addonFw := addon.NewProviderFramework(c.Log, ec, eac, saga.NewEntityStorage(etcdStore, c.Log))
+		addonRegistry.Register(postgresql.AddonName, postgresql.NewProvider(addonFw), postgresql.Definition())
 
-	if err := addonRegistry.EnsureEntities(ctx, ec); err != nil {
-		c.Log.Error("failed to ensure addon entities", "error", err)
-		return err
+		if err := addonRegistry.EnsureEntities(ctx, ec); err != nil {
+			c.Log.Error("failed to ensure addon entities", "error", err)
+			return err
+		}
 	}
 
 	// Migrate app versions before starting components that depend on them
@@ -792,17 +795,19 @@ func (c *Coordinator) Start(ctx context.Context) error {
 	)
 	c.cm.AddController(launcherController)
 
-	// Watch AddonAssociation changes to re-trigger launcher when addons become ready
-	addonLauncherController := controller.NewReconcileController(
-		"deploymentlauncher-addons",
-		c.Log,
-		entity.Ref(entity.EntityKind, addon_v1alpha.KindAddonAssociation),
-		eac,
-		launcher.AddonAssociationHandler(),
-		0, // No resync — driven entirely by watch events
-		1,
-	)
-	c.cm.AddController(addonLauncherController)
+	if labs.Addons() {
+		// Watch AddonAssociation changes to re-trigger launcher when addons become ready
+		addonLauncherController := controller.NewReconcileController(
+			"deploymentlauncher-addons",
+			c.Log,
+			entity.Ref(entity.EntityKind, addon_v1alpha.KindAddonAssociation),
+			eac,
+			launcher.AddonAssociationHandler(),
+			0, // No resync — driven entirely by watch events
+			1,
+		)
+		c.cm.AddController(addonLauncherController)
+	}
 
 	// Add sandbox pool controller (reconciles pool desired_instances to actual sandboxes)
 	poolController := controller.NewReconcileController(
@@ -856,23 +861,25 @@ func (c *Coordinator) Start(ctx context.Context) error {
 		c.cm.AddController(certCtrl)
 	}
 
-	// Add addon controller (reconciles addon associations for provisioning/deprovisioning)
-	addonController := addonctrl.NewController(c.Log, ec, eac, addonRegistry)
-	if err := addonController.Init(ctx); err != nil {
-		c.Log.Error("failed to initialize addon controller", "error", err)
-		return err
-	}
+	if labs.Addons() {
+		// Add addon controller (reconciles addon associations for provisioning/deprovisioning)
+		addonController := addonctrl.NewController(c.Log, ec, eac, addonRegistry)
+		if err := addonController.Init(ctx); err != nil {
+			c.Log.Error("failed to initialize addon controller", "error", err)
+			return err
+		}
 
-	addonReconciler := controller.NewReconcileController(
-		"addon",
-		c.Log,
-		entity.Ref(entity.EntityKind, addon_v1alpha.KindAddonAssociation),
-		eac,
-		controller.AdaptReconcileController[addon_v1alpha.AddonAssociation](addonController),
-		time.Minute,
-		1,
-	)
-	c.cm.AddController(addonReconciler)
+		addonReconciler := controller.NewReconcileController(
+			"addon",
+			c.Log,
+			entity.Ref(entity.EntityKind, addon_v1alpha.KindAddonAssociation),
+			eac,
+			controller.AdaptReconcileController[addon_v1alpha.AddonAssociation](addonController),
+			time.Minute,
+			1,
+		)
+		c.cm.AddController(addonReconciler)
+	}
 
 	// Start the controller manager
 	if err := c.cm.Start(ctx); err != nil {
@@ -895,16 +902,18 @@ func (c *Coordinator) Start(ctx context.Context) error {
 	server.ExposeValue("dev.miren.runtime/app", app_v1alpha.AdaptCrud(ai))
 	server.ExposeValue("dev.miren.runtime/app-status", app_v1alpha.AdaptAppStatus(ai))
 
-	addonsServer := app.NewAddonsServer(c.Log, ec, addonRegistry)
-	server.ExposeValue("dev.miren.runtime/addons", app_v1alpha.AdaptAddons(addonsServer))
+	var addonsClient *app_v1alpha.AddonsClient
+	if labs.Addons() {
+		addonsServer := app.NewAddonsServer(c.Log, ec, addonRegistry)
+		server.ExposeValue("dev.miren.runtime/addons", app_v1alpha.AdaptAddons(addonsServer))
 
-	// Create addons loopback connection (separate from entities loopback)
-	addonsLoopback, err := rs.Connect(rs.LoopbackAddr(), "dev.miren.runtime/addons")
-	if err != nil {
-		c.Log.Error("failed to connect to addons RPC service", "error", err)
-		return err
+		addonsLoopback, err := rs.Connect(rs.LoopbackAddr(), "dev.miren.runtime/addons")
+		if err != nil {
+			c.Log.Error("failed to connect to addons RPC service", "error", err)
+			return err
+		}
+		addonsClient = app_v1alpha.NewAddonsClient(addonsLoopback)
 	}
-	addonsClient := app_v1alpha.NewAddonsClient(addonsLoopback)
 
 	// Create app client for the builder
 	appClient := appclient.NewClient(c.Log, loopback)

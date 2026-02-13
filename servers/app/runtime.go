@@ -8,6 +8,7 @@ import (
 	"miren.dev/runtime/api/app/app_v1alpha"
 	"miren.dev/runtime/api/compute/compute_v1alpha"
 	"miren.dev/runtime/api/core/core_v1alpha"
+	"miren.dev/runtime/pkg/addon"
 	"miren.dev/runtime/pkg/cond"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/rpc/standard"
@@ -192,7 +193,7 @@ func (a *AppInfo) AppInfo(ctx context.Context, state *app_v1alpha.AppStatusAppIn
 
 			instance := &app_v1alpha.AddonInstance{}
 			instance.SetId(string(assoc.ID))
-			instance.SetName(addonNameFromRef(assoc.Addon))
+			instance.SetName(addon.NameFromRef(assoc.Addon))
 			instance.SetAddon(string(assoc.Addon))
 			instance.SetVariant(assoc.Variant)
 			addons = append(addons, instance)

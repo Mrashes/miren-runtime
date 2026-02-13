@@ -68,7 +68,7 @@ func (c *Controller) provision(ctx context.Context, assoc *addon_v1alpha.AddonAs
 	}
 
 	// Resolve provider
-	addonName := addonNameFromRef(assoc.Addon)
+	addonName := addon.NameFromRef(assoc.Addon)
 	provider, _, ok := c.registry.Get(addonName)
 	if !ok {
 		return c.setError(meta, fmt.Errorf("unknown addon %q", addonName))
@@ -159,7 +159,7 @@ func (c *Controller) deprovision(ctx context.Context, assoc *addon_v1alpha.Addon
 	c.log.Info("deprovisioning addon", "association", assoc.ID, "addon", assoc.Addon)
 
 	// Resolve provider
-	addonName := addonNameFromRef(assoc.Addon)
+	addonName := addon.NameFromRef(assoc.Addon)
 	provider, _, ok := c.registry.Get(addonName)
 	if !ok {
 		return c.setError(meta, fmt.Errorf("unknown addon %q", addonName))
@@ -465,15 +465,4 @@ func findCollisions(existing []core_v1alpha.Variable, addonVars []addon.Variable
 		}
 	}
 	return collisions
-}
-
-// addonNameFromRef extracts the addon name from an entity ref like "addon/miren-postgresql".
-func addonNameFromRef(ref entity.Id) string {
-	s := string(ref)
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == '/' {
-			return s[i+1:]
-		}
-	}
-	return s
 }

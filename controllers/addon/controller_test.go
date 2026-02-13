@@ -22,14 +22,13 @@ func TestAddonNameFromRef(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.ref, func(t *testing.T) {
-			got := addonNameFromRef(entity.Id("dev.miren.addon/" + tt.ref))
-			// addonNameFromRef takes the last segment after "/"
+			got := addon.NameFromRef(entity.Id("dev.miren.addon/" + tt.ref))
 			assert.Equal(t, tt.want, got)
 		})
 	}
 
 	// Direct test without prefix
-	assert.Equal(t, "miren-postgresql", addonNameFromRef(entity.Id("addon/miren-postgresql")))
+	assert.Equal(t, "miren-postgresql", addon.NameFromRef(entity.Id("addon/miren-postgresql")))
 }
 
 func TestFindCollisions(t *testing.T) {

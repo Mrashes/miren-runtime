@@ -70,3 +70,14 @@ type VariantDefinition struct {
 	Details     map[string]string // display key-value pairs shown to users
 	Config      map[string]string // provider-internal configuration
 }
+
+// NameFromRef extracts the addon name from an entity reference like "addon/postgresql".
+func NameFromRef(ref entity.Id) string {
+	s := string(ref)
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i] == '/' {
+			return s[i+1:]
+		}
+	}
+	return s
+}

@@ -447,12 +447,15 @@ func IncrementAssociationCount(ctx context.Context, in IncrementAssociationCount
 	fw := saga.Get[*addon.ProviderFramework](ctx)
 
 	var server addon_v1alpha.PostgresServer
-	if err := fw.EC.GetById(ctx, in.ServerID, &server); err != nil {
+	ent, err := fw.EC.GetByIdWithEntity(ctx, in.ServerID, &server)
+	if err != nil {
 		return IncrementAssociationCountOut{}, fmt.Errorf("getting server for count increment: %w", err)
 	}
 
-	server.AssociationCount++
-	if err := fw.EC.Update(ctx, &server); err != nil {
+	newCount := server.AssociationCount + 1
+	if err := fw.EC.Patch(ctx, in.ServerID, ent.Revision(),
+		entity.Int64(addon_v1alpha.PostgresServerAssociationCountId, newCount),
+	); err != nil {
 		return IncrementAssociationCountOut{}, fmt.Errorf("updating association count: %w", err)
 	}
 
@@ -467,12 +470,18 @@ func UndoIncrementAssociationCount(ctx context.Context, in IncrementAssociationC
 	fw := saga.Get[*addon.ProviderFramework](ctx)
 
 	var server addon_v1alpha.PostgresServer
-	if err := fw.EC.GetById(ctx, in.ServerID, &server); err != nil {
+	ent, err := fw.EC.GetByIdWithEntity(ctx, in.ServerID, &server)
+	if err != nil {
 		return err
 	}
 
-	server.AssociationCount--
-	return fw.EC.Update(ctx, &server)
+	newCount := server.AssociationCount - 1
+	if newCount < 0 {
+		newCount = 0
+	}
+	return fw.EC.Patch(ctx, in.ServerID, ent.Revision(),
+		entity.Int64(addon_v1alpha.PostgresServerAssociationCountId, newCount),
+	)
 }
 
 // Step 6: Build the ProvisionResult.
@@ -702,16 +711,24 @@ func DecrementAssociationCount(ctx context.Context, in DecrementAssociationCount
 	fw := saga.Get[*addon.ProviderFramework](ctx)
 
 	var server addon_v1alpha.PostgresServer
-	if err := fw.EC.GetById(ctx, in.SharedServerRef, &server); err != nil {
+	ent, err := fw.EC.GetByIdWithEntity(ctx, in.SharedServerRef, &server)
+	if err != nil {
 		return DecrementAssociationCountOut{}, fmt.Errorf("getting server: %w", err)
 	}
 
-	server.AssociationCount--
-	if err := fw.EC.Update(ctx, &server); err != nil {
+	if server.AssociationCount <= 0 {
+		fw.Log.Warn("association count already zero, skipping decrement", "server", in.SharedServerRef)
+		return DecrementAssociationCountOut{RemainingCount: 0}, nil
+	}
+
+	newCount := server.AssociationCount - 1
+	if err := fw.EC.Patch(ctx, in.SharedServerRef, ent.Revision(),
+		entity.Int64(addon_v1alpha.PostgresServerAssociationCountId, newCount),
+	); err != nil {
 		return DecrementAssociationCountOut{}, fmt.Errorf("updating association count: %w", err)
 	}
 
-	return DecrementAssociationCountOut{RemainingCount: server.AssociationCount}, nil
+	return DecrementAssociationCountOut{RemainingCount: newCount}, nil
 }
 
 func UndoDecrementAssociationCount(ctx context.Context, in DecrementAssociationCountIn, out DecrementAssociationCountOut) error {
@@ -785,7 +802,7 @@ func (p *Provider) provisionShared(ctx context.Context, app addon.App, variant a
 		return nil, fmt.Errorf("registering shared saga: %w", err)
 	}
 
-	storage := saga.NewEntityStorage(p.fw.Store, p.log)
+	storage := p.fw.Storage
 	executor := saga.NewExecutor(storage, saga.WithRegistry(registry), saga.WithLogger(p.log))
 
 	err := executor.Start("provision-shared-postgresql").
@@ -812,7 +829,7 @@ func (p *Provider) deprovisionShared(ctx context.Context, assoc addon.AddonAssoc
 		return fmt.Errorf("registering deprovision saga: %w", err)
 	}
 
-	storage := saga.NewEntityStorage(p.fw.Store, p.log)
+	storage := p.fw.Storage
 	executor := saga.NewExecutor(storage, saga.WithRegistry(registry), saga.WithLogger(p.log))
 
 	err := executor.Start("deprovision-shared-postgresql").

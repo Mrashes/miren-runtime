@@ -57,7 +57,7 @@ func TestSharedPostgreSQL_Integration(t *testing.T) {
 
 	eac := entityserver_v1alpha.NewEntityAccessClient(client)
 	ec := entityserver.NewClient(log, eac)
-	fw := addon.NewProviderFramework(log, ec, eac, nil)
+	fw := addon.NewProviderFramework(log, ec, eac, saga.NewMemoryStorage())
 
 	newEnv := func() *integrationEnv {
 		registry := saga.NewRegistry()

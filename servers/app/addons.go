@@ -133,7 +133,7 @@ func (s *AddonsServer) ListInstances(ctx context.Context, state *app_v1alpha.Add
 
 		instance := &app_v1alpha.AddonInstance{}
 		instance.SetId(string(assoc.ID))
-		instance.SetName(addonNameFromRef(assoc.Addon))
+		instance.SetName(addon.NameFromRef(assoc.Addon))
 		instance.SetAddon(string(assoc.Addon))
 		instance.SetVariant(assoc.Variant)
 		addons = append(addons, instance)
@@ -171,7 +171,7 @@ func (s *AddonsServer) DeleteInstance(ctx context.Context, state *app_v1alpha.Ad
 			return fmt.Errorf("reading addon association: %w", err)
 		}
 
-		if addonNameFromRef(assoc.Addon) == addonName {
+		if addon.NameFromRef(assoc.Addon) == addonName {
 			// Set status to deprovisioning so the controller handles cleanup
 			if err := s.ec.Patch(ctx, assoc.ID, 0,
 				entity.String(addon_v1alpha.AddonAssociationStatusId, "deprovisioning"),
@@ -189,15 +189,4 @@ func (s *AddonsServer) DeleteInstance(ctx context.Context, state *app_v1alpha.Ad
 	}
 
 	return fmt.Errorf("addon %q is not attached to app %q", addonName, appName)
-}
-
-// addonNameFromRef extracts the addon name from an entity ref like "addon/miren-postgresql".
-func addonNameFromRef(ref entity.Id) string {
-	s := string(ref)
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == '/' {
-			return s[i+1:]
-		}
-	}
-	return s
 }
