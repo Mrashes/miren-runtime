@@ -242,7 +242,7 @@ jobs:
   build:
     # Skip when called from release.yml - it has its own build jobs with signing
     if: github.event_name != 'workflow_call'
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     steps:
     - uses: actions/checkout@v5
       with:
