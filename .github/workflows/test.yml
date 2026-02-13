@@ -80,8 +80,28 @@ jobs:
     - name: Check go generate
       run: make generate-check
 
+  test-groups:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+    - uses: actions/checkout@v5
+      with:
+        ref: ${{ inputs.ref }}
+
+    - name: Set test matrix
+      id: set-matrix
+      run: |
+        MATRIX=$(jq -c '.groups' hack/test-groups.json)
+        echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+
   test:
+    needs: test-groups
     runs-on: depot-ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        group: ${{ fromJson(needs.test-groups.outputs.matrix) }}
     steps:
     - uses: actions/checkout@v5
       with:
@@ -98,69 +118,10 @@ jobs:
         go install miren.dev/iso/cmd/iso@latest
         echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
-    - name: Test with Coverage
-      id: coverage
+    - name: Test (runner ${{ matrix.group.runner }})
       run: |
-        make test-coverage-ci
-        # Extract coverage percentage
-        COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
-        echo "coverage=$COVERAGE" >> $GITHUB_OUTPUT
-        echo "Coverage: $COVERAGE%"
-
-    - name: Upload Coverage Report
-      if: github.event_name != 'workflow_call'
-      uses: actions/upload-artifact@v4
-      with:
-        name: coverage-report
-        path: |
-          coverage.out
-        retention-days: 30
-
-    - name: Fetch base branch for diff
-      if: github.event_name == 'pull_request'
-      run: |
-        git fetch origin ${{ github.event.pull_request.base.ref }}:refs/remotes/origin/${{ github.event.pull_request.base.ref }}
-
-    - name: Calculate Changed Line Coverage
-      id: changed-coverage
-      if: github.event_name == 'pull_request'
-      run: |
-        # Calculate coverage for changed lines only (full output)
-        OUTPUT=$(go run ./hack/coverage-changed-lines -coverage=coverage.out -base=origin/${{ github.event.pull_request.base.ref }} 2>&1 || echo "No Go files changed")
-
-        # Save full output to a file for the PR comment
-        echo "$OUTPUT" > /tmp/changed-coverage.txt
-
-        # Also extract just the percentage for the output
-        CHANGED_COV=$(echo "$OUTPUT" | grep "Changed line coverage:" | awk '{print $4}' | sed 's/%//' || echo "N/A")
-        echo "changed_coverage=$CHANGED_COV" >> $GITHUB_OUTPUT
-        echo "Changed line coverage: $CHANGED_COV%"
-
-    - name: Write Coverage Summary
-      if: github.event_name == 'pull_request'
-      run: |
-        COVERAGE="${{ steps.coverage.outputs.coverage }}"
-        THRESHOLD=50
-
-        if (( $(echo "$COVERAGE >= $THRESHOLD" | bc -l) )); then
-          STATUS="✅ Passing"
-        else
-          STATUS="❌ Below threshold"
-        fi
-
-        cat >> $GITHUB_STEP_SUMMARY << EOF
-        ## 📊 Code Coverage Report
-
-        **Total Coverage:** \`${COVERAGE}%\`
-        **Threshold:** \`${THRESHOLD}%\`
-        **Status:** ${STATUS}
-
-        ### Coverage for Changed Lines
-
-        \`\`\`
-        $(cat /tmp/changed-coverage.txt)
-        \`\`\`
-        EOF
+        PACKAGES=$(echo '${{ toJson(matrix.group.packages) }}' | jq -r '.[]' | tr '\n' ' ')
+        iso run DISABLE_NBD_TEST=1 bash hack/test.sh $PACKAGES -count=1 -failfast
 
   test-e2e:
     runs-on: depot-ubuntu-latest
