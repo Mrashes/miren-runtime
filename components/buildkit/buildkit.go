@@ -354,6 +354,7 @@ func (c *Component) createContainer(ctx context.Context, image containerd.Image,
 		"OTEL_EXPORTER_OTLP_HEADERS",
 		"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
 		"OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
+		"OTEL_SERVICE_NAME",
 	} {
 		if v := os.Getenv(key); v != "" {
 			otelEnv = append(otelEnv, key+"="+v)

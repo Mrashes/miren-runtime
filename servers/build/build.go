@@ -880,12 +880,12 @@ func (b *Builder) BuildFromTar(ctx context.Context, state *build_v1alpha.Builder
 	}
 
 	// -- build.locate_artifact span
-	_, locateSpan := buildTracer.Start(ctx, "build.locate_artifact",
+	locateCtx, locateSpan := buildTracer.Start(ctx, "build.locate_artifact",
 		trace.WithAttributes(attribute.String("miren.build.manifest_digest", res.ManifestDigest)))
 
 	var artifact core_v1alpha.Artifact
 
-	err = b.ec.OneAtIndex(ctx, entity.String(core_v1alpha.ArtifactManifestDigestId, res.ManifestDigest), &artifact)
+	err = b.ec.OneAtIndex(locateCtx, entity.String(core_v1alpha.ArtifactManifestDigestId, res.ManifestDigest), &artifact)
 	if err != nil {
 		locateSpan.RecordError(err)
 		locateSpan.SetStatus(codes.Error, err.Error())
@@ -941,7 +941,7 @@ func (b *Builder) BuildFromTar(ctx context.Context, state *build_v1alpha.Builder
 	}
 
 	// -- build.create_version span
-	_, createVerSpan := buildTracer.Start(ctx, "build.create_version",
+	createVerCtx, createVerSpan := buildTracer.Start(ctx, "build.create_version",
 		trace.WithAttributes(attribute.String("miren.app.version", mrv.Version)))
 
 	// Create ConfigVersion as the sole config store (inline Config is no longer written)
@@ -950,7 +950,7 @@ func (b *Builder) BuildFromTar(ctx context.Context, state *build_v1alpha.Builder
 		Spec: configSpec,
 	}
 	cvName := mrv.Version + "-cfg"
-	cvid, err := b.ec.Create(ctx, cvName, configVer)
+	cvid, err := b.ec.Create(createVerCtx, cvName, configVer)
 	if err != nil {
 		createVerSpan.RecordError(err)
 		createVerSpan.SetStatus(codes.Error, err.Error())
@@ -960,7 +960,7 @@ func (b *Builder) BuildFromTar(ctx context.Context, state *build_v1alpha.Builder
 	mrv.ConfigVersion = cvid
 	mrv.Config = core_v1alpha.Config{}
 
-	id, err := b.ec.Create(ctx, mrv.Version, mrv)
+	id, err := b.ec.Create(createVerCtx, mrv.Version, mrv)
 	if err != nil {
 		createVerSpan.RecordError(err)
 		createVerSpan.SetStatus(codes.Error, err.Error())
@@ -970,9 +970,9 @@ func (b *Builder) BuildFromTar(ctx context.Context, state *build_v1alpha.Builder
 	createVerSpan.End()
 
 	// -- build.activate span
-	_, activateSpan := buildTracer.Start(ctx, "build.activate")
+	activateCtx, activateSpan := buildTracer.Start(ctx, "build.activate")
 	b.Log.Info("updating app entity with new version", "app", name, "version", mrv.Version)
-	err = b.appClient.SetActiveVersion(ctx, name, string(id))
+	err = b.appClient.SetActiveVersion(activateCtx, name, string(id))
 	if err != nil {
 		activateSpan.RecordError(err)
 		activateSpan.SetStatus(codes.Error, err.Error())
