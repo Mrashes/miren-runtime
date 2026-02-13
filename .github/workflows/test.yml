@@ -140,10 +140,25 @@ jobs:
         key: iso-cache-${{ hashFiles('go.sum') }}
         restore-keys: iso-cache-
 
+    - name: Restore Docker image cache
+      id: docker-image-cache
+      uses: actions/cache@v4
+      with:
+        path: /tmp/iso-image.tar
+        key: iso-image-${{ hashFiles('.iso/Dockerfile', '.iso/.bashrc', 'hack/containerd-config.toml') }}
+
+    - name: Load cached Docker image
+      if: steps.docker-image-cache.outputs.cache-hit == 'true'
+      run: docker load < /tmp/iso-image.tar
+
     - name: Test (runner ${{ matrix.group.runner }})
       run: |
         PACKAGES=$(echo '${{ toJson(matrix.group.packages) }}' | jq -r '.[]' | tr '\n' ' ')
         ISO_CACHE_DIR=/tmp/iso-cache iso run DISABLE_NBD_TEST=1 bash hack/test.sh $PACKAGES -count=1 -failfast
+
+    - name: Save Docker image to cache
+      if: steps.docker-image-cache.outputs.cache-hit != 'true'
+      run: docker save runtime-shell -o /tmp/iso-image.tar
 
   test-e2e:
     runs-on: depot-ubuntu-latest
