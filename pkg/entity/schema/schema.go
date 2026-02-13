@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"sort"
 
+	"github.com/mr-tron/base58"
+	"golang.org/x/crypto/blake2b"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/entity/types"
 )
@@ -288,4 +291,43 @@ func (s *SchemaBuilder) Singleton(id string, opts ...AttrOption) entity.Id {
 
 func (b *SchemaBuilder) Builder(name string) *SchemaBuilder {
 	return Builder(b.domain+"."+name, b.version)
+}
+
+// IndexedAttributeIDs returns a sorted list of all attribute IDs that are marked
+// as indexed in the in-memory schema registry. This inspects the attribute entities
+// registered via Builder/Register, not etcd.
+func IndexedAttributeIDs() []entity.Id {
+	var ids []entity.Id
+
+	for _, sb := range defaultRegistry.schemas {
+		for eid, ent := range sb.attrs {
+			for _, attr := range ent.Attrs() {
+				if attr.ID == entity.Index && attr.Value.Kind() == entity.KindBool && attr.Value.Bool() {
+					ids = append(ids, eid)
+					break
+				}
+			}
+		}
+	}
+
+	sort.Slice(ids, func(i, j int) bool {
+		return ids[i] < ids[j]
+	})
+
+	return ids
+}
+
+// IndexHash computes a deterministic blake2b-256 hash of all indexed attribute IDs
+// from the in-memory schema registry, encoded as base58. The hash changes when
+// indexes are added or removed, enabling detection of schema changes at startup.
+func IndexHash() string {
+	ids := IndexedAttributeIDs()
+
+	h, _ := blake2b.New256(nil)
+	for _, id := range ids {
+		h.Write([]byte(id))
+		h.Write([]byte{0}) // separator
+	}
+
+	return base58.Encode(h.Sum(nil))
 }

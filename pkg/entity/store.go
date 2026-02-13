@@ -1124,6 +1124,15 @@ func (s *EtcdStore) DeleteEntity(ctx context.Context, id Id) error {
 	return nil
 }
 
+// ClearSchemaCache clears the in-memory schema cache, forcing subsequent
+// GetAttributeSchema calls to re-read from etcd. This is used before reindexing
+// to ensure fresh schema definitions are used.
+func (s *EtcdStore) ClearSchemaCache() {
+	s.mu.Lock()
+	s.schemaCache = make(map[Id]*AttributeSchema)
+	s.mu.Unlock()
+}
+
 // GetAttributeSchema implements Store interface
 func (s *EtcdStore) GetAttributeSchema(ctx context.Context, id Id) (*AttributeSchema, error) {
 	// Check the cache first
