@@ -254,17 +254,13 @@ jobs:
         go-version-file: 'go.mod'
         cache: true
 
+    - name: Download modules
+      run: go mod download
+
     - name: Cross-compile all targets
       run: |
-        pids=()
         for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
           GOOS="${target%/*}" GOARCH="${target#*/}"
           echo "Building $GOOS/$GOARCH..."
-          GOOS=$GOOS GOARCH=$GOARCH go build -o /dev/null ./cmd/miren &
-          pids+=($!)
+          GOOS=$GOOS GOARCH=$GOARCH go build -v -o /dev/null ./cmd/miren
         done
-        failed=0
-        for pid in "${pids[@]}"; do
-          wait "$pid" || failed=1
-        done
-        exit $failed
