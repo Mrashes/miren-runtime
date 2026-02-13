@@ -181,10 +181,12 @@ func collectIndexedAttributesTolerant(ctx context.Context, store Store, attrs []
 	return indexedAttrs
 }
 
+var colReplacer = strings.NewReplacer("/", "_", ":", "_")
+
 // addToCollectionDirect writes a single collection entry for the given entity and collection key.
 func (s *EtcdStore) addToCollectionDirect(ctx context.Context, ent *Entity, collection string) error {
 	key := base58.Encode([]byte(ent.Id()))
-	colKey := strings.NewReplacer("/", "_", ":", "_").Replace(collection)
+	colKey := colReplacer.Replace(collection)
 
 	key = fmt.Sprintf("%s/collections/%s/%s", s.prefix, colKey, key)
 
