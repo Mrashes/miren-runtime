@@ -44,8 +44,8 @@ func setupAddonsTest(t *testing.T) (context.Context, *app_v1alpha.AddonsClient, 
 
 	registry := addon.NewRegistry()
 	registry.Register("miren-postgresql", &mockProvider{}, addon.AddonDefinition{
-		Name:        "miren-postgresql",
-		DisplayName: "PostgreSQL",
+		Name:           "miren-postgresql",
+		DisplayName:    "PostgreSQL",
 		DefaultVariant: "small",
 		Variants: []addon.VariantDefinition{
 			{Name: "small", Description: "Small"},

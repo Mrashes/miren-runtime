@@ -115,11 +115,11 @@ func (c *Controller) provision(ctx context.Context, assoc *addon_v1alpha.AddonAs
 	collisions := findCollisions(existingVars, envVars)
 	if len(collisions) > 0 {
 		adjusted, err := provider.AdjustEnvVars(ctx, result, addon.AddonAssociation{
-			ID:     assoc.ID,
-			App:    assoc.App,
-			Addon:  assoc.Addon,
+			ID:      assoc.ID,
+			App:     assoc.App,
+			Addon:   assoc.Addon,
 			Variant: assoc.Variant,
-			Entity: meta.Entity,
+			Entity:  meta.Entity,
 		}, collisions)
 		if err != nil {
 			return c.setError(meta, fmt.Errorf("adjusting env vars: %w", err))
@@ -167,11 +167,11 @@ func (c *Controller) deprovision(ctx context.Context, assoc *addon_v1alpha.Addon
 
 	// Step 1: Call provider.Deprovision
 	err := provider.Deprovision(ctx, addon.AddonAssociation{
-		ID:     assoc.ID,
-		App:    assoc.App,
-		Addon:  assoc.Addon,
+		ID:      assoc.ID,
+		App:     assoc.App,
+		Addon:   assoc.Addon,
 		Variant: assoc.Variant,
-		Entity: meta.Entity,
+		Entity:  meta.Entity,
 	})
 	if err != nil {
 		// Try to set error status, but don't fail if the update is rejected

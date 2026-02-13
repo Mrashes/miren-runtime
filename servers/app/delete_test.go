@@ -301,10 +301,10 @@ func TestDeleteAppTransitive(t *testing.T) {
 
 		// Create addon association with status "active"
 		assoc := &addon_v1alpha.AddonAssociation{
-			App:    appID,
-			Addon:  entity.Id("some-addon"),
+			App:     appID,
+			Addon:   entity.Id("some-addon"),
 			Variant: "shared",
-			Status: "active",
+			Status:  "active",
 		}
 		assocID, err := client.Create(ctx, "app-with-addon/postgresql", assoc)
 		require.NoError(t, err)

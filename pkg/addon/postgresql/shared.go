@@ -344,10 +344,10 @@ func UndoGenerateSharedCredentials(ctx context.Context, in GenerateSharedCredent
 // Step 3: Connect to the shared server and CREATE USER.
 
 type CreateSharedUserIn struct {
-	ServiceHost            string
-	SuperuserPassword      string
+	ServiceHost             string
+	SuperuserPassword       string
 	GeneratedSharedUsername string
-	SharedPassword         string
+	SharedPassword          string
 }
 
 type CreateSharedUserOut struct {

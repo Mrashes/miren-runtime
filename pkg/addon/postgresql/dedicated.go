@@ -94,11 +94,11 @@ func UndoCreatePostgresServer(ctx context.Context, in CreatePostgresServerIn, ou
 }
 
 type CreateDedicatedPoolIn struct {
-	ServerName string
-	AppName    string
-	DatabaseName string
-	Username     string
-	Password     string
+	ServerName    string
+	AppName       string
+	DatabaseName  string
+	Username      string
+	Password      string
 	VariantConfig map[string]string
 }
 
@@ -239,11 +239,11 @@ func UndoWaitForDedicatedService(ctx context.Context, in WaitForDedicatedService
 }
 
 type UpdateDedicatedServerIn struct {
-	ServerID  entity.Id
-	PoolID    entity.Id
-	ServiceID entity.Id
+	ServerID    entity.Id
+	PoolID      entity.Id
+	ServiceID   entity.Id
 	VariantName string
-	Password  string
+	Password    string
 }
 
 type UpdateDedicatedServerOut struct {

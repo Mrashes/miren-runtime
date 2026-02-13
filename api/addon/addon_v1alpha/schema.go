@@ -548,10 +548,7 @@ func (o *PostgresqlDedicatedData) Encode() (attrs []entity.Attr) {
 }
 
 func (o *PostgresqlDedicatedData) Empty() bool {
-	if !entity.Empty(o.PostgresServer) {
-		return false
-	}
-	return true
+	return entity.Empty(o.PostgresServer)
 }
 
 func (o *PostgresqlDedicatedData) InitSchema(sb *schema.SchemaBuilder) {

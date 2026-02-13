@@ -80,10 +80,10 @@ func (s *AddonsServer) CreateInstance(ctx context.Context, state *app_v1alpha.Ad
 
 	// Create AddonAssociation entity with status="pending"
 	assoc := &addon_v1alpha.AddonAssociation{
-		App:    app.ID,
-		Addon:  addonEntity.ID,
+		App:     app.ID,
+		Addon:   addonEntity.ID,
 		Variant: variantName,
-		Status: "pending",
+		Status:  "pending",
 	}
 
 	name := idgen.GenNS("addon-assoc")
