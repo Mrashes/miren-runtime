@@ -24,7 +24,7 @@ func TestReconcileWithSystemSkipsUnmountingMounts(t *testing.T) {
 	h := NewTestHarness(t)
 
 	// Set up volume state in LSVD state so reconnectNBD can find the volume
-	volumeEntityId := "dev.miren.storage/kind.lsvd_volume/test-vol-1"
+	volumeEntityId := "lsvd_volume/test-vol-1"
 	h.LsvdState.SetVolume(volumeEntityId, &lsvdserver.VolumeState{
 		EntityId:   volumeEntityId,
 		VolumeId:   "cloud-vol-1",
@@ -90,7 +90,7 @@ func TestReconcileWithSystemReconnectsWantedMounts(t *testing.T) {
 
 	h := NewTestHarness(t)
 
-	volumeEntityId := "dev.miren.storage/kind.lsvd_volume/test-vol-2"
+	volumeEntityId := "lsvd_volume/test-vol-2"
 	h.LsvdState.SetVolume(volumeEntityId, &lsvdserver.VolumeState{
 		EntityId:   volumeEntityId,
 		VolumeId:   "cloud-vol-2",
@@ -150,7 +150,7 @@ func TestReconcileWithSystemSkipsDeletedMountEntity(t *testing.T) {
 
 	h := NewTestHarness(t)
 
-	volumeEntityId := "dev.miren.storage/kind.lsvd_volume/test-vol-3"
+	volumeEntityId := "lsvd_volume/test-vol-3"
 	h.LsvdState.SetVolume(volumeEntityId, &lsvdserver.VolumeState{
 		EntityId:   volumeEntityId,
 		VolumeId:   "cloud-vol-3",
