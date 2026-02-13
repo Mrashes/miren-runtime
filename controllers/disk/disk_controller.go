@@ -222,7 +222,7 @@ func (d *DiskController) handleProvisioning(ctx context.Context, disk *storage_v
 	// Build entity with id and encoded attributes
 	volumeId := idgen.GenNS("lsvd-vol")
 	createAttrs := entity.New(
-		entity.DBId, entity.Id(storage_v1alpha.KindLsvdVolume.String()+"/"+volumeId),
+		entity.DBId, entity.Id("lsvd_volume/"+volumeId),
 		lsvdVolume.Encode,
 	).Attrs()
 

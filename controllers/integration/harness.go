@@ -174,9 +174,9 @@ func (h *TestHarness) controllerForEntity(id entity.Id) *controller.ReconcileCon
 		return h.DiskLeaseRC
 	case hasPrefix(s, "disk/"):
 		return h.DiskRC
-	case hasPrefix(s, "lsvd_volume/"), hasPrefix(s, "dev.miren.storage/kind.lsvd_volume/"):
+	case hasPrefix(s, "lsvd_volume/"):
 		return h.LsvdVolRC
-	case hasPrefix(s, "lsvd_mount/"), hasPrefix(s, "dev.miren.storage/kind.lsvd_mount/"):
+	case hasPrefix(s, "lsvd_mount/"):
 		return h.LsvdMntRC
 	default:
 		return nil
