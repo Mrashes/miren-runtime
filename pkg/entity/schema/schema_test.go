@@ -1,0 +1,75 @@
+package schema
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"miren.dev/runtime/pkg/entity"
+)
+
+func init() {
+	// Register a test schema with indexed attributes for testing
+	sb := &SchemaBuilder{
+		domain: "test-index-hash",
+		attrs:  make(map[entity.Id]*entity.Entity),
+	}
+
+	// Add an indexed attribute
+	sb.attrs[entity.Id("test-index-hash/name")] = entity.New(
+		entity.Ident, "test-index-hash/name",
+		entity.Type, entity.TypeStr,
+		entity.Cardinality, entity.CardinalityOne,
+		entity.Index, true,
+	)
+
+	// Add a non-indexed attribute
+	sb.attrs[entity.Id("test-index-hash/doc")] = entity.New(
+		entity.Ident, "test-index-hash/doc",
+		entity.Type, entity.TypeStr,
+		entity.Cardinality, entity.CardinalityOne,
+	)
+
+	// Add another indexed attribute
+	sb.attrs[entity.Id("test-index-hash/kind")] = entity.New(
+		entity.Ident, "test-index-hash/kind",
+		entity.Type, entity.TypeRef,
+		entity.Cardinality, entity.CardinalityOne,
+		entity.Index, true,
+	)
+
+	defaultRegistry.schemas["test-index-hash"] = sb
+}
+
+func TestIndexedAttributeIDs(t *testing.T) {
+	ids := IndexedAttributeIDs()
+
+	require.Greater(t, len(ids), 0, "should have at least one indexed attribute")
+
+	// Verify the list is sorted
+	for i := 1; i < len(ids); i++ {
+		assert.True(t, ids[i-1] < ids[i], "IDs should be sorted: %s >= %s", ids[i-1], ids[i])
+	}
+
+	// Verify no duplicates
+	seen := make(map[string]bool)
+	for _, id := range ids {
+		assert.False(t, seen[string(id)], "duplicate indexed attribute ID: %s", id)
+		seen[string(id)] = true
+	}
+
+	// Verify our test indexed attributes are present
+	assert.True(t, seen["test-index-hash/name"], "test-index-hash/name should be indexed")
+	assert.True(t, seen["test-index-hash/kind"], "test-index-hash/kind should be indexed")
+
+	// Verify non-indexed attribute is NOT present
+	assert.False(t, seen["test-index-hash/doc"], "test-index-hash/doc should not be indexed")
+}
+
+func TestIndexHash_Deterministic(t *testing.T) {
+	hash1 := IndexHash()
+	hash2 := IndexHash()
+
+	require.NotEmpty(t, hash1, "hash should not be empty")
+	assert.Equal(t, hash1, hash2, "hash should be deterministic across calls")
+}

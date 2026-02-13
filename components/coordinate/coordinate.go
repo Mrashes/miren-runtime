@@ -702,6 +702,11 @@ func (c *Coordinator) Start(ctx context.Context) error {
 		c.Log.Info("entity migration completed", "migrated", migrated, "skipped", skipped)
 	}
 
+	// Check if indexes have changed and reindex if needed
+	if err := c.checkAndReindex(ctx, etcdStore, client); err != nil {
+		c.Log.Error("automatic reindex failed (will retry next startup)", "error", err)
+	}
+
 	ess, err := entityserver.NewEntityServer(c.Log, etcdStore)
 	if err != nil {
 		c.Log.Error("failed to create entity server", "error", err)
@@ -1047,4 +1052,52 @@ func (c *Coordinator) CertificateProvider() autotls.CertificateProvider {
 		return nil
 	}
 	return c.certController
+}
+
+// checkAndReindex compares the current index hash against the stored hash in etcd.
+// If they differ, it runs a reindex to rebuild missing collection entries.
+func (c *Coordinator) checkAndReindex(ctx context.Context, store *entity.EtcdStore, client *clientv3.Client) error {
+	currentHash := schema.IndexHash()
+	hashKey := c.Prefix + "/meta/index-hash"
+
+	resp, err := client.Get(ctx, hashKey)
+	if err != nil {
+		return fmt.Errorf("failed to read index hash: %w", err)
+	}
+
+	var storedHash string
+	if len(resp.Kvs) > 0 {
+		storedHash = string(resp.Kvs[0].Value)
+	}
+
+	if storedHash == currentHash {
+		c.Log.Debug("index hash unchanged, skipping reindex", "hash", currentHash)
+		return nil
+	}
+
+	c.Log.Info("index schema changed, starting automatic reindex",
+		"stored_hash", storedHash,
+		"current_hash", currentHash)
+
+	reindexCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	stats, err := store.Reindex(reindexCtx, c.Log, entity.ReindexOptions{
+		DryRun:       false,
+		CleanupStale: false,
+	})
+	if err != nil {
+		return fmt.Errorf("reindex failed: %w", err)
+	}
+
+	c.Log.Info("automatic reindex complete",
+		"entities_processed", stats.EntitiesProcessed,
+		"indexes_rebuilt", stats.IndexesRebuilt)
+
+	_, err = client.Put(ctx, hashKey, currentHash)
+	if err != nil {
+		return fmt.Errorf("failed to store index hash: %w", err)
+	}
+
+	return nil
 }
