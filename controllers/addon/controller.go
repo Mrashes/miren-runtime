@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"miren.dev/runtime/api/addon/addon_v1alpha"
+	coreutil "miren.dev/runtime/api/core"
 	"miren.dev/runtime/api/core/core_v1alpha"
 	"miren.dev/runtime/api/entityserver"
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
@@ -237,12 +238,23 @@ func (c *Controller) getAppVariables(ctx context.Context, appID entity.Id) ([]co
 	if err := c.ec.GetById(ctx, app.ActiveVersion, &version); err != nil {
 		return nil, fmt.Errorf("getting app version: %w", err)
 	}
-	return version.Config.Variable, nil
+
+	spec, err := coreutil.ResolveConfig(ctx, c.eac, &version)
+	if err != nil {
+		return nil, fmt.Errorf("resolving config: %w", err)
+	}
+
+	// Convert ConfigSpecVariables to Variable
+	vars := make([]core_v1alpha.Variable, len(spec.Variables))
+	for i, v := range spec.Variables {
+		vars[i] = core_v1alpha.Variable(v)
+	}
+	return vars, nil
 }
 
-// createVersionWithAddonVars creates a new AppVersion with addon env vars merged in
-// and sets it as the active version. This ensures the launcher always reads a version
-// that already contains all addon variables.
+// createVersionWithAddonVars creates a new AppVersion with addon env vars merged
+// into the ConfigVersion and sets it as the active version. This ensures the
+// launcher always reads a version that has all vars baked in.
 func (c *Controller) createVersionWithAddonVars(ctx context.Context, appID entity.Id, envVars []addon.Variable) error {
 	if len(envVars) == 0 {
 		return nil
@@ -261,8 +273,26 @@ func (c *Controller) createVersionWithAddonVars(ctx context.Context, appID entit
 		return fmt.Errorf("getting app version: %w", err)
 	}
 
+	// Resolve the current config (reads ConfigVersion if present, else inline)
+	spec, err := coreutil.ResolveConfig(ctx, c.eac, &version)
+	if err != nil {
+		return fmt.Errorf("resolving config: %w", err)
+	}
+
+	// Convert ConfigSpecVariables to Variable for merging
+	existingVars := make([]core_v1alpha.Variable, len(spec.Variables))
+	for i, v := range spec.Variables {
+		existingVars[i] = core_v1alpha.Variable(v)
+	}
+
 	// Merge addon vars into existing variables
-	version.Config.Variable = mergeAddonVars(version.Config.Variable, envVars)
+	merged := mergeAddonVars(existingVars, envVars)
+
+	// Write back as ConfigSpecVariables
+	spec.Variables = make([]core_v1alpha.ConfigSpecVariables, len(merged))
+	for i, v := range merged {
+		spec.Variables[i] = core_v1alpha.ConfigSpecVariables(v)
+	}
 
 	// Resolve app name for the new version name
 	appName, err := c.resolveAppName(ctx, appID)
@@ -270,9 +300,23 @@ func (c *Controller) createVersionWithAddonVars(ctx context.Context, appID entit
 		return fmt.Errorf("resolving app name: %w", err)
 	}
 
-	// Create new version with a fresh ID
 	newVersionName := appName + "-" + idgen.Gen("v")
+
+	// Create a new ConfigVersion entity with merged vars
+	configVer := &core_v1alpha.ConfigVersion{
+		App:  appID,
+		Spec: *spec,
+	}
+	cvName := newVersionName + "-cfg"
+	cvid, err := c.ec.Create(ctx, cvName, configVer)
+	if err != nil {
+		return fmt.Errorf("creating config version: %w", err)
+	}
+
+	// Create new AppVersion pointing to the new ConfigVersion
 	version.Version = newVersionName
+	version.ConfigVersion = cvid
+	version.Config = core_v1alpha.Config{}
 
 	newID, err := c.ec.Create(ctx, newVersionName, &version)
 	if err != nil {
@@ -292,7 +336,9 @@ func (c *Controller) createVersionWithAddonVars(ctx context.Context, appID entit
 	return nil
 }
 
-// removeEnvVars removes addon-sourced variables from the app's active version config.
+// removeEnvVars removes addon-sourced variables from the app's active version
+// by creating a new ConfigVersion without those vars and a new AppVersion
+// pointing to it.
 func (c *Controller) removeEnvVars(ctx context.Context, appID entity.Id, variables []addon_v1alpha.Variables) error {
 	if len(variables) == 0 {
 		return nil
@@ -311,6 +357,11 @@ func (c *Controller) removeEnvVars(ctx context.Context, appID entity.Id, variabl
 		return fmt.Errorf("getting app version: %w", err)
 	}
 
+	spec, err := coreutil.ResolveConfig(ctx, c.eac, &version)
+	if err != nil {
+		return fmt.Errorf("resolving config: %w", err)
+	}
+
 	// Build set of keys to remove
 	removeKeys := make(map[string]bool, len(variables))
 	for _, v := range variables {
@@ -318,19 +369,48 @@ func (c *Controller) removeEnvVars(ctx context.Context, appID entity.Id, variabl
 	}
 
 	// Filter out addon vars that match the keys
-	var filtered []core_v1alpha.Variable
-	for _, v := range version.Config.Variable {
+	var filtered []core_v1alpha.ConfigSpecVariables
+	for _, v := range spec.Variables {
 		if removeKeys[v.Key] && v.Source == "addon" {
 			continue
 		}
 		filtered = append(filtered, v)
 	}
+	spec.Variables = filtered
 
-	version.Config.Variable = filtered
+	appName, err := c.resolveAppName(ctx, appID)
+	if err != nil {
+		return fmt.Errorf("resolving app name: %w", err)
+	}
 
-	return c.ec.Patch(ctx, app.ActiveVersion, 0,
-		entity.Component(core_v1alpha.AppVersionConfigId, version.Config.Encode()),
-	)
+	newVersionName := appName + "-" + idgen.Gen("v")
+
+	configVer := &core_v1alpha.ConfigVersion{
+		App:  appID,
+		Spec: *spec,
+	}
+	cvName := newVersionName + "-cfg"
+	cvid, err := c.ec.Create(ctx, cvName, configVer)
+	if err != nil {
+		return fmt.Errorf("creating config version: %w", err)
+	}
+
+	version.Version = newVersionName
+	version.ConfigVersion = cvid
+	version.Config = core_v1alpha.Config{}
+
+	newID, err := c.ec.Create(ctx, newVersionName, &version)
+	if err != nil {
+		return fmt.Errorf("creating new app version: %w", err)
+	}
+
+	if err := c.ec.Patch(ctx, appID, 0,
+		entity.Ref(core_v1alpha.AppActiveVersionId, newID),
+	); err != nil {
+		return fmt.Errorf("setting active version: %w", err)
+	}
+
+	return nil
 }
 
 // mergeAddonVars merges addon-contributed variables into the existing variable set.
