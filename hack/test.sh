@@ -9,6 +9,7 @@ setup_cgroups
 setup_environment
 
 export CONTAINERD_ADDRESS="/run/containerd/containerd.sock"
+export GOFLAGS="${GOFLAGS:-} -buildvcs=false"
 
 # Generate configs
 generate_containerd_config

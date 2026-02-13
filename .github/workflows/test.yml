@@ -113,15 +113,37 @@ jobs:
         go-version-file: 'go.mod'
         cache: true
 
-    - name: Install iso
+    - name: Resolve iso version
+      id: iso-version
       run: |
-        go install miren.dev/iso/cmd/iso@latest
-        echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+        ISO_VERSION=$(go list -m -f '{{.Version}}' miren.dev/iso@latest)
+        echo "version=$ISO_VERSION" >> $GITHUB_OUTPUT
+
+    - name: Cache iso binary
+      id: iso-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/go/bin/iso
+        key: iso-binary-${{ steps.iso-version.outputs.version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Install iso
+      if: steps.iso-cache.outputs.cache-hit != 'true'
+      run: go install miren.dev/iso/cmd/iso@latest
+
+    - name: Add Go bin to PATH
+      run: echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+    - name: Restore iso cache
+      uses: actions/cache@v4
+      with:
+        path: /tmp/iso-cache
+        key: iso-cache-${{ hashFiles('go.sum') }}
+        restore-keys: iso-cache-
 
     - name: Test (runner ${{ matrix.group.runner }})
       run: |
         PACKAGES=$(echo '${{ toJson(matrix.group.packages) }}' | jq -r '.[]' | tr '\n' ' ')
-        iso run DISABLE_NBD_TEST=1 bash hack/test.sh $PACKAGES -count=1 -failfast
+        ISO_CACHE_DIR=/tmp/iso-cache iso run DISABLE_NBD_TEST=1 bash hack/test.sh $PACKAGES -count=1 -failfast
 
   test-e2e:
     runs-on: depot-ubuntu-latest
