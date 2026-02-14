@@ -175,7 +175,7 @@ jobs:
     - name: Test (runner ${{ matrix.group.runner }})
       run: |
         PACKAGES=$(echo '${{ toJson(matrix.group.packages) }}' | jq -r '.[]' | tr '\n' ' ')
-        ISO_CACHE_DIR=/tmp/iso-cache iso run DISABLE_NBD_TEST=1 bash hack/test.sh $PACKAGES -count=1 -failfast
+        ISO_CACHE_DIR=/tmp/iso-cache go run ./hack/cmd/testfmt DISABLE_NBD_TEST=1 $PACKAGES -count=1 -failfast
 
     - name: Save Docker image to cache
       if: steps.docker-image-cache.outputs.cache-hit != 'true'
@@ -233,7 +233,7 @@ jobs:
       run: docker load < /tmp/iso-image.tar
 
     - name: Test
-      run: ISO_CACHE_DIR=/tmp/iso-cache iso run bash hack/test.sh ./e2e --tags=e2e -count=1 -failfast
+      run: ISO_CACHE_DIR=/tmp/iso-cache go run ./hack/cmd/testfmt ./e2e --tags=e2e -count=1 -failfast
 
     - name: Save Docker image to cache
       if: steps.docker-image-cache.outputs.cache-hit != 'true'

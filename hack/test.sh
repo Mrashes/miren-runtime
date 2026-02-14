@@ -16,7 +16,7 @@ generate_containerd_config
 
 # Start services
 start_containerd "$CONTAINERD_ADDRESS" "/dev/null"
-start_buildkitd "/dev/stdout"
+start_buildkitd "/dev/null"
 
 # Setup kernel mounts
 setup_kernel_mounts
@@ -60,5 +60,9 @@ elif test "$VERBOSE" != ""; then
   go test -v "${normalized_args[@]}"
 else
   normalized_args=($(normalize_args "$@"))
-  gotestsum --format testname -- "${normalized_args[@]}"
+  if [ -n "${TESTFMT_JSON:-}" ]; then
+    go test -json "${normalized_args[@]}"
+  else
+    gotestsum --format testname -- "${normalized_args[@]}"
+  fi
 fi
