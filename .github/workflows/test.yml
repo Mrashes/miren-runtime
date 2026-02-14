@@ -115,7 +115,7 @@ jobs:
 
         echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
 
-  test:
+  test-runner:
     name: test (runner ${{ matrix.group.runner }})
     needs: test-groups
     runs-on: depot-ubuntu-latest
@@ -238,6 +238,21 @@ jobs:
     - name: Save Docker image to cache
       if: steps.docker-image-cache.outputs.cache-hit != 'true'
       run: docker save runtime-shell -o /tmp/iso-image.tar
+
+  # Summary job for branch protection — provides a single "test-all" check
+  # that passes only when every matrix runner and e2e succeed.
+  test:
+    if: always()
+    needs: [test-runner, test-e2e]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check results
+      run: |
+        if [[ "${{ needs.test-runner.result }}" != "success" || "${{ needs.test-e2e.result }}" != "success" ]]; then
+          echo "test-runner result: ${{ needs.test-runner.result }}"
+          echo "test-e2e result: ${{ needs.test-e2e.result }}"
+          exit 1
+        fi
 
   build:
     # Skip when called from release.yml - it has its own build jobs with signing
