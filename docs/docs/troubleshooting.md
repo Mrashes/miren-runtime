@@ -112,6 +112,15 @@ sudo miren debug bundle
 
 This creates a `miren-debug.tar.gz` archive containing system info, container state, process lists, and server logs.
 
+:::warning Review bundles before sharing
+Debug bundles collect diagnostic data that may include sensitive information:
+
+- **Process command lines** — arguments passed to running processes may contain tokens or credentials
+- **Application logs** — error messages and stack traces can include request data or internal details
+
+Environment variable values are automatically redacted from container inspect output, but logs and process arguments are included as-is. Review the bundle contents and remove anything sensitive before sharing, especially in public channels like GitHub Issues.
+:::
+
 :::tip Use sudo for a complete bundle
 Without sudo, the command still runs but produces a partial bundle. Root access is needed for:
 - **Containerd socket** — the primary source of container state
@@ -142,3 +151,5 @@ If you're stuck, share your debug bundle and what you've tried:
 - **Discord** — [miren.dev/discord](https://miren.dev/discord) for community help and questions
 - **GitHub Issues** — [File a bug report](https://github.com/mirendev/runtime/issues/new?template=bug_report.yml) and attach your debug bundle
 - **Feature Requests** — [Miren Roadmap](https://github.com/mirendev/roadmap/issues) for ideas and suggestions
+
+Remember to review debug bundles for sensitive data before attaching them to public issues.
