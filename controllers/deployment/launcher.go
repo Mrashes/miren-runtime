@@ -396,11 +396,7 @@ func (l *Launcher) buildSandboxSpec(
 		LogAttribute: types.LabelSet("stage", "app-run", "service", serviceName),
 	}
 
-	// Determine start directory, defaulting to /app
 	startDir := cfgSpec.StartDirectory
-	if startDir == "" {
-		startDir = "/app"
-	}
 
 	appCont := compute_v1alpha.SandboxSpecContainer{
 		Name:  "app",
