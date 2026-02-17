@@ -331,11 +331,7 @@ func (s *Server) buildSandboxSpec(
 		LogAttribute: types.LabelSet("stage", "console", "service", "web"),
 	}
 
-	// Determine start directory, defaulting to /app
 	startDir := cfgSpec.StartDirectory
-	if startDir == "" {
-		startDir = "/app"
-	}
 
 	image := ver.ImageUrl
 

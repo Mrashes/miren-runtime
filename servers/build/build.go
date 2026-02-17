@@ -324,11 +324,9 @@ func buildVersionConfig(inputs ConfigInputs) core_v1alpha.ConfigSpec {
 		spec.Entrypoint = res.Entrypoint
 	}
 
-	// Set start directory from build result, defaulting to /app
+	// Set start directory from build result
 	if res != nil && res.WorkingDir != "" {
 		spec.StartDirectory = res.WorkingDir
-	} else {
-		spec.StartDirectory = "/app"
 	}
 
 	// If no web service defined in app config or Procfile, but we have a command or entrypoint,
@@ -1285,7 +1283,9 @@ func (b *Builder) AnalyzeApp(ctx context.Context, state *build_v1alpha.BuilderAn
 		ProcfileServices: procfileServices,
 	})
 
-	result.SetWorkingDir(spec.StartDirectory)
+	if spec.StartDirectory != "" {
+		result.SetWorkingDir(spec.StartDirectory)
+	}
 
 	// Convert spec.Services to ServiceInfo with source tracking
 	// This includes ALL services, even those without explicit commands (they use image default)

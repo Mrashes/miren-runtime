@@ -1195,7 +1195,7 @@ func TestBuildVersionConfig(t *testing.T) {
 			},
 		},
 		{
-			name: "default start directory is /app when not specified",
+			name: "start directory is empty when not specified",
 			inputs: ConfigInputs{
 				BuildResult:      &BuildResult{},
 				AppConfig:        nil,
@@ -1203,7 +1203,7 @@ func TestBuildVersionConfig(t *testing.T) {
 				ExistingConfig:   core_v1alpha.ConfigSpec{},
 			},
 			validate: func(t *testing.T, spec core_v1alpha.ConfigSpec) {
-				assert.Equal(t, "/app", spec.StartDirectory)
+				assert.Empty(t, spec.StartDirectory)
 			},
 		},
 		{

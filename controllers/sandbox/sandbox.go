@@ -1940,11 +1940,6 @@ func (c *SandboxController) buildSubContainerSpec(
 		})
 	}
 
-	dir := co.Directory
-	if dir == "" {
-		dir = "/"
-	}
-
 	// Extract instance number from metadata labels and inject MIREN_INSTANCE_NUM
 	envVars := co.Env
 	var md core_v1alpha.Metadata
@@ -1960,7 +1955,6 @@ func (c *SandboxController) buildSubContainerSpec(
 		oci.WithDefaultUnixDevices,
 		oci.WithoutMounts("/sys"),
 		oci.WithMounts(mounts),
-		oci.WithProcessCwd(dir),
 		oci.WithLinuxNamespace(specs.LinuxNamespace{
 			Type: specs.NetworkNamespace,
 			Path: fmt.Sprintf("/proc/%d/ns/net", sbPid),
@@ -1974,6 +1968,10 @@ func (c *SandboxController) buildSubContainerSpec(
 			Path: fmt.Sprintf("/proc/%d/ns/time", sbPid),
 		}),
 		oci.WithEnv(envVars),
+	}
+
+	if co.Directory != "" {
+		specOpts = append(specOpts, oci.WithProcessCwd(co.Directory))
 	}
 
 	if co.Command != "" {
