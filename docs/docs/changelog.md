@@ -5,6 +5,11 @@ All notable changes to Miren Runtime will be documented in this file.
 ## Unreleased
 *main*
 
+---
+
+## v0.4.0
+*2026-02-17*
+
 **Features**
 
 - **First-class rollbacks** - Redeploy a previous app version without rebuilding. Use `miren rollback` for an interactive picker that shows your recent versions, or `miren deploy --version <id>` to deploy a specific version directly. Each rollback creates a full deployment record with provenance tracking. ([#590](https://github.com/mirendev/runtime/pull/590))
