@@ -178,6 +178,7 @@ func (h *Server) expireLeases(ctx context.Context) {
 			lease, err := h.aa.RenewLease(ctx, l.Lease)
 			if err != nil {
 				h.Log.Error("error renewing lease", "error", err, "app", app, "url", l.Lease.URL)
+				h.aa.ReleaseLease(ctx, l.Lease)
 				continue
 			}
 

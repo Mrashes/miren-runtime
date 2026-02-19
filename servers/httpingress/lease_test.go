@@ -163,10 +163,18 @@ func TestFailedRenewalEvictsLease(t *testing.T) {
 	ll := srv.retainLease(ctx, "app/myapp", actLease)
 	srv.releaseLease(ctx, ll)
 
-	// Run expireLeases — renewal fails, lease should be dropped
+	// Run expireLeases — renewal fails, lease should be released and dropped
 	srv.expireLeases(ctx)
 
-	// Verify the app is removed from cache (renewal failed, lease dropped)
+	aa.mu.Lock()
+	defer aa.mu.Unlock()
+
+	// Verify ReleaseLease was called to clean up activator resources
+	if aa.releaseCount != 1 {
+		t.Errorf("expected 1 release on failed renewal, got %d", aa.releaseCount)
+	}
+
+	// Verify the app is removed from cache
 	srv.mu.Lock()
 	defer srv.mu.Unlock()
 	if _, ok := srv.apps["app/myapp"]; ok {
