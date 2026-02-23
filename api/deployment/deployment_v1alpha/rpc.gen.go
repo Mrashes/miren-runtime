@@ -1606,6 +1606,253 @@ func (v *DeploymentDeployVersionResults) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, &v.data)
 }
 
+type deploymentSetEnvVarsArgsData struct {
+	AppName   *string                 `cbor:"0,keyasint,omitempty" json:"app_name,omitempty"`
+	ClusterId *string                 `cbor:"1,keyasint,omitempty" json:"cluster_id,omitempty"`
+	Vars      *[]*EnvironmentVariable `cbor:"2,keyasint,omitempty" json:"vars,omitempty"`
+	Service   *string                 `cbor:"3,keyasint,omitempty" json:"service,omitempty"`
+}
+
+type DeploymentSetEnvVarsArgs struct {
+	call rpc.Call
+	data deploymentSetEnvVarsArgsData
+}
+
+func (v *DeploymentSetEnvVarsArgs) HasAppName() bool {
+	return v.data.AppName != nil
+}
+
+func (v *DeploymentSetEnvVarsArgs) AppName() string {
+	if v.data.AppName == nil {
+		return ""
+	}
+	return *v.data.AppName
+}
+
+func (v *DeploymentSetEnvVarsArgs) HasClusterId() bool {
+	return v.data.ClusterId != nil
+}
+
+func (v *DeploymentSetEnvVarsArgs) ClusterId() string {
+	if v.data.ClusterId == nil {
+		return ""
+	}
+	return *v.data.ClusterId
+}
+
+func (v *DeploymentSetEnvVarsArgs) HasVars() bool {
+	return v.data.Vars != nil
+}
+
+func (v *DeploymentSetEnvVarsArgs) Vars() []*EnvironmentVariable {
+	if v.data.Vars == nil {
+		return nil
+	}
+	return *v.data.Vars
+}
+
+func (v *DeploymentSetEnvVarsArgs) HasService() bool {
+	return v.data.Service != nil
+}
+
+func (v *DeploymentSetEnvVarsArgs) Service() string {
+	if v.data.Service == nil {
+		return ""
+	}
+	return *v.data.Service
+}
+
+func (v *DeploymentSetEnvVarsArgs) MarshalCBOR() ([]byte, error) {
+	return cbor.Marshal(v.data)
+}
+
+func (v *DeploymentSetEnvVarsArgs) UnmarshalCBOR(data []byte) error {
+	return cbor.Unmarshal(data, &v.data)
+}
+
+func (v *DeploymentSetEnvVarsArgs) MarshalJSON() ([]byte, error) {
+	return json.Marshal(v.data)
+}
+
+func (v *DeploymentSetEnvVarsArgs) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &v.data)
+}
+
+type deploymentSetEnvVarsResultsData struct {
+	VersionId  *string             `cbor:"0,keyasint,omitempty" json:"version_id,omitempty"`
+	Deployment *DeploymentInfo     `cbor:"1,keyasint,omitempty" json:"deployment,omitempty"`
+	Error      *string             `cbor:"2,keyasint,omitempty" json:"error,omitempty"`
+	LockInfo   *DeploymentLockInfo `cbor:"3,keyasint,omitempty" json:"lock_info,omitempty"`
+	AccessInfo **AccessInfo        `cbor:"4,keyasint,omitempty" json:"access_info,omitempty"`
+}
+
+type DeploymentSetEnvVarsResults struct {
+	call rpc.Call
+	data deploymentSetEnvVarsResultsData
+}
+
+func (v *DeploymentSetEnvVarsResults) SetVersionId(version_id string) {
+	v.data.VersionId = &version_id
+}
+
+func (v *DeploymentSetEnvVarsResults) SetDeployment(deployment *DeploymentInfo) {
+	v.data.Deployment = deployment
+}
+
+func (v *DeploymentSetEnvVarsResults) SetError(error string) {
+	v.data.Error = &error
+}
+
+func (v *DeploymentSetEnvVarsResults) SetLockInfo(lock_info *DeploymentLockInfo) {
+	v.data.LockInfo = lock_info
+}
+
+func (v *DeploymentSetEnvVarsResults) SetAccessInfo(access_info **AccessInfo) {
+	v.data.AccessInfo = access_info
+}
+
+func (v *DeploymentSetEnvVarsResults) MarshalCBOR() ([]byte, error) {
+	return cbor.Marshal(v.data)
+}
+
+func (v *DeploymentSetEnvVarsResults) UnmarshalCBOR(data []byte) error {
+	return cbor.Unmarshal(data, &v.data)
+}
+
+func (v *DeploymentSetEnvVarsResults) MarshalJSON() ([]byte, error) {
+	return json.Marshal(v.data)
+}
+
+func (v *DeploymentSetEnvVarsResults) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &v.data)
+}
+
+type deploymentDeleteEnvVarsArgsData struct {
+	AppName   *string   `cbor:"0,keyasint,omitempty" json:"app_name,omitempty"`
+	ClusterId *string   `cbor:"1,keyasint,omitempty" json:"cluster_id,omitempty"`
+	Keys      *[]string `cbor:"2,keyasint,omitempty" json:"keys,omitempty"`
+	Service   *string   `cbor:"3,keyasint,omitempty" json:"service,omitempty"`
+}
+
+type DeploymentDeleteEnvVarsArgs struct {
+	call rpc.Call
+	data deploymentDeleteEnvVarsArgsData
+}
+
+func (v *DeploymentDeleteEnvVarsArgs) HasAppName() bool {
+	return v.data.AppName != nil
+}
+
+func (v *DeploymentDeleteEnvVarsArgs) AppName() string {
+	if v.data.AppName == nil {
+		return ""
+	}
+	return *v.data.AppName
+}
+
+func (v *DeploymentDeleteEnvVarsArgs) HasClusterId() bool {
+	return v.data.ClusterId != nil
+}
+
+func (v *DeploymentDeleteEnvVarsArgs) ClusterId() string {
+	if v.data.ClusterId == nil {
+		return ""
+	}
+	return *v.data.ClusterId
+}
+
+func (v *DeploymentDeleteEnvVarsArgs) HasKeys() bool {
+	return v.data.Keys != nil
+}
+
+func (v *DeploymentDeleteEnvVarsArgs) Keys() []string {
+	if v.data.Keys == nil {
+		return nil
+	}
+	return *v.data.Keys
+}
+
+func (v *DeploymentDeleteEnvVarsArgs) HasService() bool {
+	return v.data.Service != nil
+}
+
+func (v *DeploymentDeleteEnvVarsArgs) Service() string {
+	if v.data.Service == nil {
+		return ""
+	}
+	return *v.data.Service
+}
+
+func (v *DeploymentDeleteEnvVarsArgs) MarshalCBOR() ([]byte, error) {
+	return cbor.Marshal(v.data)
+}
+
+func (v *DeploymentDeleteEnvVarsArgs) UnmarshalCBOR(data []byte) error {
+	return cbor.Unmarshal(data, &v.data)
+}
+
+func (v *DeploymentDeleteEnvVarsArgs) MarshalJSON() ([]byte, error) {
+	return json.Marshal(v.data)
+}
+
+func (v *DeploymentDeleteEnvVarsArgs) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &v.data)
+}
+
+type deploymentDeleteEnvVarsResultsData struct {
+	VersionId      *string             `cbor:"0,keyasint,omitempty" json:"version_id,omitempty"`
+	Deployment     *DeploymentInfo     `cbor:"1,keyasint,omitempty" json:"deployment,omitempty"`
+	Error          *string             `cbor:"2,keyasint,omitempty" json:"error,omitempty"`
+	LockInfo       *DeploymentLockInfo `cbor:"3,keyasint,omitempty" json:"lock_info,omitempty"`
+	AccessInfo     **AccessInfo        `cbor:"4,keyasint,omitempty" json:"access_info,omitempty"`
+	DeletedSources *[]string           `cbor:"5,keyasint,omitempty" json:"deleted_sources,omitempty"`
+}
+
+type DeploymentDeleteEnvVarsResults struct {
+	call rpc.Call
+	data deploymentDeleteEnvVarsResultsData
+}
+
+func (v *DeploymentDeleteEnvVarsResults) SetVersionId(version_id string) {
+	v.data.VersionId = &version_id
+}
+
+func (v *DeploymentDeleteEnvVarsResults) SetDeployment(deployment *DeploymentInfo) {
+	v.data.Deployment = deployment
+}
+
+func (v *DeploymentDeleteEnvVarsResults) SetError(error string) {
+	v.data.Error = &error
+}
+
+func (v *DeploymentDeleteEnvVarsResults) SetLockInfo(lock_info *DeploymentLockInfo) {
+	v.data.LockInfo = lock_info
+}
+
+func (v *DeploymentDeleteEnvVarsResults) SetAccessInfo(access_info **AccessInfo) {
+	v.data.AccessInfo = access_info
+}
+
+func (v *DeploymentDeleteEnvVarsResults) SetDeletedSources(deleted_sources *[]string) {
+	v.data.DeletedSources = deleted_sources
+}
+
+func (v *DeploymentDeleteEnvVarsResults) MarshalCBOR() ([]byte, error) {
+	return cbor.Marshal(v.data)
+}
+
+func (v *DeploymentDeleteEnvVarsResults) UnmarshalCBOR(data []byte) error {
+	return cbor.Unmarshal(data, &v.data)
+}
+
+func (v *DeploymentDeleteEnvVarsResults) MarshalJSON() ([]byte, error) {
+	return json.Marshal(v.data)
+}
+
+func (v *DeploymentDeleteEnvVarsResults) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &v.data)
+}
+
 type DeploymentCreateDeployment struct {
 	rpc.Call
 	args    DeploymentCreateDeploymentArgs
@@ -1866,6 +2113,58 @@ func (t *DeploymentDeployVersion) Results() *DeploymentDeployVersionResults {
 	return results
 }
 
+type DeploymentSetEnvVars struct {
+	rpc.Call
+	args    DeploymentSetEnvVarsArgs
+	results DeploymentSetEnvVarsResults
+}
+
+func (t *DeploymentSetEnvVars) Args() *DeploymentSetEnvVarsArgs {
+	args := &t.args
+	if args.call != nil {
+		return args
+	}
+	args.call = t.Call
+	t.Call.Args(args)
+	return args
+}
+
+func (t *DeploymentSetEnvVars) Results() *DeploymentSetEnvVarsResults {
+	results := &t.results
+	if results.call != nil {
+		return results
+	}
+	results.call = t.Call
+	t.Call.Results(results)
+	return results
+}
+
+type DeploymentDeleteEnvVars struct {
+	rpc.Call
+	args    DeploymentDeleteEnvVarsArgs
+	results DeploymentDeleteEnvVarsResults
+}
+
+func (t *DeploymentDeleteEnvVars) Args() *DeploymentDeleteEnvVarsArgs {
+	args := &t.args
+	if args.call != nil {
+		return args
+	}
+	args.call = t.Call
+	t.Call.Args(args)
+	return args
+}
+
+func (t *DeploymentDeleteEnvVars) Results() *DeploymentDeleteEnvVarsResults {
+	results := &t.results
+	if results.call != nil {
+		return results
+	}
+	results.call = t.Call
+	t.Call.Results(results)
+	return results
+}
+
 type Deployment interface {
 	CreateDeployment(ctx context.Context, state *DeploymentCreateDeployment) error
 	UpdateDeploymentStatus(ctx context.Context, state *DeploymentUpdateDeploymentStatus) error
@@ -1877,6 +2176,8 @@ type Deployment interface {
 	GetActiveDeployment(ctx context.Context, state *DeploymentGetActiveDeployment) error
 	CancelDeployment(ctx context.Context, state *DeploymentCancelDeployment) error
 	DeployVersion(ctx context.Context, state *DeploymentDeployVersion) error
+	SetEnvVars(ctx context.Context, state *DeploymentSetEnvVars) error
+	DeleteEnvVars(ctx context.Context, state *DeploymentDeleteEnvVars) error
 }
 
 type reexportDeployment struct {
@@ -1920,6 +2221,14 @@ func (reexportDeployment) CancelDeployment(ctx context.Context, state *Deploymen
 }
 
 func (reexportDeployment) DeployVersion(ctx context.Context, state *DeploymentDeployVersion) error {
+	panic("not implemented")
+}
+
+func (reexportDeployment) SetEnvVars(ctx context.Context, state *DeploymentSetEnvVars) error {
+	panic("not implemented")
+}
+
+func (reexportDeployment) DeleteEnvVars(ctx context.Context, state *DeploymentDeleteEnvVars) error {
 	panic("not implemented")
 }
 
@@ -2017,6 +2326,24 @@ func AdaptDeployment(t Deployment) *rpc.Interface {
 			Public:        false,
 			Handler: func(ctx context.Context, call rpc.Call) error {
 				return t.DeployVersion(ctx, &DeploymentDeployVersion{Call: call})
+			},
+		},
+		{
+			Name:          "SetEnvVars",
+			InterfaceName: "Deployment",
+			Index:         10,
+			Public:        false,
+			Handler: func(ctx context.Context, call rpc.Call) error {
+				return t.SetEnvVars(ctx, &DeploymentSetEnvVars{Call: call})
+			},
+		},
+		{
+			Name:          "DeleteEnvVars",
+			InterfaceName: "Deployment",
+			Index:         11,
+			Public:        false,
+			Handler: func(ctx context.Context, call rpc.Call) error {
+				return t.DeleteEnvVars(ctx, &DeploymentDeleteEnvVars{Call: call})
 			},
 		},
 	}
@@ -2388,4 +2715,157 @@ func (v DeploymentClient) DeployVersion(ctx context.Context, app_name string, cl
 	}
 
 	return &DeploymentClientDeployVersionResults{client: v.Client, data: ret}, nil
+}
+
+type DeploymentClientSetEnvVarsResults struct {
+	client rpc.Client
+	data   deploymentSetEnvVarsResultsData
+}
+
+func (v *DeploymentClientSetEnvVarsResults) HasVersionId() bool {
+	return v.data.VersionId != nil
+}
+
+func (v *DeploymentClientSetEnvVarsResults) VersionId() string {
+	if v.data.VersionId == nil {
+		return ""
+	}
+	return *v.data.VersionId
+}
+
+func (v *DeploymentClientSetEnvVarsResults) HasDeployment() bool {
+	return v.data.Deployment != nil
+}
+
+func (v *DeploymentClientSetEnvVarsResults) Deployment() *DeploymentInfo {
+	return v.data.Deployment
+}
+
+func (v *DeploymentClientSetEnvVarsResults) HasError() bool {
+	return v.data.Error != nil
+}
+
+func (v *DeploymentClientSetEnvVarsResults) Error() string {
+	if v.data.Error == nil {
+		return ""
+	}
+	return *v.data.Error
+}
+
+func (v *DeploymentClientSetEnvVarsResults) HasLockInfo() bool {
+	return v.data.LockInfo != nil
+}
+
+func (v *DeploymentClientSetEnvVarsResults) LockInfo() *DeploymentLockInfo {
+	return v.data.LockInfo
+}
+
+func (v *DeploymentClientSetEnvVarsResults) HasAccessInfo() bool {
+	return v.data.AccessInfo != nil
+}
+
+func (v *DeploymentClientSetEnvVarsResults) AccessInfo() *AccessInfo {
+	if v.data.AccessInfo == nil {
+		return nil
+	}
+	return *v.data.AccessInfo
+}
+
+func (v DeploymentClient) SetEnvVars(ctx context.Context, app_name string, cluster_id string, vars []*EnvironmentVariable, service string) (*DeploymentClientSetEnvVarsResults, error) {
+	args := DeploymentSetEnvVarsArgs{}
+	args.data.AppName = &app_name
+	args.data.ClusterId = &cluster_id
+	args.data.Vars = &vars
+	args.data.Service = &service
+
+	var ret deploymentSetEnvVarsResultsData
+
+	err := v.Call(ctx, "SetEnvVars", &args, &ret)
+	if err != nil {
+		return nil, err
+	}
+
+	return &DeploymentClientSetEnvVarsResults{client: v.Client, data: ret}, nil
+}
+
+type DeploymentClientDeleteEnvVarsResults struct {
+	client rpc.Client
+	data   deploymentDeleteEnvVarsResultsData
+}
+
+func (v *DeploymentClientDeleteEnvVarsResults) HasVersionId() bool {
+	return v.data.VersionId != nil
+}
+
+func (v *DeploymentClientDeleteEnvVarsResults) VersionId() string {
+	if v.data.VersionId == nil {
+		return ""
+	}
+	return *v.data.VersionId
+}
+
+func (v *DeploymentClientDeleteEnvVarsResults) HasDeployment() bool {
+	return v.data.Deployment != nil
+}
+
+func (v *DeploymentClientDeleteEnvVarsResults) Deployment() *DeploymentInfo {
+	return v.data.Deployment
+}
+
+func (v *DeploymentClientDeleteEnvVarsResults) HasError() bool {
+	return v.data.Error != nil
+}
+
+func (v *DeploymentClientDeleteEnvVarsResults) Error() string {
+	if v.data.Error == nil {
+		return ""
+	}
+	return *v.data.Error
+}
+
+func (v *DeploymentClientDeleteEnvVarsResults) HasLockInfo() bool {
+	return v.data.LockInfo != nil
+}
+
+func (v *DeploymentClientDeleteEnvVarsResults) LockInfo() *DeploymentLockInfo {
+	return v.data.LockInfo
+}
+
+func (v *DeploymentClientDeleteEnvVarsResults) HasAccessInfo() bool {
+	return v.data.AccessInfo != nil
+}
+
+func (v *DeploymentClientDeleteEnvVarsResults) AccessInfo() *AccessInfo {
+	if v.data.AccessInfo == nil {
+		return nil
+	}
+	return *v.data.AccessInfo
+}
+
+func (v *DeploymentClientDeleteEnvVarsResults) HasDeletedSources() bool {
+	return v.data.DeletedSources != nil
+}
+
+func (v *DeploymentClientDeleteEnvVarsResults) DeletedSources() []string {
+	if v.data.DeletedSources == nil {
+		return nil
+	}
+	return *v.data.DeletedSources
+}
+
+func (v DeploymentClient) DeleteEnvVars(ctx context.Context, app_name string, cluster_id string, keys []string, service string) (*DeploymentClientDeleteEnvVarsResults, error) {
+	args := DeploymentDeleteEnvVarsArgs{}
+	args.data.AppName = &app_name
+	args.data.ClusterId = &cluster_id
+	args.data.Keys = &keys
+	args.data.Service = &service
+
+	var ret deploymentDeleteEnvVarsResultsData
+
+	err := v.Call(ctx, "DeleteEnvVars", &args, &ret)
+	if err != nil {
+		return nil, err
+	}
+
+	return &DeploymentClientDeleteEnvVarsResults{client: v.Client, data: ret}, nil
 }

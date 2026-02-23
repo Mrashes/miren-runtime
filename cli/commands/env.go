@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"miren.dev/runtime/api/app/app_v1alpha"
+	"miren.dev/runtime/api/deployment/deployment_v1alpha"
 	"miren.dev/runtime/pkg/ui"
 )
 
@@ -116,14 +117,13 @@ func EnvSet(ctx *Context, opts struct {
 		return err
 	}
 
-	cl, err := ctx.RPCClient("dev.miren.runtime/app")
+	depCl, err := ctx.RPCClient("dev.miren.runtime/deployment")
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to connect to deployment service: %w", err)
 	}
+	depClient := deployment_v1alpha.NewDeploymentClient(depCl)
 
-	ac := app_v1alpha.NewCrudClient(cl)
-
-	var vars []*app_v1alpha.NamedValue
+	var vars []*deployment_v1alpha.EnvironmentVariable
 
 	for _, spec := range specs {
 		if spec.FromFile {
@@ -134,19 +134,39 @@ func EnvSet(ctx *Context, opts struct {
 			ctx.Printf("setting %s...\n", spec.Key)
 		}
 
-		nv := &app_v1alpha.NamedValue{}
-		nv.SetKey(spec.Key)
-		nv.SetValue(spec.Value)
-		nv.SetSensitive(spec.Sensitive)
-		vars = append(vars, nv)
+		ev := &deployment_v1alpha.EnvironmentVariable{}
+		ev.SetKey(spec.Key)
+		ev.SetValue(spec.Value)
+		ev.SetSensitive(spec.Sensitive)
+		vars = append(vars, ev)
 	}
 
-	res, err := ac.SetEnvVars(ctx, opts.App, vars, opts.Service)
+	res, err := depClient.SetEnvVars(ctx, opts.App, ctx.ClusterName, vars, opts.Service)
 	if err != nil {
 		return err
 	}
 
-	ctx.Printf("new version id: %s\n", res.VersionId())
+	if res.HasError() && res.Error() != "" {
+		if res.HasLockInfo() && res.LockInfo() != nil {
+			displayLockInfo(ctx, "env set", res.LockInfo())
+		} else {
+			ctx.Printf("\nenv set failed: %s\n", res.Error())
+		}
+		return fmt.Errorf("env set failed")
+	}
+
+	ctx.Printf("✓ Set env vars on %s — new version: %s\n", opts.App, res.VersionId())
+
+	appCl, appErr := ctx.RPCClient(rpcAppStatus)
+	if appErr == nil {
+		appStatusClient := app_v1alpha.NewAppStatusClient(appCl)
+		waitForActivation(ctx, appStatusClient, opts.App, res.VersionId())
+	}
+
+	if res.HasAccessInfo() && res.AccessInfo() != nil {
+		displayDeployVersionAccessInfo(ctx, opts.App, res.AccessInfo())
+	}
+
 	return nil
 }
 
@@ -328,13 +348,6 @@ func EnvDelete(ctx *Context, opts struct {
 		return fmt.Errorf("no environment variables specified")
 	}
 
-	cl, err := ctx.RPCClient("dev.miren.runtime/app")
-	if err != nil {
-		return err
-	}
-
-	ac := app_v1alpha.NewCrudClient(cl)
-
 	// Ask for confirmation unless --force is used
 	if !opts.Force {
 		var message string
@@ -358,35 +371,61 @@ func EnvDelete(ctx *Context, opts struct {
 		}
 	}
 
-	var lastVersionId string
-	var configVarsDeleted []string
+	depCl, err := ctx.RPCClient("dev.miren.runtime/deployment")
+	if err != nil {
+		return fmt.Errorf("failed to connect to deployment service: %w", err)
+	}
+	depClient := deployment_v1alpha.NewDeploymentClient(depCl)
 
-	// Delete each variable using the targeted RPC
 	for _, key := range opts.Keys {
 		ctx.Printf("deleting %s...\n", key)
-		res, err := ac.DeleteEnvVar(ctx, opts.App, key, opts.Service)
-		if err != nil {
-			return err
-		}
-		lastVersionId = res.VersionId()
+	}
 
-		// Track config-sourced vars for warning
-		if res.DeletedSource() == "config" {
-			configVarsDeleted = append(configVarsDeleted, key)
+	res, err := depClient.DeleteEnvVars(ctx, opts.App, ctx.ClusterName, opts.Keys, opts.Service)
+	if err != nil {
+		return err
+	}
+
+	if res.HasError() && res.Error() != "" {
+		if res.HasLockInfo() && res.LockInfo() != nil {
+			displayLockInfo(ctx, "env delete", res.LockInfo())
+		} else {
+			ctx.Printf("\nenv delete failed: %s\n", res.Error())
+		}
+		return fmt.Errorf("env delete failed")
+	}
+
+	ctx.Printf("✓ Deleted env vars from %s — new version: %s\n", opts.App, res.VersionId())
+
+	// Warn about config vars that will reappear on next deploy
+	if res.HasDeletedSources() {
+		var configVarsDeleted []string
+		deletedSources := res.DeletedSources()
+		for i, source := range deletedSources {
+			if source == "config" && i < len(opts.Keys) {
+				configVarsDeleted = append(configVarsDeleted, opts.Keys[i])
+			}
+		}
+
+		if len(configVarsDeleted) > 0 {
+			if len(configVarsDeleted) == 1 {
+				ctx.Printf("\nWarning: %s was defined in app.toml and will reappear on next deploy.\n", configVarsDeleted[0])
+				ctx.Printf("To permanently remove it, delete it from .miren/app.toml.\n")
+			} else {
+				ctx.Printf("\nWarning: %s were defined in app.toml and will reappear on next deploy.\n", strings.Join(configVarsDeleted, ", "))
+				ctx.Printf("To permanently remove them, delete them from .miren/app.toml.\n")
+			}
 		}
 	}
 
-	ctx.Printf("new version id: %s\n", lastVersionId)
+	appCl, appErr := ctx.RPCClient(rpcAppStatus)
+	if appErr == nil {
+		appStatusClient := app_v1alpha.NewAppStatusClient(appCl)
+		waitForActivation(ctx, appStatusClient, opts.App, res.VersionId())
+	}
 
-	// Warn about config vars that will reappear on next deploy
-	if len(configVarsDeleted) > 0 {
-		if len(configVarsDeleted) == 1 {
-			ctx.Printf("\nWarning: %s was defined in app.toml and will reappear on next deploy.\n", configVarsDeleted[0])
-			ctx.Printf("To permanently remove it, delete it from .miren/app.toml.\n")
-		} else {
-			ctx.Printf("\nWarning: %s were defined in app.toml and will reappear on next deploy.\n", strings.Join(configVarsDeleted, ", "))
-			ctx.Printf("To permanently remove them, delete them from .miren/app.toml.\n")
-		}
+	if res.HasAccessInfo() && res.AccessInfo() != nil {
+		displayDeployVersionAccessInfo(ctx, opts.App, res.AccessInfo())
 	}
 
 	return nil
