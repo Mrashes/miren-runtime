@@ -1013,6 +1013,169 @@ func TestCleanupEmptyPoolsReferencedByActiveVersion(t *testing.T) {
 	require.NoError(t, err, "pool referenced by active version should not be deleted")
 }
 
+// TestCheckForStalePendingSandboxes tests that PENDING sandboxes older than
+// PendingSandboxTimeout are marked STOPPED, while fresh PENDING and RUNNING
+// sandboxes are left alone.
+func TestCheckForStalePendingSandboxes(t *testing.T) {
+	ctx := context.Background()
+	log := testutils.TestLogger(t)
+
+	server, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	pool := &compute_v1alpha.SandboxPool{
+		Service:          "web",
+		DesiredInstances: 3,
+		SandboxSpec: compute_v1alpha.SandboxSpec{
+			Version: entity.Id("ver-1"),
+			Container: []compute_v1alpha.SandboxSpecContainer{
+				{Image: "test:latest"},
+			},
+		},
+	}
+
+	poolID, err := server.Client.Create(ctx, "test-pool", pool)
+	require.NoError(t, err)
+	pool.ID = poolID
+
+	// Create a stale PENDING sandbox (6 minutes old)
+	// Set NowFunc to 6 minutes ago, create the sandbox, then reset
+	staleTime := time.Now().Add(-6 * time.Minute)
+	server.Store.NowFunc = func() time.Time { return staleTime }
+
+	staleSb := &compute_v1alpha.Sandbox{
+		Status: compute_v1alpha.PENDING,
+		Spec:   pool.SandboxSpec,
+	}
+	staleSbID, err := server.Client.Create(ctx, "stale-sb", staleSb,
+		entityserver.WithLabels(types.LabelSet("service", "web", "pool", poolID.String())))
+	require.NoError(t, err)
+
+	// Create a fresh PENDING sandbox (1 minute old)
+	freshTime := time.Now().Add(-1 * time.Minute)
+	server.Store.NowFunc = func() time.Time { return freshTime }
+
+	freshSb := &compute_v1alpha.Sandbox{
+		Status: compute_v1alpha.PENDING,
+		Spec:   pool.SandboxSpec,
+	}
+	freshSbID, err := server.Client.Create(ctx, "fresh-sb", freshSb,
+		entityserver.WithLabels(types.LabelSet("service", "web", "pool", poolID.String())))
+	require.NoError(t, err)
+
+	// Create a RUNNING sandbox (10 minutes old — should not be affected)
+	oldRunningTime := time.Now().Add(-10 * time.Minute)
+	server.Store.NowFunc = func() time.Time { return oldRunningTime }
+
+	runningSb := &compute_v1alpha.Sandbox{
+		Status: compute_v1alpha.RUNNING,
+		Spec:   pool.SandboxSpec,
+	}
+	runningSbID, err := server.Client.Create(ctx, "running-sb", runningSb,
+		entityserver.WithLabels(types.LabelSet("service", "web", "pool", poolID.String())))
+	require.NoError(t, err)
+
+	// Reset NowFunc to real time
+	server.Store.NowFunc = nil
+
+	// Run the stale pending check
+	manager := NewManager(log, server.EAC)
+	err = manager.checkForStalePendingSandboxes(ctx)
+	require.NoError(t, err)
+
+	// Verify the stale PENDING sandbox was marked STOPPED
+	getSandbox := func(id entity.Id) *compute_v1alpha.Sandbox {
+		t.Helper()
+		resp, err := server.EAC.Get(ctx, id.String())
+		require.NoError(t, err)
+		var sb compute_v1alpha.Sandbox
+		sb.Decode(resp.Entity().Entity())
+		return &sb
+	}
+
+	staleSbAfter := getSandbox(staleSbID)
+	assert.Equal(t, compute_v1alpha.STOPPED, staleSbAfter.Status,
+		"stale PENDING sandbox should be marked STOPPED")
+
+	freshSbAfter := getSandbox(freshSbID)
+	assert.Equal(t, compute_v1alpha.PENDING, freshSbAfter.Status,
+		"fresh PENDING sandbox should remain PENDING")
+
+	runningSbAfter := getSandbox(runningSbID)
+	assert.Equal(t, compute_v1alpha.RUNNING, runningSbAfter.Status,
+		"RUNNING sandbox should remain RUNNING")
+}
+
+// TestStalePendingSandboxUnblocksPoolCapacity tests that marking a stale
+// PENDING sandbox as STOPPED frees pool capacity, allowing the pool to
+// create a replacement sandbox on the next reconcile.
+func TestStalePendingSandboxUnblocksPoolCapacity(t *testing.T) {
+	ctx := context.Background()
+	log := testutils.TestLogger(t)
+
+	server, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	pool := &compute_v1alpha.SandboxPool{
+		Service:          "web",
+		DesiredInstances: 1,
+		SandboxSpec: compute_v1alpha.SandboxSpec{
+			Version: entity.Id("ver-1"),
+			Container: []compute_v1alpha.SandboxSpecContainer{
+				{Image: "test:latest"},
+			},
+		},
+	}
+
+	poolID, err := server.Client.Create(ctx, "test-pool", pool)
+	require.NoError(t, err)
+	pool.ID = poolID
+
+	// Create a stuck PENDING sandbox (6 minutes old)
+	staleTime := time.Now().Add(-6 * time.Minute)
+	server.Store.NowFunc = func() time.Time { return staleTime }
+
+	stuckSb := &compute_v1alpha.Sandbox{
+		Status: compute_v1alpha.PENDING,
+		Spec:   pool.SandboxSpec,
+	}
+	_, err = server.Client.Create(ctx, "stuck-sb", stuckSb,
+		entityserver.WithLabels(types.LabelSet("service", "web", "pool", poolID.String(), "instance", "0")))
+	require.NoError(t, err)
+
+	server.Store.NowFunc = nil
+
+	manager := NewManager(log, server.EAC)
+
+	// Reconcile: the stuck PENDING sandbox counts as actual=1, desired=1,
+	// so no new sandbox is created
+	reconcilePool(t, ctx, server, manager, pool)
+
+	updatedPool := getPool(t, ctx, server, poolID)
+	assert.Equal(t, int64(1), updatedPool.CurrentInstances,
+		"stuck PENDING sandbox should count as current")
+
+	// Run stale pending cleanup — marks the stuck sandbox STOPPED
+	err = manager.checkForStalePendingSandboxes(ctx)
+	require.NoError(t, err)
+
+	// Reconcile again: STOPPED sandbox no longer counts as actual,
+	// so pool creates a replacement
+	reconcilePool(t, ctx, server, manager, pool)
+
+	updatedPool = getPool(t, ctx, server, poolID)
+	assert.Equal(t, int64(1), updatedPool.CurrentInstances,
+		"pool should have created a replacement sandbox")
+
+	// Verify: there should be 1 PENDING (new replacement) sandbox in the pool
+	// listSandboxesForPool excludes STOPPED, so we only see active ones
+	sandboxes := listSandboxesForPool(t, ctx, server, pool)
+	assert.Equal(t, 1, len(sandboxes),
+		"pool should have exactly 1 active sandbox after cleanup and reconcile")
+	assert.Equal(t, compute_v1alpha.PENDING, sandboxes[0].Status,
+		"replacement sandbox should be PENDING")
+}
+
 // TestCleanupEmptyPoolsNotReferencedByActiveVersion tests that pools ARE deleted
 // when they're not referenced by any app's active version.
 func TestCleanupEmptyPoolsNotReferencedByActiveVersion(t *testing.T) {

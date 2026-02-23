@@ -22,6 +22,11 @@ const (
 	// MaxPoolSize is the maximum number of sandboxes allowed in a pool
 	// This prevents runaway growth even if there are bugs in scaling logic
 	MaxPoolSize = 20
+
+	// PendingSandboxTimeout is the maximum time a sandbox can stay in PENDING
+	// state before being marked STOPPED for cleanup. PENDING sandboxes count
+	// toward pool capacity, so stuck ones block new sandbox creation.
+	PendingSandboxTimeout = 5 * time.Minute
 )
 
 // Manager reconciles SandboxPool entities by ensuring the actual number of
@@ -559,6 +564,9 @@ func (m *Manager) runScaleDownMonitor(ctx context.Context) {
 			if err := m.cleanupEmptyPools(ctx); err != nil {
 				m.log.Error("pool cleanup failed", "error", err)
 			}
+			if err := m.checkForStalePendingSandboxes(ctx); err != nil {
+				m.log.Error("stale pending sandbox check failed", "error", err)
+			}
 		}
 	}
 }
@@ -750,6 +758,58 @@ func (m *Manager) cleanupEmptyPools(ctx context.Context) error {
 		}
 
 		m.log.Info("deleted empty pool", "pool", pool.ID)
+	}
+
+	return nil
+}
+
+// checkForStalePendingSandboxes finds sandboxes stuck in PENDING state longer
+// than PendingSandboxTimeout and marks them STOPPED. STOPPED triggers the
+// sandbox controller's cleanup path (container shutdown, IP release, etc.)
+// and removes them from pool capacity accounting.
+func (m *Manager) checkForStalePendingSandboxes(ctx context.Context) error {
+	resp, err := m.eac.List(ctx, entity.Ref(entity.EntityKind, compute_v1alpha.KindSandbox))
+	if err != nil {
+		return fmt.Errorf("failed to list sandboxes: %w", err)
+	}
+
+	now := time.Now()
+	threshold := now.Add(-PendingSandboxTimeout)
+
+	for _, ent := range resp.Values() {
+		var sb compute_v1alpha.Sandbox
+		sb.Decode(ent.Entity())
+
+		if sb.Status != compute_v1alpha.PENDING {
+			continue
+		}
+
+		createdAt := time.UnixMilli(ent.CreatedAt())
+		if createdAt.After(threshold) {
+			continue
+		}
+
+		m.log.Warn("marking stale PENDING sandbox as STOPPED",
+			"sandbox", sb.ID,
+			"created_at", createdAt,
+			"age", now.Sub(createdAt))
+
+		if _, err := m.eac.Patch(ctx, entity.New(
+			entity.DBId, sb.ID,
+			(&compute_v1alpha.Sandbox{
+				Status: compute_v1alpha.STOPPED,
+			}).Encode,
+		).Attrs(), 0); err != nil {
+			if errors.Is(err, cond.ErrNotFound{}) {
+				m.log.Warn("sandbox already deleted during stale pending check",
+					"sandbox", sb.ID)
+			} else {
+				m.log.Error("failed to stop stale PENDING sandbox",
+					"sandbox", sb.ID,
+					"error", err)
+			}
+			continue
+		}
 	}
 
 	return nil
