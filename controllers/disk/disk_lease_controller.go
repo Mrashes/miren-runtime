@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -51,7 +50,7 @@ type DiskLeaseController struct {
 	// Test-only cache for disk entities (when EAC is not available)
 	testDiskCache map[string]*storage_v1alpha.Disk
 
-	// diskMode determines how disk mounts are performed (universal, accelerator, directory)
+	// diskMode determines how disk mounts are performed (universal or accelerator)
 	diskMode storage_v1alpha.DiskMode
 }
 
@@ -84,9 +83,8 @@ func (d *DiskLeaseController) GetTestDisk(diskId entity.Id) *storage_v1alpha.Dis
 	return d.testDiskCache[diskId.String()]
 }
 
-// ForceLSVDMode forces the controller to use lsvd_mount entities instead of
-// directory mode, regardless of NBD availability. This is used by integration
-// tests where the LSVD volume/mount ops are mocked.
+// ForceLSVDMode forces the controller to use lsvd_mount entities.
+// This is used by integration tests where the LSVD volume/mount ops are mocked.
 func (d *DiskLeaseController) ForceLSVDMode() {
 	d.diskMode = ""
 }
@@ -365,41 +363,6 @@ func (d *DiskLeaseController) handlePendingLease(ctx context.Context, lease *sto
 		return nil
 	}
 
-	// In directory mode or when EAC is nil (test mode), just verify the directory exists
-	if d.diskMode == storage_v1alpha.DIRECTORY || d.EAC == nil {
-		diskDataPath := filepath.Join(d.mountBasePath, "disk-data", volumeId)
-		if _, err := os.Stat(diskDataPath); err != nil {
-			d.Log.Error("Failed to find directory for disk", "volume", volumeId, "path", diskDataPath, "error", err)
-			d.cleanupLeaseReservation(diskId)
-
-			lease.Status = storage_v1alpha.FAILED
-			lease.ErrorMessage = fmt.Sprintf("Directory not found: %v", err)
-
-			return nil
-		}
-
-		d.Log.Info("Successfully bound lease to directory (NBD unavailable)",
-			"disk", diskId,
-			"volume", volumeId,
-			"path", diskDataPath)
-
-		// Bind the lease
-		d.mu.Lock()
-		d.leaseDetails[leaseId] = &leaseInfo{
-			leaseId:   leaseId,
-			diskId:    diskId,
-			sandboxId: lease.SandboxId.String(),
-			volumeId:  volumeId,
-		}
-		d.mu.Unlock()
-
-		lease.Status = storage_v1alpha.BOUND
-		lease.ErrorMessage = ""
-		lease.AcquiredAt = time.Now()
-
-		return nil
-	}
-
 	// For universal mode disks, use disk_mount entities
 	if disk.Mode == storage_v1alpha.UNIVERSAL || (disk.VolumeId != "" && disk.LsvdVolumeId == "") {
 		return d.handlePendingLeaseUniversal(ctx, lease, disk, volumeId)
@@ -585,26 +548,6 @@ func (d *DiskLeaseController) handleBoundLease(ctx context.Context, lease *stora
 	}
 	d.mu.Unlock()
 
-	// In directory mode, just verify directory exists
-	if d.diskMode == storage_v1alpha.DIRECTORY {
-		d.mu.RLock()
-		details := d.leaseDetails[leaseId]
-		d.mu.RUnlock()
-
-		if details != nil && details.volumeId != "" {
-			diskDataPath := filepath.Join(d.mountBasePath, "disk-data", details.volumeId)
-			if _, err := os.Stat(diskDataPath); err == nil {
-				d.Log.Debug("Bound lease already properly set up (directory mode)",
-					"lease", leaseId,
-					"disk", diskId,
-					"volume", details.volumeId,
-					"path", diskDataPath)
-				return nil
-			}
-		}
-		return nil
-	}
-
 	// Try disk_mount first (universal mode), then fall back to lsvd_mount
 	diskMount, err := d.getDiskMountForLease(ctx, lease.ID)
 	if err != nil {
@@ -699,11 +642,6 @@ func (d *DiskLeaseController) handleReleasedLease(ctx context.Context, lease *st
 	d.mu.Unlock()
 
 	if !isActiveForThisLease {
-		return nil
-	}
-
-	// In directory mode, nothing more to do
-	if d.diskMode == storage_v1alpha.DIRECTORY {
 		return nil
 	}
 
@@ -804,10 +742,6 @@ func (d *DiskLeaseController) handleFailedLease(ctx context.Context, lease *stor
 		d.releaseLease(leaseId, diskId)
 	}
 	d.mu.Unlock()
-
-	if d.diskMode == storage_v1alpha.DIRECTORY {
-		return nil
-	}
 
 	// Try disk_mount cleanup first (universal mode)
 	diskMount, err := d.getDiskMountForLease(ctx, lease.ID)

@@ -34,7 +34,7 @@ kinds:
     mode:
       type: enum
       doc: Disk I/O mode
-      choices: [universal, accelerator, directory]
+      choices: [universal, accelerator]
       default: universal
       indexed: true
 
@@ -254,7 +254,7 @@ kinds:
 
     mode:
       type: string
-      doc: Disk I/O mode (universal, accelerator, directory)
+      doc: Disk I/O mode (universal or accelerator)
 
     image_path:
       type: string

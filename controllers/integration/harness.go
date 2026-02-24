@@ -73,7 +73,7 @@ func NewTestHarness(t *testing.T) *TestHarness {
 	lsvdMntCtrl.SetEAC(eac)
 
 	// Create disk controllers and force LSVD mode so they create lsvd_volume
-	// and lsvd_mount entities instead of falling back to directory mode.
+	// and lsvd_mount entities (the accelerator/LSVD path).
 	// The mock ops above handle the actual volume/mount operations.
 	diskCtrl := disk.NewDiskController(log, eac, testNodeId)
 	diskCtrl.Init(ctx) //nolint:errcheck

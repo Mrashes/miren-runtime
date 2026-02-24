@@ -44,7 +44,7 @@ func (m *mockVolumeOps) InitLSVDVolume(_ context.Context, _, volumeId string, _ 
 var _ lsvdserver.VolumeOps = (*mockVolumeOps)(nil)
 
 // mockMountOps implements lsvdserver.MountOps for testing.
-// In integration tests we use directory-mode on the DiskController/DiskLeaseController
+// In integration tests we use LSVD mode on the DiskController/DiskLeaseController
 // side, so the MountController's ops are only called for lsvd_mount entity reconciliation.
 // The mock ops simulate successful NBD attach/mount/format flows without real OS interaction.
 type mockMountOps struct {

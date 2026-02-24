@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
@@ -16,7 +15,6 @@ import (
 )
 
 // detectDiskMode determines which disk I/O mode to use.
-// Priority: MIREN_DISK_MODE env var > loop device > directory fallback
 func detectDiskMode() storage_v1alpha.DiskMode {
 	if mode := os.Getenv("MIREN_DISK_MODE"); mode != "" {
 		switch mode {
@@ -24,37 +22,11 @@ func detectDiskMode() storage_v1alpha.DiskMode {
 			return storage_v1alpha.UNIVERSAL
 		case "accelerator":
 			return storage_v1alpha.ACCELERATOR
-		case "directory":
-			return storage_v1alpha.DIRECTORY
 		}
 	}
 
-	// Check for loop device support
-	if _, err := os.Stat("/dev/loop-control"); err == nil {
-		return storage_v1alpha.UNIVERSAL
-	}
-
-	return storage_v1alpha.DIRECTORY
-}
-
-// isNBDAvailable checks if NBD is available (either as a module or built into the kernel)
-func isNBDAvailable() bool {
-	if os.Getenv("MIREN_DISABLE_NBD") != "" {
-		return false
-	}
-
-	// Check if NBD module is loaded
-	if _, err := os.Stat("/sys/module/nbd"); err == nil {
-		return true
-	}
-
-	// Check if NBD devices exist (NBD might be compiled into the kernel)
-	matches, err := filepath.Glob("/sys/devices/virtual/block/nbd*")
-	if err == nil && len(matches) > 0 {
-		return true
-	}
-
-	return false
+	// Loop devices are available on all Linux systems
+	return storage_v1alpha.UNIVERSAL
 }
 
 // DiskController manages disk entities and their lifecycle.
@@ -69,7 +41,7 @@ type DiskController struct {
 	// Base path for disk mounts (e.g., /var/lib/miren/disks)
 	mountBasePath string
 
-	// diskMode determines how disks are provisioned (universal, accelerator, directory)
+	// diskMode determines how disks are provisioned (universal or accelerator)
 	diskMode storage_v1alpha.DiskMode
 }
 
@@ -84,9 +56,8 @@ func NewDiskController(log *slog.Logger, eac *entityserver_v1alpha.EntityAccessC
 	}
 }
 
-// ForceLSVDMode forces the controller to use lsvd_volume entities instead of
-// directory mode, regardless of NBD availability. This is used by integration
-// tests where the LSVD volume/mount ops are mocked.
+// ForceLSVDMode forces the controller to use lsvd_volume entities.
+// This is used by integration tests where the LSVD volume/mount ops are mocked.
 func (d *DiskController) ForceLSVDMode() {
 	d.diskMode = ""
 }
@@ -173,17 +144,12 @@ func (d *DiskController) reconcileDisk(ctx context.Context, disk *storage_v1alph
 
 // handleProvisioning provisions a new disk volume based on the disk mode
 func (d *DiskController) handleProvisioning(ctx context.Context, disk *storage_v1alpha.Disk) error {
-	// In directory mode or when EAC is nil (test mode), just create a directory
-	if d.diskMode == storage_v1alpha.DIRECTORY || d.EAC == nil {
-		return d.provisionDirectory(ctx, disk)
-	}
-
 	// For universal mode, use disk_volume entities
 	if d.diskMode == storage_v1alpha.UNIVERSAL {
 		return d.handleProvisioningUniversal(ctx, disk)
 	}
 
-	// Default: use LSVD path (legacy or accelerator mode not yet implemented)
+	// Default: use LSVD path (legacy or accelerator mode)
 	return d.handleProvisioningLSVD(ctx, disk)
 }
 
@@ -347,32 +313,6 @@ func (d *DiskController) handleProvisioningLSVD(ctx context.Context, disk *stora
 	return nil
 }
 
-// provisionDirectory creates a directory for directory-mode disks
-func (d *DiskController) provisionDirectory(ctx context.Context, disk *storage_v1alpha.Disk) error {
-	// Validate disk size
-	if disk.SizeGb <= 0 {
-		return fmt.Errorf("invalid disk size: %d GB", disk.SizeGb)
-	}
-
-	// Generate org-scoped deterministic volume ID for directory mode
-	volumeId := idgen.GenNS("vol")
-	diskDataPath := filepath.Join(d.mountBasePath, "disk-data", volumeId)
-	d.Log.Info("Creating directory-only disk (NBD unavailable)",
-		"volume", volumeId,
-		"path", diskDataPath,
-		"size_gb", disk.SizeGb,
-		"filesystem", disk.Filesystem)
-
-	if err := os.MkdirAll(diskDataPath, 0755); err != nil {
-		return fmt.Errorf("failed to create directory for disk: %w", err)
-	}
-
-	disk.Status = storage_v1alpha.PROVISIONED
-	disk.LsvdVolumeId = volumeId
-
-	return nil
-}
-
 // handleProvisioned verifies a provisioned disk has a ready volume entity
 func (d *DiskController) handleProvisioned(ctx context.Context, disk *storage_v1alpha.Disk) error {
 	// Determine which volume system this disk uses
@@ -427,25 +367,6 @@ func (d *DiskController) handleProvisionedLSVD(ctx context.Context, disk *storag
 		d.Log.Warn("provisioned disk has no volume ID, re-provisioning", "disk", disk.ID)
 		disk.Status = storage_v1alpha.PROVISIONING
 		return d.handleProvisioning(ctx, disk)
-	}
-
-	// In directory mode or when EAC is nil (test mode), verify directory exists
-	if d.diskMode == storage_v1alpha.DIRECTORY || d.EAC == nil {
-		diskDataPath := filepath.Join(d.mountBasePath, "disk-data", disk.LsvdVolumeId)
-		if _, err := os.Stat(diskDataPath); err != nil {
-			if os.IsNotExist(err) {
-				d.Log.Warn("directory not found for provisioned disk, re-provisioning",
-					"disk", disk.ID,
-					"volume", disk.LsvdVolumeId,
-					"path", diskDataPath)
-				disk.LsvdVolumeId = ""
-				disk.Status = storage_v1alpha.PROVISIONING
-				return d.handleProvisioning(ctx, disk)
-			}
-			return fmt.Errorf("failed to check directory: %w", err)
-		}
-
-		return nil
 	}
 
 	// Verify via lsvd_volume entity

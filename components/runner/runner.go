@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net/netip"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -482,10 +481,6 @@ func (r *Runner) SetupControllers(
 	// Initialize disk controllers with LSVD entity mode
 	// Entity mode uses lsvd-server as an outboard process for disk operations
 	dataPath := filepath.Join(r.DataPath, "disk-data")
-	err = os.MkdirAll(dataPath, 0700)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create disk data path: %w", err)
-	}
 
 	// Start lsvd component unless explicitly skipped (for tests)
 	if !r.deps.SkipLSVD {
