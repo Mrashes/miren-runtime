@@ -964,6 +964,7 @@ func TestSetEnvVar(t *testing.T) {
 		}
 		if webSvc == nil {
 			t.Fatal("web service not found")
+			return
 		}
 		if len(webSvc.Env) != 1 {
 			t.Fatalf("expected 1 service env var, got %d", len(webSvc.Env))
@@ -1088,6 +1089,7 @@ func TestDeleteEnvVar(t *testing.T) {
 		}
 		if webSvc == nil {
 			t.Fatal("web service not found")
+			return
 		}
 		if len(webSvc.Env) != 1 {
 			t.Fatalf("expected 1 service env var, got %d", len(webSvc.Env))
