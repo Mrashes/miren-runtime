@@ -749,5 +749,35 @@ func (r *Runner) SetupControllers(
 		),
 	)
 
+	// Add disk_volume watch controller to trigger disk re-reconciliation when
+	// disk_volume entities change (e.g. volume becomes DV_READY after provisioning)
+	diskVolumeWatchController := disk.NewDiskVolumeWatchController(log, eas, diskRC)
+	cm.AddController(
+		controller.NewReconcileController(
+			"disk-volume-watch",
+			log,
+			entity.Ref(entity.EntityKind, storage_v1alpha.KindDiskVolume),
+			eas,
+			controller.AdaptController(diskVolumeWatchController),
+			0,
+			1,
+		),
+	)
+
+	// Add disk_mount watch controller to trigger disk lease re-reconciliation when
+	// disk_mount entities change (e.g. mount becomes DM_MOUNTED after mounting)
+	diskMountWatchController := disk.NewDiskMountWatchController(log, eas, diskLeaseRC)
+	cm.AddController(
+		controller.NewReconcileController(
+			"disk-mount-watch",
+			log,
+			entity.Ref(entity.EntityKind, storage_v1alpha.KindDiskMount),
+			eas,
+			controller.AdaptController(diskMountWatchController),
+			0,
+			1,
+		),
+	)
+
 	return cm, nil
 }

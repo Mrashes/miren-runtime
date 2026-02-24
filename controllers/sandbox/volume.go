@@ -379,16 +379,20 @@ func (c *SandboxController) waitForLeaseBound(ctx context.Context, leaseID entit
 				var disk storage.Disk
 				disk.Decode(diskResp.Entity().Entity())
 
-				if disk.LsvdVolumeId == "" {
-					return "", fmt.Errorf("disk has no LSVD volume ID")
+				volumeId := disk.VolumeId
+				if volumeId == "" {
+					volumeId = disk.LsvdVolumeId
+				}
+				if volumeId == "" {
+					return "", fmt.Errorf("disk has no volume ID")
 				}
 
-				// Disk is mounted at /var/lib/miren/disks/{lsvd_volume_id}
-				diskPath := filepath.Join("/var/lib/miren/disks", disk.LsvdVolumeId)
+				// Disk is mounted at /var/lib/miren/disks/{volume_id}
+				diskPath := filepath.Join("/var/lib/miren/disks", volumeId)
 				c.Log.Info("disk lease bound successfully",
 					"lease", leaseID,
 					"disk", disk.ID,
-					"lsvd_volume_id", disk.LsvdVolumeId,
+					"volume_id", volumeId,
 					"disk_path", diskPath)
 				return diskPath, nil
 

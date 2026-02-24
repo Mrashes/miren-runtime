@@ -15,6 +15,28 @@ import (
 	"miren.dev/runtime/pkg/idgen"
 )
 
+// detectDiskMode determines which disk I/O mode to use.
+// Priority: MIREN_DISK_MODE env var > loop device > directory fallback
+func detectDiskMode() storage_v1alpha.DiskMode {
+	if mode := os.Getenv("MIREN_DISK_MODE"); mode != "" {
+		switch mode {
+		case "universal":
+			return storage_v1alpha.UNIVERSAL
+		case "accelerator":
+			return storage_v1alpha.ACCELERATOR
+		case "directory":
+			return storage_v1alpha.DIRECTORY
+		}
+	}
+
+	// Check for loop device support
+	if _, err := os.Stat("/dev/loop-control"); err == nil {
+		return storage_v1alpha.UNIVERSAL
+	}
+
+	return storage_v1alpha.DIRECTORY
+}
+
 // isNBDAvailable checks if NBD is available (either as a module or built into the kernel)
 func isNBDAvailable() bool {
 	if os.Getenv("MIREN_DISABLE_NBD") != "" {
@@ -36,19 +58,19 @@ func isNBDAvailable() bool {
 }
 
 // DiskController manages disk entities and their lifecycle.
-// It uses lsvd_volume entities to coordinate with lsvd-server for volume operations.
+// It uses lsvd_volume or disk_volume entities to coordinate with lsvd-server for volume operations.
 type DiskController struct {
 	Log *slog.Logger
 	EAC *entityserver_v1alpha.EntityAccessClient
 
-	// NodeId is the ID of this node, used for creating lsvd_volume entities
+	// NodeId is the ID of this node, used for creating volume entities
 	NodeId string
 
 	// Base path for disk mounts (e.g., /var/lib/miren/disks)
 	mountBasePath string
 
-	// directoryMode is enabled when NBD is unavailable - disks are simple directories
-	directoryMode bool
+	// diskMode determines how disks are provisioned (universal, accelerator, directory)
+	diskMode storage_v1alpha.DiskMode
 }
 
 // NewDiskController creates a disk controller that uses lsvd_volume entities.
@@ -66,18 +88,19 @@ func NewDiskController(log *slog.Logger, eac *entityserver_v1alpha.EntityAccessC
 // directory mode, regardless of NBD availability. This is used by integration
 // tests where the LSVD volume/mount ops are mocked.
 func (d *DiskController) ForceLSVDMode() {
-	d.directoryMode = false
+	d.diskMode = ""
+}
+
+// ForceUniversalMode forces the controller to use disk_volume entities with
+// loop devices. This is used by integration tests.
+func (d *DiskController) ForceUniversalMode() {
+	d.diskMode = storage_v1alpha.UNIVERSAL
 }
 
 // Init initializes the disk controller
 func (d *DiskController) Init(ctx context.Context) error {
-	// Check if NBD is available
-	if !isNBDAvailable() {
-		d.directoryMode = true
-		d.Log.Warn("NBD kernel module not available - using directory-only mode for disks")
-	} else {
-		d.Log.Info("NBD kernel module available - using full LSVD mode")
-	}
+	d.diskMode = detectDiskMode()
+	d.Log.Info("disk controller initialized", "mode", d.diskMode)
 	return nil
 }
 
@@ -148,13 +171,106 @@ func (d *DiskController) reconcileDisk(ctx context.Context, disk *storage_v1alph
 	return nil
 }
 
-// handleProvisioning provisions a new LSVD volume via lsvd_volume entity
+// handleProvisioning provisions a new disk volume based on the disk mode
 func (d *DiskController) handleProvisioning(ctx context.Context, disk *storage_v1alpha.Disk) error {
 	// In directory mode or when EAC is nil (test mode), just create a directory
-	if d.directoryMode || d.EAC == nil {
+	if d.diskMode == storage_v1alpha.DIRECTORY || d.EAC == nil {
 		return d.provisionDirectory(ctx, disk)
 	}
 
+	// For universal mode, use disk_volume entities
+	if d.diskMode == storage_v1alpha.UNIVERSAL {
+		return d.handleProvisioningUniversal(ctx, disk)
+	}
+
+	// Default: use LSVD path (legacy or accelerator mode not yet implemented)
+	return d.handleProvisioningLSVD(ctx, disk)
+}
+
+// handleProvisioningUniversal provisions a disk volume using disk_volume entities
+// and loop devices (Universal Mode)
+func (d *DiskController) handleProvisioningUniversal(ctx context.Context, disk *storage_v1alpha.Disk) error {
+	// Check if a disk_volume entity already exists for this disk
+	existingVolume, err := d.getDiskVolumeForDisk(ctx, disk.ID)
+	if err != nil {
+		return fmt.Errorf("error looking up existing disk_volume for disk %s: %w", disk.ID, err)
+	}
+
+	if existingVolume != nil {
+		d.Log.Debug("found existing disk_volume for disk",
+			"disk", disk.ID,
+			"disk_volume", existingVolume.ID,
+			"actual_state", existingVolume.ActualState,
+			"volume_id", existingVolume.VolumeId)
+
+		switch existingVolume.ActualState {
+		case storage_v1alpha.DV_READY:
+			disk.Status = storage_v1alpha.PROVISIONED
+			disk.VolumeId = existingVolume.VolumeId
+			disk.Mode = storage_v1alpha.UNIVERSAL
+			d.Log.Info("disk provisioned via disk_volume entity",
+				"disk", disk.ID,
+				"volume_id", existingVolume.VolumeId)
+			return nil
+
+		case storage_v1alpha.DV_ERROR:
+			d.Log.Warn("disk_volume in error state",
+				"disk", disk.ID,
+				"disk_volume", existingVolume.ID,
+				"error", existingVolume.ErrorMessage)
+			return nil
+
+		default:
+			d.Log.Debug("disk_volume still provisioning",
+				"disk", disk.ID,
+				"disk_volume", existingVolume.ID,
+				"actual_state", existingVolume.ActualState)
+			return nil
+		}
+	}
+
+	// Create new disk_volume entity
+	filesystem := strings.TrimPrefix(string(disk.Filesystem), "filesystem.")
+
+	diskVolume := &storage_v1alpha.DiskVolume{
+		Name:         disk.Name,
+		DiskId:       disk.ID,
+		SizeGb:       disk.SizeGb,
+		Filesystem:   filesystem,
+		Mode:         "universal",
+		DesiredState: storage_v1alpha.DV_PRESENT,
+		ActualState:  storage_v1alpha.DV_PENDING,
+		NodeId:       entity.Id("node/" + strings.TrimPrefix(d.NodeId, "node/")),
+	}
+
+	d.Log.Info("creating disk_volume entity",
+		"disk", disk.ID,
+		"size_gb", disk.SizeGb,
+		"filesystem", filesystem,
+		"node_id", d.NodeId)
+
+	volumeId := idgen.GenNS("disk-vol")
+	createAttrs := entity.New(
+		entity.DBId, entity.Id("disk_volume/"+volumeId),
+		diskVolume.Encode,
+	).Attrs()
+
+	_, err = d.EAC.Create(ctx, createAttrs)
+	if err != nil {
+		return fmt.Errorf("failed to create disk_volume entity: %w", err)
+	}
+
+	// Set mode on disk entity so other controllers know this is universal mode
+	disk.Mode = storage_v1alpha.UNIVERSAL
+
+	d.Log.Info("created disk_volume entity, waiting for provisioning",
+		"disk", disk.ID)
+
+	return nil
+}
+
+// handleProvisioningLSVD provisions a disk volume using lsvd_volume entities (legacy path)
+func (d *DiskController) handleProvisioningLSVD(ctx context.Context, disk *storage_v1alpha.Disk) error {
 	// Check if an lsvd_volume entity already exists for this disk
 	existingVolume, err := d.getLsvdVolumeForDisk(ctx, disk.ID)
 	if err != nil {
@@ -162,8 +278,7 @@ func (d *DiskController) handleProvisioning(ctx context.Context, disk *storage_v
 	}
 
 	if existingVolume != nil {
-		// Volume entity exists, check its state
-		d.Log.Debug("Found existing lsvd_volume for disk",
+		d.Log.Debug("found existing lsvd_volume for disk",
 			"disk", disk.ID,
 			"lsvd_volume", existingVolume.ID,
 			"actual_state", existingVolume.ActualState,
@@ -171,25 +286,21 @@ func (d *DiskController) handleProvisioning(ctx context.Context, disk *storage_v
 
 		switch existingVolume.ActualState {
 		case storage_v1alpha.VOL_READY:
-			// Volume is ready, update disk status
 			disk.Status = storage_v1alpha.PROVISIONED
 			disk.LsvdVolumeId = existingVolume.VolumeId
-			d.Log.Info("Disk provisioned via lsvd_volume entity",
+			d.Log.Info("disk provisioned via lsvd_volume entity",
 				"disk", disk.ID,
 				"volume", existingVolume.VolumeId)
 			return nil
 
 		case storage_v1alpha.VOL_ERROR:
-			// Volume failed, could retry by resetting the entity
 			d.Log.Warn("lsvd_volume in error state",
 				"disk", disk.ID,
 				"lsvd_volume", existingVolume.ID,
 				"error", existingVolume.ErrorMessage)
-			// Don't update disk status - leave it in PROVISIONING for retry
 			return nil
 
 		default:
-			// Volume is still being created, wait
 			d.Log.Debug("lsvd_volume still provisioning",
 				"disk", disk.ID,
 				"lsvd_volume", existingVolume.ID,
@@ -212,14 +323,13 @@ func (d *DiskController) handleProvisioning(ctx context.Context, disk *storage_v
 		NodeId:       entity.Id("node/" + strings.TrimPrefix(d.NodeId, "node/")),
 	}
 
-	d.Log.Info("Creating lsvd_volume entity",
+	d.Log.Info("creating lsvd_volume entity",
 		"disk", disk.ID,
 		"size_gb", disk.SizeGb,
 		"filesystem", filesystem,
 		"remote_only", disk.RemoteOnly,
 		"node_id", d.NodeId)
 
-	// Build entity with id and encoded attributes
 	volumeId := idgen.GenNS("lsvd-vol")
 	createAttrs := entity.New(
 		entity.DBId, entity.Id("lsvd_volume/"+volumeId),
@@ -231,10 +341,9 @@ func (d *DiskController) handleProvisioning(ctx context.Context, disk *storage_v
 		return fmt.Errorf("failed to create lsvd_volume entity: %w", err)
 	}
 
-	d.Log.Info("Created lsvd_volume entity, waiting for lsvd-server to provision",
+	d.Log.Info("created lsvd_volume entity, waiting for lsvd-server to provision",
 		"disk", disk.ID)
 
-	// Disk remains in PROVISIONING state until lsvd_volume becomes ready
 	return nil
 }
 
@@ -264,21 +373,68 @@ func (d *DiskController) provisionDirectory(ctx context.Context, disk *storage_v
 	return nil
 }
 
-// handleProvisioned verifies a provisioned disk has a ready lsvd_volume entity
+// handleProvisioned verifies a provisioned disk has a ready volume entity
 func (d *DiskController) handleProvisioned(ctx context.Context, disk *storage_v1alpha.Disk) error {
-	// Check if volume ID exists
+	// Determine which volume system this disk uses
+	if disk.VolumeId != "" || disk.Mode == storage_v1alpha.UNIVERSAL {
+		return d.handleProvisionedUniversal(ctx, disk)
+	}
+
+	// Fall back to LSVD path for backward compatibility
+	return d.handleProvisionedLSVD(ctx, disk)
+}
+
+func (d *DiskController) handleProvisionedUniversal(ctx context.Context, disk *storage_v1alpha.Disk) error {
+	if disk.VolumeId == "" {
+		d.Log.Warn("provisioned universal disk has no volume ID, re-provisioning", "disk", disk.ID)
+		disk.Status = storage_v1alpha.PROVISIONING
+		return d.handleProvisioning(ctx, disk)
+	}
+
+	if d.EAC == nil {
+		return nil
+	}
+
+	volume, err := d.getDiskVolumeForDisk(ctx, disk.ID)
+	if err != nil {
+		return fmt.Errorf("error looking up disk_volume for provisioned disk %s: %w", disk.ID, err)
+	}
+
+	if volume == nil {
+		d.Log.Warn("provisioned disk has no disk_volume entity, clearing volume ID",
+			"disk", disk.ID,
+			"volume_id", disk.VolumeId)
+		disk.VolumeId = ""
+		disk.Status = storage_v1alpha.PROVISIONING
+		return nil
+	}
+
+	if volume.ActualState != storage_v1alpha.DV_READY {
+		d.Log.Warn("disk_volume not ready for provisioned disk",
+			"disk", disk.ID,
+			"disk_volume", volume.ID,
+			"actual_state", volume.ActualState)
+		disk.Status = storage_v1alpha.PROVISIONING
+		disk.VolumeId = ""
+		return nil
+	}
+
+	return nil
+}
+
+func (d *DiskController) handleProvisionedLSVD(ctx context.Context, disk *storage_v1alpha.Disk) error {
 	if disk.LsvdVolumeId == "" {
-		d.Log.Warn("Provisioned disk has no volume ID, re-provisioning", "disk", disk.ID)
+		d.Log.Warn("provisioned disk has no volume ID, re-provisioning", "disk", disk.ID)
 		disk.Status = storage_v1alpha.PROVISIONING
 		return d.handleProvisioning(ctx, disk)
 	}
 
 	// In directory mode or when EAC is nil (test mode), verify directory exists
-	if d.directoryMode || d.EAC == nil {
+	if d.diskMode == storage_v1alpha.DIRECTORY || d.EAC == nil {
 		diskDataPath := filepath.Join(d.mountBasePath, "disk-data", disk.LsvdVolumeId)
 		if _, err := os.Stat(diskDataPath); err != nil {
 			if os.IsNotExist(err) {
-				d.Log.Warn("Directory not found for provisioned disk, re-provisioning",
+				d.Log.Warn("directory not found for provisioned disk, re-provisioning",
 					"disk", disk.ID,
 					"volume", disk.LsvdVolumeId,
 					"path", diskDataPath)
@@ -288,11 +444,6 @@ func (d *DiskController) handleProvisioned(ctx context.Context, disk *storage_v1
 			}
 			return fmt.Errorf("failed to check directory: %w", err)
 		}
-
-		d.Log.Debug("Provisioned disk directory exists",
-			"disk", disk.ID,
-			"volume", disk.LsvdVolumeId,
-			"path", diskDataPath)
 
 		return nil
 	}
@@ -304,8 +455,7 @@ func (d *DiskController) handleProvisioned(ctx context.Context, disk *storage_v1
 	}
 
 	if volume == nil {
-		// No lsvd_volume entity - this shouldn't happen for a provisioned disk
-		d.Log.Warn("Provisioned disk has no lsvd_volume entity, clearing volume ID",
+		d.Log.Warn("provisioned disk has no lsvd_volume entity, clearing volume ID",
 			"disk", disk.ID,
 			"volume", disk.LsvdVolumeId)
 		disk.LsvdVolumeId = ""
@@ -313,74 +463,127 @@ func (d *DiskController) handleProvisioned(ctx context.Context, disk *storage_v1
 		return nil
 	}
 
-	// Check the actual state
 	if volume.ActualState != storage_v1alpha.VOL_READY {
 		d.Log.Warn("lsvd_volume not ready for provisioned disk",
 			"disk", disk.ID,
 			"lsvd_volume", volume.ID,
 			"actual_state", volume.ActualState)
-		// Revert to provisioning state
 		disk.Status = storage_v1alpha.PROVISIONING
 		disk.LsvdVolumeId = ""
 		return nil
 	}
 
-	d.Log.Debug("Provisioned disk has ready lsvd_volume",
-		"disk", disk.ID,
-		"lsvd_volume", volume.ID,
-		"volume_id", volume.VolumeId)
-
 	return nil
 }
 
-// handleDeletion sets desired_state=absent on the lsvd_volume entity
+// handleDeletion sets desired_state=absent on the volume entity
 func (d *DiskController) handleDeletion(ctx context.Context, disk *storage_v1alpha.Disk) error {
-	volume, err := d.getLsvdVolumeForDisk(ctx, disk.ID)
+	// Try universal mode first if disk has VolumeId or Mode set
+	if disk.VolumeId != "" || disk.Mode == storage_v1alpha.UNIVERSAL {
+		return d.handleDeletionUniversal(ctx, disk)
+	}
+
+	// Fall back to LSVD path
+	return d.handleDeletionLSVD(ctx, disk)
+}
+
+func (d *DiskController) handleDeletionUniversal(ctx context.Context, disk *storage_v1alpha.Disk) error {
+	volume, err := d.getDiskVolumeForDisk(ctx, disk.ID)
 	if err != nil {
-		d.Log.Warn("Error looking up lsvd_volume for deletion",
+		d.Log.Warn("error looking up disk_volume for deletion",
 			"disk", disk.ID,
 			"error", err)
-		// Return error so resync can retry - prevents orphaning volumes if lookup fails
 		return err
 	}
 
 	if volume != nil {
-		// Check if already deleted
+		if volume.ActualState == storage_v1alpha.DV_DELETED {
+			d.Log.Info("disk_volume already deleted, cleaning up disk",
+				"disk", disk.ID,
+				"disk_volume", volume.ID)
+
+			if _, err := d.EAC.Delete(ctx, volume.ID.String()); err != nil {
+				d.Log.Warn("failed to delete disk_volume entity",
+					"disk_volume", volume.ID,
+					"error", err)
+				return err
+			}
+		} else if volume.DesiredState != storage_v1alpha.DV_ABSENT {
+			d.Log.Info("setting disk_volume desired_state to absent",
+				"disk", disk.ID,
+				"disk_volume", volume.ID)
+
+			updateAttrs := []entity.Attr{
+				entity.Ref(entity.DBId, volume.ID),
+				entity.Ref(storage_v1alpha.DiskVolumeDesiredStateId, storage_v1alpha.DiskVolumeDesiredStateDvAbsentId),
+			}
+			if _, err := d.EAC.Patch(ctx, updateAttrs, 0); err != nil {
+				d.Log.Error("failed to update disk_volume desired_state",
+					"disk_volume", volume.ID,
+					"error", err)
+				return err
+			}
+
+			return nil
+		} else {
+			d.Log.Debug("disk_volume already marked for deletion",
+				"disk", disk.ID,
+				"disk_volume", volume.ID,
+				"actual_state", volume.ActualState)
+			return nil
+		}
+	}
+
+	// No disk_volume or it's been deleted - delete the disk entity
+	if d.EAC != nil {
+		if _, err := d.EAC.Delete(ctx, disk.ID.String()); err != nil {
+			d.Log.Error("failed to delete disk entity", "disk", disk.ID, "error", err)
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (d *DiskController) handleDeletionLSVD(ctx context.Context, disk *storage_v1alpha.Disk) error {
+	volume, err := d.getLsvdVolumeForDisk(ctx, disk.ID)
+	if err != nil {
+		d.Log.Warn("error looking up lsvd_volume for deletion",
+			"disk", disk.ID,
+			"error", err)
+		return err
+	}
+
+	if volume != nil {
 		if volume.ActualState == storage_v1alpha.VOL_DELETED {
 			d.Log.Info("lsvd_volume already deleted, cleaning up disk",
 				"disk", disk.ID,
 				"lsvd_volume", volume.ID)
 
-			// Delete the lsvd_volume entity
 			if _, err := d.EAC.Delete(ctx, volume.ID.String()); err != nil {
-				d.Log.Warn("Failed to delete lsvd_volume entity",
+				d.Log.Warn("failed to delete lsvd_volume entity",
 					"lsvd_volume", volume.ID,
 					"error", err)
-				return err // Retry on next reconciliation
+				return err
 			}
 		} else if volume.DesiredState != storage_v1alpha.VOL_ABSENT {
-			// Set desired_state to absent
-			d.Log.Info("Setting lsvd_volume desired_state to absent",
+			d.Log.Info("setting lsvd_volume desired_state to absent",
 				"disk", disk.ID,
 				"lsvd_volume", volume.ID)
 
-			volume.DesiredState = storage_v1alpha.VOL_ABSENT
-			// Use Patch to update the desired_state
 			updateAttrs := []entity.Attr{
 				entity.Ref(entity.DBId, volume.ID),
 				entity.Ref(storage_v1alpha.LsvdVolumeDesiredStateId, storage_v1alpha.LsvdVolumeDesiredStateVolAbsentId),
 			}
 			if _, err := d.EAC.Patch(ctx, updateAttrs, 0); err != nil {
-				d.Log.Error("Failed to update lsvd_volume desired_state",
+				d.Log.Error("failed to update lsvd_volume desired_state",
 					"lsvd_volume", volume.ID,
 					"error", err)
 				return err
 			}
 
-			// Wait for lsvd-server to delete the volume
 			return nil
 		} else {
-			// Already marked for deletion, wait for it
 			d.Log.Debug("lsvd_volume already marked for deletion",
 				"disk", disk.ID,
 				"lsvd_volume", volume.ID,
@@ -392,12 +595,36 @@ func (d *DiskController) handleDeletion(ctx context.Context, disk *storage_v1alp
 	// No lsvd_volume or it's been deleted - delete the disk entity
 	if d.EAC != nil {
 		if _, err := d.EAC.Delete(ctx, disk.ID.String()); err != nil {
-			d.Log.Error("Failed to delete disk entity", "disk", disk.ID, "error", err)
+			d.Log.Error("failed to delete disk entity", "disk", disk.ID, "error", err)
 			return err
 		}
 	}
 
 	return nil
+}
+
+// getDiskVolumeForDisk finds the disk_volume entity for a disk
+func (d *DiskController) getDiskVolumeForDisk(ctx context.Context, diskId entity.Id) (*storage_v1alpha.DiskVolume, error) {
+	if d.EAC == nil {
+		return nil, nil
+	}
+
+	indexAttr := entity.Ref(storage_v1alpha.DiskVolumeDiskIdId, diskId)
+
+	resp, err := d.EAC.List(ctx, indexAttr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list disk_volume entities: %w", err)
+	}
+
+	values := resp.Values()
+	if len(values) == 0 {
+		return nil, nil
+	}
+
+	var volume storage_v1alpha.DiskVolume
+	volume.Decode(values[0].Entity())
+
+	return &volume, nil
 }
 
 // getLsvdVolumeForDisk finds the lsvd_volume entity for a disk

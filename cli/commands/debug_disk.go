@@ -137,10 +137,15 @@ func DebugDiskList(ctx *Context, opts struct {
 		ctx.Info("  Filesystem: %s", disk.Filesystem)
 		ctx.Info("  Status: %s", disk.Status)
 		ctx.Info("  Remote Only: %v", disk.RemoteOnly)
+		if disk.Mode != "" {
+			ctx.Info("  Mode: %s", disk.Mode)
+		}
 		if disk.CreatedBy != "" {
 			ctx.Info("  Created By: %s", disk.CreatedBy)
 		}
-		if disk.LsvdVolumeId != "" {
+		if disk.VolumeId != "" {
+			ctx.Info("  Volume ID: %s", disk.VolumeId)
+		} else if disk.LsvdVolumeId != "" {
 			ctx.Info("  LSVD Volume ID: %s", disk.LsvdVolumeId)
 		}
 		ctx.Info("")
@@ -226,17 +231,19 @@ func DebugDiskStatus(ctx *Context, opts struct {
 	ctx.Info("  Status: %s", disk.Status)
 	ctx.Info("  Remote Only: %v", disk.RemoteOnly)
 
+	if disk.Mode != "" {
+		ctx.Info("  Mode: %s", disk.Mode)
+	}
+
 	if disk.CreatedBy != "" {
 		ctx.Info("  Created By: %s", disk.CreatedBy)
 	}
 
-	if disk.LsvdVolumeId != "" {
+	if disk.VolumeId != "" {
+		ctx.Info("  Volume ID: %s", disk.VolumeId)
+	} else if disk.LsvdVolumeId != "" {
 		ctx.Info("  LSVD Volume ID: %s", disk.LsvdVolumeId)
 	}
-
-	// Check for mount path in attributes
-	// Note: Custom attributes like mount_path would need to be retrieved from the entity attributes
-	// This is left as a placeholder for future implementation
 
 	return nil
 }

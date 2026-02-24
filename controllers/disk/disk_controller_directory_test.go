@@ -15,31 +15,24 @@ import (
 )
 
 func TestDiskController_DirectoryMode_Init(t *testing.T) {
-	t.Run("enables directory mode when NBD unavailable", func(t *testing.T) {
+	t.Run("enables directory mode when forced", func(t *testing.T) {
 		log := slog.Default()
 		controller := NewDiskController(log, nil, "test-node")
 
-		// Set environment to disable NBD
-		t.Setenv("MIREN_DISABLE_NBD", "1")
+		t.Setenv("MIREN_DISK_MODE", "directory")
 
 		err := controller.Init(context.Background())
 		require.NoError(t, err)
 
-		assert.True(t, controller.directoryMode, "Directory mode should be enabled when NBD is unavailable")
+		assert.Equal(t, storage_v1alpha.DIRECTORY, controller.diskMode)
 	})
 
-	t.Run("disables directory mode when NBD available", func(t *testing.T) {
+	t.Run("init does not error", func(t *testing.T) {
 		log := slog.Default()
 		controller := NewDiskController(log, nil, "test-node")
 
-		// Don't set MIREN_DISABLE_NBD - NBD availability depends on system
-		// This test may pass or fail depending on whether NBD is actually available
-
 		err := controller.Init(context.Background())
 		require.NoError(t, err)
-
-		// We can't assert a specific value here since it depends on the system
-		// Just verify Init doesn't error
 	})
 }
 
@@ -51,7 +44,7 @@ func TestDiskController_DirectoryMode_ProvisionDirectory(t *testing.T) {
 
 		controller := NewDiskController(log, nil, "test-node")
 		controller.mountBasePath = tempDir
-		controller.directoryMode = true
+		controller.diskMode = storage_v1alpha.DIRECTORY
 
 		disk := &storage_v1alpha.Disk{
 			ID:         entity.Id("disk/test-dir-1"),
@@ -80,7 +73,7 @@ func TestDiskController_DirectoryMode_ProvisionDirectory(t *testing.T) {
 
 		controller := NewDiskController(log, nil, "test-node")
 		controller.mountBasePath = tempDir
-		controller.directoryMode = true
+		controller.diskMode = storage_v1alpha.DIRECTORY
 
 		disk := &storage_v1alpha.Disk{
 			ID:         entity.Id("disk/test-invalid"),
@@ -102,7 +95,7 @@ func TestDiskController_DirectoryMode_ProvisionDirectory(t *testing.T) {
 		// Use an invalid path to cause directory creation to fail
 		controller := NewDiskController(log, nil, "test-node")
 		controller.mountBasePath = "/dev/null/invalid"
-		controller.directoryMode = true
+		controller.diskMode = storage_v1alpha.DIRECTORY
 
 		disk := &storage_v1alpha.Disk{
 			ID:         entity.Id("disk/test-fail"),
@@ -126,7 +119,7 @@ func TestDiskController_DirectoryMode_HandleProvisioned(t *testing.T) {
 
 		controller := NewDiskController(log, nil, "test-node")
 		controller.mountBasePath = tempDir
-		controller.directoryMode = true
+		controller.diskMode = storage_v1alpha.DIRECTORY
 
 		// Pre-create the directory
 		volumeId := "provisioned-vol-789"
@@ -155,7 +148,7 @@ func TestDiskController_DirectoryMode_HandleProvisioned(t *testing.T) {
 
 		controller := NewDiskController(log, nil, "test-node")
 		controller.mountBasePath = tempDir
-		controller.directoryMode = true
+		controller.diskMode = storage_v1alpha.DIRECTORY
 
 		volumeId := "missing-vol-101"
 		disk := &storage_v1alpha.Disk{
@@ -188,7 +181,7 @@ func TestDiskController_DirectoryMode_HandleProvisioned(t *testing.T) {
 
 		controller := NewDiskController(log, nil, "test-node")
 		controller.mountBasePath = tempDir
-		controller.directoryMode = true
+		controller.diskMode = storage_v1alpha.DIRECTORY
 
 		disk := &storage_v1alpha.Disk{
 			ID:         entity.Id("disk/test-empty-vol"),
@@ -222,7 +215,7 @@ func TestDiskController_DirectoryMode_HandleProvisioning(t *testing.T) {
 
 		controller := NewDiskController(log, nil, "test-node")
 		controller.mountBasePath = tempDir
-		controller.directoryMode = true
+		controller.diskMode = storage_v1alpha.DIRECTORY
 
 		disk := &storage_v1alpha.Disk{
 			ID:         entity.Id("disk/test-workflow"),
@@ -258,7 +251,7 @@ func TestDiskController_DirectoryMode_ReconcileDisk(t *testing.T) {
 
 		controller := NewDiskController(log, nil, "test-node")
 		controller.mountBasePath = tempDir
-		controller.directoryMode = true
+		controller.diskMode = storage_v1alpha.DIRECTORY
 
 		disk := &storage_v1alpha.Disk{
 			ID:         entity.Id("disk/test-reconcile"),
@@ -287,7 +280,7 @@ func TestDiskController_DirectoryMode_ReconcileDisk(t *testing.T) {
 
 		controller := NewDiskController(log, nil, "test-node")
 		controller.mountBasePath = tempDir
-		controller.directoryMode = true
+		controller.diskMode = storage_v1alpha.DIRECTORY
 
 		volumeId := "attached-vol-303"
 		disk := &storage_v1alpha.Disk{
@@ -313,7 +306,7 @@ func TestDiskController_DirectoryMode_ReconcileDisk(t *testing.T) {
 
 		controller := NewDiskController(log, nil, "test-node")
 		controller.mountBasePath = tempDir
-		controller.directoryMode = true
+		controller.diskMode = storage_v1alpha.DIRECTORY
 
 		disk := &storage_v1alpha.Disk{
 			ID:         entity.Id("disk/test-error"),
@@ -339,7 +332,7 @@ func TestDiskController_DirectoryMode_Integration(t *testing.T) {
 
 		controller := NewDiskController(log, nil, "test-node")
 		controller.mountBasePath = tempDir
-		controller.directoryMode = true
+		controller.diskMode = storage_v1alpha.DIRECTORY
 
 		// Step 1: Create disk
 		disk := &storage_v1alpha.Disk{
@@ -382,7 +375,7 @@ func TestDiskController_DirectoryMode_Integration(t *testing.T) {
 
 		controller := NewDiskController(log, nil, "test-node")
 		controller.mountBasePath = tempDir
-		controller.directoryMode = true
+		controller.diskMode = storage_v1alpha.DIRECTORY
 
 		// Create multiple disks
 		numDisks := 5

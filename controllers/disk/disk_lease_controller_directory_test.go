@@ -14,29 +14,24 @@ import (
 )
 
 func TestDiskLeaseController_DirectoryMode_Init(t *testing.T) {
-	t.Run("enables directory mode when NBD unavailable", func(t *testing.T) {
+	t.Run("enables directory mode when forced", func(t *testing.T) {
 		log := slog.Default()
 		controller := NewDiskLeaseController(log, nil, "test-node")
 
-		// Set environment to disable NBD
-		t.Setenv("MIREN_DISABLE_NBD", "1")
+		t.Setenv("MIREN_DISK_MODE", "directory")
 
 		err := controller.Init(context.Background())
 		require.NoError(t, err)
 
-		assert.True(t, controller.directoryMode, "Directory mode should be enabled when NBD is unavailable")
+		assert.Equal(t, storage_v1alpha.DIRECTORY, controller.diskMode)
 	})
 
-	t.Run("disables directory mode when NBD available", func(t *testing.T) {
+	t.Run("init does not error", func(t *testing.T) {
 		log := slog.Default()
 		controller := NewDiskLeaseController(log, nil, "test-node")
 
-		// Don't set MIREN_DISABLE_NBD - NBD availability depends on system
 		err := controller.Init(context.Background())
 		require.NoError(t, err)
-
-		// We can't assert a specific value here since it depends on the system
-		// Just verify Init doesn't error
 	})
 }
 
@@ -48,7 +43,7 @@ func TestDiskLeaseController_DirectoryMode_HandlePendingLease(t *testing.T) {
 
 		dlc := NewDiskLeaseController(log, nil, "test-node")
 		dlc.mountBasePath = tempDir
-		dlc.directoryMode = true
+		dlc.diskMode = storage_v1alpha.DIRECTORY
 
 		// Create directory for the volume
 		volumeId := "dir-vol-123"
@@ -99,7 +94,7 @@ func TestDiskLeaseController_DirectoryMode_HandlePendingLease(t *testing.T) {
 
 		dlc := NewDiskLeaseController(log, nil, "test-node")
 		dlc.mountBasePath = tempDir
-		dlc.directoryMode = true
+		dlc.diskMode = storage_v1alpha.DIRECTORY
 
 		volumeId := "missing-dir-vol"
 		// Don't create the directory
@@ -147,7 +142,7 @@ func TestDiskLeaseController_DirectoryMode_HandleReleasedLease(t *testing.T) {
 
 		dlc := NewDiskLeaseController(log, nil, "test-node")
 		dlc.mountBasePath = tempDir
-		dlc.directoryMode = true
+		dlc.diskMode = storage_v1alpha.DIRECTORY
 
 		volumeId := "released-dir-vol"
 
@@ -191,7 +186,7 @@ func TestDiskLeaseController_DirectoryMode_Integration(t *testing.T) {
 
 		dlc := NewDiskLeaseController(log, nil, "test-node")
 		dlc.mountBasePath = tempDir
-		dlc.directoryMode = true
+		dlc.diskMode = storage_v1alpha.DIRECTORY
 
 		// Create directory for the volume
 		volumeId := "lifecycle-dir-vol"
