@@ -507,6 +507,13 @@ func TestOIDCAuthenticator_MultipleBindings_FirstMatch(t *testing.T) {
 	if identity.Method != rpc.AuthMethodOIDC {
 		t.Errorf("method = %q, want %q", identity.Method, rpc.AuthMethodOIDC)
 	}
+	if identity.Subject != "repo:acme/app-two:ref:refs/heads/main" {
+		t.Errorf("subject = %q, want repo:acme/app-two:ref:refs/heads/main", identity.Subject)
+	}
+	boundApp, _ := identity.Metadata["bound_app"].(string)
+	if boundApp != "app-two" {
+		t.Errorf("bound_app = %q, want app-two", boundApp)
+	}
 }
 
 func TestOIDCAuthenticator_AudienceFromHost(t *testing.T) {

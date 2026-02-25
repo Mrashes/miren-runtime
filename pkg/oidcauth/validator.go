@@ -177,6 +177,12 @@ func (v *Validator) getDiscovery(ctx context.Context, issuer string) (*discovery
 	}
 	v.mu.RUnlock()
 
+	// Fetch without holding the lock
+	data, err := v.fetchDiscovery(ctx, issuer)
+	if err != nil {
+		return nil, err
+	}
+
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -185,6 +191,16 @@ func (v *Validator) getDiscovery(ctx context.Context, issuer string) (*discovery
 		return c.discovery, nil
 	}
 
+	if v.cache[issuer] == nil {
+		v.cache[issuer] = &issuerCache{}
+	}
+	v.cache[issuer].discovery = data
+	v.cache[issuer].discoveryTime = time.Now()
+
+	return data, nil
+}
+
+func (v *Validator) fetchDiscovery(ctx context.Context, issuer string) (*discoveryData, error) {
 	discoveryURL := issuer + "/.well-known/openid-configuration"
 	req, err := http.NewRequestWithContext(ctx, "GET", discoveryURL, nil)
 	if err != nil {
@@ -210,12 +226,6 @@ func (v *Validator) getDiscovery(ctx context.Context, issuer string) (*discovery
 		return nil, fmt.Errorf("discovery document missing jwks_uri")
 	}
 
-	if v.cache[issuer] == nil {
-		v.cache[issuer] = &issuerCache{}
-	}
-	v.cache[issuer].discovery = &data
-	v.cache[issuer].discoveryTime = time.Now()
-
 	return &data, nil
 }
 
@@ -237,6 +247,12 @@ func (v *Validator) getJWKSKeyFunc(ctx context.Context, issuer string, forceRefr
 		return nil, fmt.Errorf("no discovery data for issuer %s", issuer)
 	}
 
+	// Fetch without holding the lock
+	jwks, err := v.fetchJWKS(ctx, discovery.JwksURI)
+	if err != nil {
+		return nil, err
+	}
+
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -246,7 +262,18 @@ func (v *Validator) getJWKSKeyFunc(ctx context.Context, issuer string, forceRefr
 		return makeKeyFunc(c.jwks), nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", discovery.JwksURI, nil)
+	if c == nil {
+		c = &issuerCache{discovery: discovery, discoveryTime: time.Now()}
+		v.cache[issuer] = c
+	}
+	c.jwks = jwks
+	c.jwksTime = time.Now()
+
+	return makeKeyFunc(jwks), nil
+}
+
+func (v *Validator) fetchJWKS(ctx context.Context, jwksURI string) (*jose.JSONWebKeySet, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", jwksURI, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create JWKS request: %w", err)
 	}
@@ -271,10 +298,7 @@ func (v *Validator) getJWKSKeyFunc(ctx context.Context, issuer string, forceRefr
 		return nil, fmt.Errorf("failed to parse JWKS: %w", err)
 	}
 
-	c.jwks = &jwks
-	c.jwksTime = time.Now()
-
-	return makeKeyFunc(&jwks), nil
+	return &jwks, nil
 }
 
 func makeKeyFunc(jwks *jose.JSONWebKeySet) jwt.Keyfunc {

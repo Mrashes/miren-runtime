@@ -124,7 +124,7 @@ func (s *Server) StreamLogs(ctx context.Context, state *app_v1alpha.LogsStreamLo
 			return rpc.AppAccessError(ctx, target.App())
 		}
 	} else if rpc.BoundApp(ctx) != "" {
-		return rpc.AppAccessError(ctx, "")
+		return fmt.Errorf("%w: app-scoped caller must specify app target", rpc.ErrUnauthorized)
 	}
 
 	var opts []observability.LogReaderOption
@@ -200,7 +200,7 @@ func (s *Server) StreamLogChunks(ctx context.Context, state *app_v1alpha.LogsStr
 			return rpc.AppAccessError(ctx, target.App())
 		}
 	} else if rpc.BoundApp(ctx) != "" {
-		return rpc.AppAccessError(ctx, "")
+		return fmt.Errorf("%w: app-scoped caller must specify app target", rpc.ErrUnauthorized)
 	}
 
 	var opts []observability.LogReaderOption

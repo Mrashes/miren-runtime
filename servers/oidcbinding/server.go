@@ -49,10 +49,15 @@ func (s *Server) Add(ctx context.Context, state *oidcbinding_v1alpha.OidcBinding
 		return nil
 	}
 
-	// Validate issuer URL
+	// Validate issuer URL — HTTPS required per OIDC spec (localhost exempt for dev)
 	issuerURL, err := url.Parse(args.Issuer())
 	if err != nil || issuerURL.Scheme == "" || issuerURL.Host == "" {
-		results.SetError("issuer must be a valid URL (e.g. https://token.actions.githubusercontent.com)")
+		results.SetError("issuer must be a valid HTTPS URL (e.g. https://token.actions.githubusercontent.com)")
+		return nil
+	}
+	hostname := issuerURL.Hostname()
+	if issuerURL.Scheme != "https" && hostname != "localhost" && hostname != "127.0.0.1" && hostname != "::1" {
+		results.SetError("issuer must use HTTPS (except localhost for development)")
 		return nil
 	}
 
