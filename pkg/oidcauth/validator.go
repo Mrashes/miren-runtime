@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -201,7 +202,7 @@ func (v *Validator) getDiscovery(ctx context.Context, issuer string) (*discovery
 }
 
 func (v *Validator) fetchDiscovery(ctx context.Context, issuer string) (*discoveryData, error) {
-	discoveryURL := issuer + "/.well-known/openid-configuration"
+	discoveryURL := strings.TrimRight(issuer, "/") + "/.well-known/openid-configuration"
 	req, err := http.NewRequestWithContext(ctx, "GET", discoveryURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create discovery request: %w", err)
@@ -218,7 +219,7 @@ func (v *Validator) fetchDiscovery(ctx context.Context, issuer string) (*discove
 	}
 
 	var data discoveryData
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&data); err != nil {
 		return nil, fmt.Errorf("failed to parse discovery document: %w", err)
 	}
 
@@ -288,7 +289,7 @@ func (v *Validator) fetchJWKS(ctx context.Context, jwksURI string) (*jose.JSONWe
 		return nil, fmt.Errorf("JWKS endpoint returned status %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read JWKS response: %w", err)
 	}

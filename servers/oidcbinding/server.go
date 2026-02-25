@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
 	"strings"
 
@@ -56,7 +57,8 @@ func (s *Server) Add(ctx context.Context, state *oidcbinding_v1alpha.OidcBinding
 		return nil
 	}
 	hostname := issuerURL.Hostname()
-	if issuerURL.Scheme != "https" && hostname != "localhost" && hostname != "127.0.0.1" && hostname != "::1" {
+	isLoopback := hostname == "localhost" || (net.ParseIP(hostname) != nil && net.ParseIP(hostname).IsLoopback())
+	if issuerURL.Scheme != "https" && !isLoopback {
 		results.SetError("issuer must use HTTPS (except localhost for development)")
 		return nil
 	}
