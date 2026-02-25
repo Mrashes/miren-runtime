@@ -31,7 +31,7 @@ func AppRun(ctx *Context, opts struct {
 		out io.Writer
 	)
 
-	if con := console.Current(); con != nil {
+	if con, err := console.ConsoleFromFile(os.Stdin); err == nil {
 		in = con
 		out = con
 
