@@ -26,6 +26,7 @@ const sidebars: SidebarsConfig = {
         'services',
         'scaling',
         'disks',
+        'tls',
         'firewall',
         'route-oidc',
         'admin-interface',
