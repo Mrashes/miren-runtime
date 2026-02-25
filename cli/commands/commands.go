@@ -78,6 +78,12 @@ func RegisterAll(d *mflags.Dispatcher) {
 		d.Dispatch("route oidc show", Infer("route oidc show", "Show OIDC configuration for a route", RouteOidcShow))
 	}
 
+	// OIDC binding commands
+	d.Dispatch("oidc", Section("oidc", "OIDC authentication binding management", ""))
+	d.Dispatch("oidc add", Infer("oidc add", "Add an OIDC binding to an application", OidcAdd))
+	d.Dispatch("oidc list", Infer("oidc list", "List OIDC bindings for an application", OidcList))
+	d.Dispatch("oidc remove", Infer("oidc remove", "Remove an OIDC binding", OidcRemove))
+
 	// Config commands
 	d.Dispatch("config", Section("config", "Configuration file management", ""))
 	d.Dispatch("config info", Infer("config info", "Show configuration file locations and format", ConfigInfo))

@@ -1,0 +1,283 @@
+package oidcauth
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/go-jose/go-jose/v4"
+	"github.com/golang-jwt/jwt/v5"
+)
+
+// discoveryData contains OIDC provider configuration from .well-known/openid-configuration.
+type discoveryData struct {
+	Issuer  string `json:"issuer"`
+	JwksURI string `json:"jwks_uri"`
+}
+
+type issuerCache struct {
+	discovery     *discoveryData
+	discoveryTime time.Time
+	jwks          *jose.JSONWebKeySet
+	jwksTime      time.Time
+}
+
+// Validator validates OIDC tokens by performing discovery and JWKS-based verification.
+type Validator struct {
+	mu     sync.RWMutex
+	cache  map[string]*issuerCache
+	client *http.Client
+}
+
+// NewValidator creates a new OIDC token validator.
+func NewValidator() *Validator {
+	return &Validator{
+		cache:  make(map[string]*issuerCache),
+		client: &http.Client{Timeout: 10 * time.Second},
+	}
+}
+
+const (
+	discoveryCacheTTL = time.Hour
+	jwksCacheTTL      = time.Hour
+)
+
+// ValidateToken validates an OIDC JWT token against the expected issuer and audience.
+// It performs OIDC discovery and JWKS verification automatically.
+func (v *Validator) ValidateToken(ctx context.Context, tokenString, expectedIssuer, expectedAudience string) (*Claims, error) {
+	discovery, err := v.getDiscovery(ctx, expectedIssuer)
+	if err != nil {
+		return nil, fmt.Errorf("OIDC discovery failed for %s: %w", expectedIssuer, err)
+	}
+
+	if discovery.Issuer != expectedIssuer {
+		return nil, fmt.Errorf("issuer mismatch in discovery: got %s, want %s", discovery.Issuer, expectedIssuer)
+	}
+
+	// First attempt: use cached JWKS
+	claims, err := v.validateWithJWKS(ctx, tokenString, expectedIssuer, expectedAudience, false)
+	if err != nil {
+		// On key-not-found, refetch JWKS once and retry (handles key rotation)
+		claims, err = v.validateWithJWKS(ctx, tokenString, expectedIssuer, expectedAudience, true)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return claims, nil
+}
+
+func (v *Validator) validateWithJWKS(ctx context.Context, tokenString, expectedIssuer, expectedAudience string, forceRefresh bool) (*Claims, error) {
+	keyFunc, err := v.getJWKSKeyFunc(ctx, expectedIssuer, forceRefresh)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get JWKS: %w", err)
+	}
+
+	parser := jwt.NewParser(
+		jwt.WithIssuer(expectedIssuer),
+		jwt.WithExpirationRequired(),
+	)
+
+	token, err := parser.Parse(tokenString, keyFunc)
+	if err != nil {
+		return nil, fmt.Errorf("token validation failed: %w", err)
+	}
+
+	if !token.Valid {
+		return nil, fmt.Errorf("token is invalid")
+	}
+
+	mapClaims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, fmt.Errorf("failed to extract claims")
+	}
+
+	// Validate audience
+	if !audienceContains(mapClaims, expectedAudience) {
+		return nil, fmt.Errorf("token audience does not include %s", expectedAudience)
+	}
+
+	return mapClaimsToClaims(mapClaims), nil
+}
+
+func audienceContains(claims jwt.MapClaims, expected string) bool {
+	aud, ok := claims["aud"]
+	if !ok {
+		return false
+	}
+	switch v := aud.(type) {
+	case string:
+		return v == expected
+	case []interface{}:
+		for _, a := range v {
+			if s, ok := a.(string); ok && s == expected {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func mapClaimsToClaims(mc jwt.MapClaims) *Claims {
+	c := &Claims{
+		Extra: make(map[string]any),
+	}
+
+	if iss, ok := mc["iss"].(string); ok {
+		c.Issuer = iss
+	}
+	if sub, ok := mc["sub"].(string); ok {
+		c.Subject = sub
+	}
+
+	// Parse audience
+	switch v := mc["aud"].(type) {
+	case string:
+		c.Audience = []string{v}
+	case []interface{}:
+		for _, a := range v {
+			if s, ok := a.(string); ok {
+				c.Audience = append(c.Audience, s)
+			}
+		}
+	}
+
+	if exp, ok := mc["exp"].(float64); ok {
+		c.Expiry = time.Unix(int64(exp), 0)
+	}
+
+	// Copy all extra claims
+	for k, val := range mc {
+		switch k {
+		case "iss", "sub", "aud", "exp", "nbf", "iat", "jti":
+			continue
+		}
+		c.Extra[k] = val
+	}
+
+	return c
+}
+
+func (v *Validator) getDiscovery(ctx context.Context, issuer string) (*discoveryData, error) {
+	v.mu.RLock()
+	if c, ok := v.cache[issuer]; ok && c.discovery != nil && time.Since(c.discoveryTime) < discoveryCacheTTL {
+		d := c.discovery
+		v.mu.RUnlock()
+		return d, nil
+	}
+	v.mu.RUnlock()
+
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	// Double-check after acquiring write lock
+	if c, ok := v.cache[issuer]; ok && c.discovery != nil && time.Since(c.discoveryTime) < discoveryCacheTTL {
+		return c.discovery, nil
+	}
+
+	discoveryURL := issuer + "/.well-known/openid-configuration"
+	req, err := http.NewRequestWithContext(ctx, "GET", discoveryURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create discovery request: %w", err)
+	}
+
+	resp, err := v.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch discovery document: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("discovery endpoint returned status %d", resp.StatusCode)
+	}
+
+	var data discoveryData
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, fmt.Errorf("failed to parse discovery document: %w", err)
+	}
+
+	if data.JwksURI == "" {
+		return nil, fmt.Errorf("discovery document missing jwks_uri")
+	}
+
+	if v.cache[issuer] == nil {
+		v.cache[issuer] = &issuerCache{}
+	}
+	v.cache[issuer].discovery = &data
+	v.cache[issuer].discoveryTime = time.Now()
+
+	return &data, nil
+}
+
+func (v *Validator) getJWKSKeyFunc(ctx context.Context, issuer string, forceRefresh bool) (jwt.Keyfunc, error) {
+	v.mu.RLock()
+	c, ok := v.cache[issuer]
+	if ok && c.jwks != nil && !forceRefresh && time.Since(c.jwksTime) < jwksCacheTTL {
+		jwks := c.jwks
+		v.mu.RUnlock()
+		return makeKeyFunc(jwks), nil
+	}
+	discovery := c.discovery
+	v.mu.RUnlock()
+
+	if discovery == nil {
+		return nil, fmt.Errorf("no discovery data for issuer %s", issuer)
+	}
+
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	// Double-check
+	c = v.cache[issuer]
+	if c.jwks != nil && !forceRefresh && time.Since(c.jwksTime) < jwksCacheTTL {
+		return makeKeyFunc(c.jwks), nil
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", discovery.JwksURI, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create JWKS request: %w", err)
+	}
+
+	resp, err := v.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch JWKS: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("JWKS endpoint returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read JWKS response: %w", err)
+	}
+
+	var jwks jose.JSONWebKeySet
+	if err := json.Unmarshal(body, &jwks); err != nil {
+		return nil, fmt.Errorf("failed to parse JWKS: %w", err)
+	}
+
+	c.jwks = &jwks
+	c.jwksTime = time.Now()
+
+	return makeKeyFunc(&jwks), nil
+}
+
+func makeKeyFunc(jwks *jose.JSONWebKeySet) jwt.Keyfunc {
+	return func(token *jwt.Token) (interface{}, error) {
+		kid, ok := token.Header["kid"].(string)
+		if !ok {
+			return nil, fmt.Errorf("token missing kid header")
+		}
+		keys := jwks.Key(kid)
+		if len(keys) == 0 {
+			return nil, fmt.Errorf("key with kid %s not found in JWKS", kid)
+		}
+		return keys[0].Key, nil
+	}
+}
