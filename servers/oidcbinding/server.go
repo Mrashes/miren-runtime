@@ -76,6 +76,10 @@ func (s *Server) Add(ctx context.Context, state *oidcbinding_v1alpha.OidcBinding
 
 	provider := args.Provider()
 	subjectPattern := args.SubjectPattern()
+	if subjectPattern == "" {
+		results.SetError("subject_pattern is required")
+		return nil
+	}
 	description := args.Description()
 
 	// Build claim conditions
@@ -151,7 +155,7 @@ func (s *Server) List(ctx context.Context, state *oidcbinding_v1alpha.OidcBindin
 	listResp, err := s.EAC.List(ctx, entity.Ref(core_v1alpha.OidcBindingAppId, appRec.EntityId()))
 	if err != nil {
 		s.Log.Error("failed to list OIDC bindings", "error", err)
-		return nil
+		return fmt.Errorf("failed to list OIDC bindings: %w", err)
 	}
 
 	var bindings []*oidcbinding_v1alpha.BindingInfo

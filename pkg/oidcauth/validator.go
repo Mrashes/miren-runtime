@@ -305,13 +305,24 @@ func (v *Validator) fetchJWKS(ctx context.Context, jwksURI string) (*jose.JSONWe
 func makeKeyFunc(jwks *jose.JSONWebKeySet) jwt.Keyfunc {
 	return func(token *jwt.Token) (interface{}, error) {
 		kid, ok := token.Header["kid"].(string)
-		if !ok {
-			return nil, fmt.Errorf("token missing kid header")
+		if ok {
+			keys := jwks.Key(kid)
+			if len(keys) == 0 {
+				return nil, fmt.Errorf("key with kid %s not found in JWKS", kid)
+			}
+			return keys[0].Key, nil
 		}
-		keys := jwks.Key(kid)
-		if len(keys) == 0 {
-			return nil, fmt.Errorf("key with kid %s not found in JWKS", kid)
+
+		// No kid header — fall back to single key or algorithm match
+		if len(jwks.Keys) == 1 {
+			return jwks.Keys[0].Key, nil
 		}
-		return keys[0].Key, nil
+		alg, _ := token.Header["alg"].(string)
+		for _, k := range jwks.Keys {
+			if k.Algorithm == alg {
+				return k.Key, nil
+			}
+		}
+		return nil, fmt.Errorf("no suitable key found in JWKS (no kid header, %d keys)", len(jwks.Keys))
 	}
 }
