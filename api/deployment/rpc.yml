@@ -204,6 +204,75 @@ interfaces:
             type: '*AccessInfo'
             doc: Information about how to access the deployed app
 
+      - name: SetEnvVars
+        index: 10
+        doc: Set environment variables on an app, creating a new version and deployment record. Returns deployment info for activation polling.
+        parameters:
+          - name: app_name
+            type: string
+            doc: The application name
+          - name: cluster_id
+            type: string
+            doc: The cluster where deployment is happening
+          - name: vars
+            type: '[]*EnvironmentVariable'
+            doc: Environment variables to set
+          - name: service
+            type: string
+            doc: Service name to scope env vars to (optional, empty means global)
+        results:
+          - name: version_id
+            type: string
+            doc: The new version string
+          - name: deployment
+            type: DeploymentInfo
+            doc: The deployment record
+          - name: error
+            type: string
+            doc: Error message if operation failed
+          - name: lock_info
+            type: DeploymentLockInfo
+            doc: Structured information about the deployment lock (if blocked)
+          - name: access_info
+            type: '*AccessInfo'
+            doc: Information about how to access the deployed app
+
+      - name: DeleteEnvVars
+        index: 11
+        doc: Delete environment variables from an app, creating a new version and deployment record. Returns deployment info for activation polling.
+        parameters:
+          - name: app_name
+            type: string
+            doc: The application name
+          - name: cluster_id
+            type: string
+            doc: The cluster where deployment is happening
+          - name: keys
+            type: '[]string'
+            doc: Environment variable keys to delete
+          - name: service
+            type: string
+            doc: Service name to scope deletion to (optional, empty means global)
+        results:
+          - name: version_id
+            type: string
+            doc: The new version string
+          - name: deployment
+            type: DeploymentInfo
+            doc: The deployment record
+          - name: error
+            type: string
+            doc: Error message if operation failed
+          - name: lock_info
+            type: DeploymentLockInfo
+            doc: Structured information about the deployment lock (if blocked)
+          - name: access_info
+            type: '*AccessInfo'
+            doc: Information about how to access the deployed app
+          - name: deleted_sources
+            type: '[]string'
+            doc: Source of each deleted variable (config or manual)
+
 types:
   - type: DeploymentInfo
     doc: Information about a deployment

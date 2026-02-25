@@ -1,0 +1,248 @@
+package app
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	coreutil "miren.dev/runtime/api/core"
+	"miren.dev/runtime/api/core/core_v1alpha"
+	"miren.dev/runtime/api/entityserver"
+	"miren.dev/runtime/pkg/idgen"
+)
+
+// EnvVarInput represents an env var to set.
+type EnvVarInput struct {
+	Key       string
+	Value     string
+	Sensitive bool
+}
+
+// MutateResult holds the result of an env var mutation.
+type MutateResult struct {
+	AppVersion *core_v1alpha.AppVersion
+	VersionID  string
+}
+
+// DeleteResult extends MutateResult with source tracking.
+type DeleteResult struct {
+	MutateResult
+	DeletedSources []string
+}
+
+// SetEnvVars resolves the config from baseVersion (or current active if nil),
+// merges env vars (with service scope), creates a new ConfigVersion + AppVersion,
+// and activates it. Returns the newly created AppVersion and its version string.
+func SetEnvVars(ctx context.Context, ec *entityserver.Client, appName string,
+	baseVersion *core_v1alpha.AppVersion, vars []EnvVarInput, service string) (*MutateResult, error) {
+
+	for _, v := range vars {
+		if strings.HasPrefix(v.Key, "MIREN_") {
+			return nil, fmt.Errorf("cannot set MIREN_ environment variables")
+		}
+	}
+
+	appVer, spec, appRec, err := resolveBaseVersion(ctx, ec, appName, baseVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, v := range vars {
+		if service == "" {
+			found := false
+			for i, ev := range spec.Variables {
+				if ev.Key == v.Key {
+					spec.Variables[i].Value = v.Value
+					spec.Variables[i].Sensitive = v.Sensitive
+					spec.Variables[i].Source = "manual"
+					found = true
+					break
+				}
+			}
+			if !found {
+				spec.Variables = append(spec.Variables, core_v1alpha.ConfigSpecVariables{
+					Key:       v.Key,
+					Value:     v.Value,
+					Sensitive: v.Sensitive,
+					Source:    "manual",
+				})
+			}
+		} else {
+			svcFound := false
+			for i := range spec.Services {
+				if spec.Services[i].Name == service {
+					svcFound = true
+					envFound := false
+					for j, e := range spec.Services[i].Env {
+						if e.Key == v.Key {
+							spec.Services[i].Env[j].Value = v.Value
+							spec.Services[i].Env[j].Sensitive = v.Sensitive
+							spec.Services[i].Env[j].Source = "manual"
+							envFound = true
+							break
+						}
+					}
+					if !envFound {
+						spec.Services[i].Env = append(spec.Services[i].Env, core_v1alpha.ConfigSpecServicesEnv{
+							Key:       v.Key,
+							Value:     v.Value,
+							Sensitive: v.Sensitive,
+							Source:    "manual",
+						})
+					}
+					break
+				}
+			}
+			if !svcFound {
+				return nil, fmt.Errorf("service %q not found", service)
+			}
+		}
+	}
+
+	return createNewVersion(ctx, ec, appName, appVer, spec, appRec)
+}
+
+// DeleteEnvVars resolves the config from baseVersion (or current active if nil),
+// removes the specified keys, creates a new ConfigVersion + AppVersion, and
+// activates it. Returns the new version plus the source of each deleted var.
+func DeleteEnvVars(ctx context.Context, ec *entityserver.Client, appName string,
+	baseVersion *core_v1alpha.AppVersion, keys []string, service string) (*DeleteResult, error) {
+
+	appVer, spec, appRec, err := resolveBaseVersion(ctx, ec, appName, baseVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	if appRec.ActiveVersion == "" {
+		return nil, fmt.Errorf("app has no active version")
+	}
+
+	var deletedSources []string
+
+	for _, key := range keys {
+		if service == "" {
+			found := false
+			newVars := make([]core_v1alpha.ConfigSpecVariables, 0, len(spec.Variables))
+			for _, v := range spec.Variables {
+				if v.Key == key {
+					found = true
+					deletedSources = append(deletedSources, v.Source)
+					continue
+				}
+				newVars = append(newVars, v)
+			}
+			if !found {
+				return nil, fmt.Errorf("environment variable %q not found", key)
+			}
+			spec.Variables = newVars
+		} else {
+			svcFound := false
+			for i := range spec.Services {
+				if spec.Services[i].Name == service {
+					svcFound = true
+					envFound := false
+					newEnvs := make([]core_v1alpha.ConfigSpecServicesEnv, 0, len(spec.Services[i].Env))
+					for _, e := range spec.Services[i].Env {
+						if e.Key == key {
+							envFound = true
+							deletedSources = append(deletedSources, e.Source)
+							continue
+						}
+						newEnvs = append(newEnvs, e)
+					}
+					if !envFound {
+						return nil, fmt.Errorf("environment variable %q not found in service %q", key, service)
+					}
+					spec.Services[i].Env = newEnvs
+					break
+				}
+			}
+			if !svcFound {
+				return nil, fmt.Errorf("service %q not found", service)
+			}
+		}
+	}
+
+	result, err := createNewVersion(ctx, ec, appName, appVer, spec, appRec)
+	if err != nil {
+		return nil, err
+	}
+
+	return &DeleteResult{
+		MutateResult:   *result,
+		DeletedSources: deletedSources,
+	}, nil
+}
+
+// resolveBaseVersion loads the app, resolves the base version and config spec.
+// If baseVersion is nil, the current active version is used.
+func resolveBaseVersion(ctx context.Context, ec *entityserver.Client, appName string,
+	baseVersion *core_v1alpha.AppVersion) (*core_v1alpha.AppVersion, *core_v1alpha.ConfigSpec, *core_v1alpha.App, error) {
+
+	var appRec core_v1alpha.App
+	err := ec.Get(ctx, appName, &appRec)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	var appVer core_v1alpha.AppVersion
+	var spec core_v1alpha.ConfigSpec
+
+	if baseVersion != nil {
+		appVer = *baseVersion
+		resolvedCfg, err := coreutil.ResolveConfig(ctx, ec.EAC(), &appVer)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to resolve config: %w", err)
+		}
+		spec = *resolvedCfg
+	} else if appRec.ActiveVersion != "" {
+		err = ec.GetById(ctx, appRec.ActiveVersion, &appVer)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		resolvedCfg, err := coreutil.ResolveConfig(ctx, ec.EAC(), &appVer)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to resolve config: %w", err)
+		}
+		spec = *resolvedCfg
+	} else {
+		appVer.App = appRec.ID
+	}
+
+	return &appVer, &spec, &appRec, nil
+}
+
+// createNewVersion creates a ConfigVersion + AppVersion from the mutated spec and activates it.
+func createNewVersion(ctx context.Context, ec *entityserver.Client, appName string,
+	appVer *core_v1alpha.AppVersion, spec *core_v1alpha.ConfigSpec, appRec *core_v1alpha.App) (*MutateResult, error) {
+
+	appVer.Version = appName + "-" + idgen.Gen("v")
+
+	configVer := &core_v1alpha.ConfigVersion{
+		App:  appVer.App,
+		Spec: *spec,
+	}
+	cvName := appVer.Version + "-cfg"
+	cvid, err := ec.Create(ctx, cvName, configVer)
+	if err != nil {
+		return nil, fmt.Errorf("error creating config version: %w", err)
+	}
+	appVer.ConfigVersion = cvid
+	appVer.Config = core_v1alpha.Config{}
+
+	avid, err := ec.Create(ctx, appVer.Version, appVer)
+	if err != nil {
+		return nil, err
+	}
+
+	appRec.ActiveVersion = avid
+	err = ec.Update(ctx, appRec)
+	if err != nil {
+		return nil, fmt.Errorf("error updating app entity: %w", err)
+	}
+
+	return &MutateResult{
+		AppVersion: appVer,
+		VersionID:  appVer.Version,
+	}, nil
+}

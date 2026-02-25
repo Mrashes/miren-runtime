@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
+	appclient "miren.dev/runtime/api/app"
 	"miren.dev/runtime/api/app/app_v1alpha"
 	coreutil "miren.dev/runtime/api/core"
 	"miren.dev/runtime/api/core/core_v1alpha"
@@ -396,120 +397,18 @@ func (r *AppInfo) SetHost(ctx context.Context, state *app_v1alpha.CrudSetHost) e
 	return nil
 }
 
-type envVar struct {
-	Key       string
-	Value     string
-	Sensitive bool
-}
-
-func (r *AppInfo) setEnvVars(ctx context.Context, name string, vars []envVar, service string) (string, error) {
-	for _, v := range vars {
-		if strings.HasPrefix(v.Key, "MIREN_") {
-			return "", fmt.Errorf("cannot set MIREN_ environment variables")
-		}
-	}
-
-	var appRec core_v1alpha.App
-	err := r.EC.Get(ctx, name, &appRec)
+func (r *AppInfo) setEnvVars(ctx context.Context, name string, vars []appclient.EnvVarInput, service string) (string, error) {
+	result, err := appclient.SetEnvVars(ctx, r.EC, name, nil, vars, service)
 	if err != nil {
 		return "", err
 	}
-
-	var appVer core_v1alpha.AppVersion
-	var spec core_v1alpha.ConfigSpec
-	if appRec.ActiveVersion != "" {
-		err = r.EC.GetById(ctx, appRec.ActiveVersion, &appVer)
-		if err != nil {
-			return "", err
-		}
-		resolvedCfg, err := coreutil.ResolveConfig(ctx, r.EC.EAC(), &appVer)
-		if err != nil {
-			return "", fmt.Errorf("failed to resolve config: %w", err)
-		}
-		spec = *resolvedCfg
-	} else {
-		appVer.App = appRec.ID
-	}
-
-	for _, v := range vars {
-		if service == "" {
-			found := false
-			for i, ev := range spec.Variables {
-				if ev.Key == v.Key {
-					spec.Variables[i].Value = v.Value
-					spec.Variables[i].Sensitive = v.Sensitive
-					spec.Variables[i].Source = "manual"
-					found = true
-					break
-				}
-			}
-			if !found {
-				spec.Variables = append(spec.Variables, core_v1alpha.ConfigSpecVariables{
-					Key:       v.Key,
-					Value:     v.Value,
-					Sensitive: v.Sensitive,
-					Source:    "manual",
-				})
-			}
-		} else {
-			svcFound := false
-			for i := range spec.Services {
-				if spec.Services[i].Name == service {
-					svcFound = true
-					envFound := false
-					for j, e := range spec.Services[i].Env {
-						if e.Key == v.Key {
-							spec.Services[i].Env[j].Value = v.Value
-							spec.Services[i].Env[j].Sensitive = v.Sensitive
-							spec.Services[i].Env[j].Source = "manual"
-							envFound = true
-							break
-						}
-					}
-					if !envFound {
-						spec.Services[i].Env = append(spec.Services[i].Env, core_v1alpha.ConfigSpecServicesEnv{
-							Key:       v.Key,
-							Value:     v.Value,
-							Sensitive: v.Sensitive,
-							Source:    "manual",
-						})
-					}
-					break
-				}
-			}
-			if !svcFound {
-				return "", fmt.Errorf("service %q not found", service)
-			}
-		}
-	}
-
-	appVer.Version = name + "-" + idgen.Gen("v")
-
-	cvid, err := r.createConfigVersion(ctx, &spec, appVer.App, appVer.Version)
-	if err != nil {
-		return "", fmt.Errorf("error creating config version: %w", err)
-	}
-	appVer.ConfigVersion = cvid
-	appVer.Config = core_v1alpha.Config{}
-
-	avid, err := r.EC.Create(ctx, appVer.Version, &appVer)
-	if err != nil {
-		return "", err
-	}
-
-	appRec.ActiveVersion = avid
-	err = r.EC.Update(ctx, &appRec)
-	if err != nil {
-		return "", fmt.Errorf("error updating app entity: %w", err)
-	}
-
-	return appVer.Version, nil
+	return result.VersionID, nil
 }
 
 func (r *AppInfo) SetEnvVar(ctx context.Context, state *app_v1alpha.CrudSetEnvVar) error {
 	args := state.Args()
 
-	versionId, err := r.setEnvVars(ctx, args.App(), []envVar{
+	versionId, err := r.setEnvVars(ctx, args.App(), []appclient.EnvVarInput{
 		{Key: args.Key(), Value: args.Value(), Sensitive: args.Sensitive()},
 	}, args.Service())
 	if err != nil {
@@ -528,9 +427,9 @@ func (r *AppInfo) SetEnvVars(ctx context.Context, state *app_v1alpha.CrudSetEnvV
 		return fmt.Errorf("no environment variables provided")
 	}
 
-	vars := make([]envVar, len(rpcVars))
+	vars := make([]appclient.EnvVarInput, len(rpcVars))
 	for i, v := range rpcVars {
-		vars[i] = envVar{Key: v.Key(), Value: v.Value(), Sensitive: v.Sensitive()}
+		vars[i] = appclient.EnvVarInput{Key: v.Key(), Value: v.Value(), Sensitive: v.Sensitive()}
 	}
 
 	versionId, err := r.setEnvVars(ctx, args.App(), vars, args.Service())
@@ -544,101 +443,16 @@ func (r *AppInfo) SetEnvVars(ctx context.Context, state *app_v1alpha.CrudSetEnvV
 
 func (r *AppInfo) DeleteEnvVar(ctx context.Context, state *app_v1alpha.CrudDeleteEnvVar) error {
 	args := state.Args()
-	name := args.App()
-	key := args.Key()
-	service := args.Service()
 
-	var appRec core_v1alpha.App
-	err := r.EC.Get(ctx, name, &appRec)
+	result, err := appclient.DeleteEnvVars(ctx, r.EC, args.App(), nil, []string{args.Key()}, args.Service())
 	if err != nil {
 		return err
 	}
 
-	var appVer core_v1alpha.AppVersion
-	var spec core_v1alpha.ConfigSpec
-	if appRec.ActiveVersion != "" {
-		err = r.EC.GetById(ctx, appRec.ActiveVersion, &appVer)
-		if err != nil {
-			return err
-		}
-		resolvedCfg, err := coreutil.ResolveConfig(ctx, r.EC.EAC(), &appVer)
-		if err != nil {
-			return fmt.Errorf("failed to resolve config: %w", err)
-		}
-		spec = *resolvedCfg
-	} else {
-		return fmt.Errorf("app has no active version")
+	state.Results().SetVersionId(result.VersionID)
+	if len(result.DeletedSources) > 0 {
+		state.Results().SetDeletedSource(result.DeletedSources[0])
 	}
-
-	var deletedSource string
-
-	if service == "" {
-		// Global env var
-		found := false
-		newVars := make([]core_v1alpha.ConfigSpecVariables, 0, len(spec.Variables))
-		for _, v := range spec.Variables {
-			if v.Key == key {
-				found = true
-				deletedSource = v.Source
-				continue
-			}
-			newVars = append(newVars, v)
-		}
-		if !found {
-			return fmt.Errorf("environment variable %q not found", key)
-		}
-		spec.Variables = newVars
-	} else {
-		// Per-service env var
-		svcFound := false
-		for i := range spec.Services {
-			if spec.Services[i].Name == service {
-				svcFound = true
-				envFound := false
-				newEnvs := make([]core_v1alpha.ConfigSpecServicesEnv, 0, len(spec.Services[i].Env))
-				for _, e := range spec.Services[i].Env {
-					if e.Key == key {
-						envFound = true
-						deletedSource = e.Source
-						continue
-					}
-					newEnvs = append(newEnvs, e)
-				}
-				if !envFound {
-					return fmt.Errorf("environment variable %q not found in service %q", key, service)
-				}
-				spec.Services[i].Env = newEnvs
-				break
-			}
-		}
-		if !svcFound {
-			return fmt.Errorf("service %q not found", service)
-		}
-	}
-
-	appVer.Version = name + "-" + idgen.Gen("v")
-
-	// Create ConfigVersion as the sole config store
-	cvid, err := r.createConfigVersion(ctx, &spec, appVer.App, appVer.Version)
-	if err != nil {
-		return fmt.Errorf("error creating config version: %w", err)
-	}
-	appVer.ConfigVersion = cvid
-	appVer.Config = core_v1alpha.Config{}
-
-	avid, err := r.EC.Create(ctx, appVer.Version, &appVer)
-	if err != nil {
-		return err
-	}
-
-	appRec.ActiveVersion = avid
-	err = r.EC.Update(ctx, &appRec)
-	if err != nil {
-		return fmt.Errorf("error updating app entity: %w", err)
-	}
-
-	state.Results().SetVersionId(appVer.Version)
-	state.Results().SetDeletedSource(deletedSource)
 	return nil
 }
 

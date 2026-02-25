@@ -97,6 +97,21 @@ func checkVersionActive(ctx context.Context, getter appInfoGetter, appName, vers
 	return true, fmt.Sprintf(" — %d pool(s) assigned", len(pools))
 }
 
+// displayLockInfo shows a deployment lock error message with structured details.
+func displayLockInfo(ctx *Context, operation string, lockInfo *deployment_v1alpha.DeploymentLockInfo) {
+	ctx.Printf("\n❌ %s blocked:\n\n", operation)
+	ctx.Printf("Another deployment is already in progress for app '%s' on cluster '%s'.\n\n",
+		lockInfo.AppName(), lockInfo.ClusterId())
+	ctx.Printf("  • Started by: %s\n", lockInfo.StartedBy())
+	if lockInfo.HasStartedAt() && lockInfo.StartedAt() != nil {
+		startedAt := time.Unix(lockInfo.StartedAt().Seconds(), 0)
+		ctx.Printf("  • Started at: %s (%s ago)\n",
+			startedAt.Format("2006-01-02 15:04:05 MST"),
+			time.Since(startedAt).Round(time.Second))
+	}
+	ctx.Printf("  • Current phase: %s\n", lockInfo.CurrentPhase())
+}
+
 // displayDeployVersionAccessInfo shows route/access information from the
 // DeployVersion RPC response, mirroring the displayAccessInfo function
 // used by the full deploy path.

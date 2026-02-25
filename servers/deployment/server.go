@@ -883,6 +883,220 @@ func (d *DeploymentServer) DeployVersion(ctx context.Context, req *deployment_v1
 	return nil
 }
 
+func (d *DeploymentServer) SetEnvVars(ctx context.Context, req *deployment_v1alpha.DeploymentSetEnvVars) error {
+	args := req.Args()
+	results := req.Results()
+
+	if !args.HasAppName() || args.AppName() == "" {
+		return cond.ValidationFailure("missing-field", "app_name is required")
+	}
+	if !args.HasClusterId() || args.ClusterId() == "" {
+		return cond.ValidationFailure("missing-field", "cluster_id is required")
+	}
+	if !args.HasVars() || len(args.Vars()) == 0 {
+		return cond.ValidationFailure("missing-field", "vars is required")
+	}
+
+	appName := args.AppName()
+	clusterId := args.ClusterId()
+	service := ""
+	if args.HasService() {
+		service = args.Service()
+	}
+
+	// Convert RPC vars to shared helper input
+	vars := make([]appclient.EnvVarInput, len(args.Vars()))
+	for i, v := range args.Vars() {
+		vars[i] = appclient.EnvVarInput{Key: v.Key(), Value: v.Value(), Sensitive: v.Sensitive()}
+	}
+
+	// Call shared helper to create new version
+	mutResult, err := appclient.SetEnvVars(ctx, d.EC, appName, nil, vars, service)
+	if err != nil {
+		d.Log.Error("Failed to set env vars", "error", err, "app", appName)
+		results.SetError(fmt.Sprintf("failed to set env vars: %v", err))
+		return nil
+	}
+
+	results.SetVersionId(mutResult.VersionID)
+
+	// Create deployment record and handle lock/activation (shared with DeployVersion)
+	deployErr := d.createEnvVarDeployment(ctx, appName, clusterId, mutResult, results)
+	if deployErr != nil {
+		return deployErr
+	}
+
+	return nil
+}
+
+func (d *DeploymentServer) DeleteEnvVars(ctx context.Context, req *deployment_v1alpha.DeploymentDeleteEnvVars) error {
+	args := req.Args()
+	results := req.Results()
+
+	if !args.HasAppName() || args.AppName() == "" {
+		return cond.ValidationFailure("missing-field", "app_name is required")
+	}
+	if !args.HasClusterId() || args.ClusterId() == "" {
+		return cond.ValidationFailure("missing-field", "cluster_id is required")
+	}
+	if !args.HasKeys() || len(args.Keys()) == 0 {
+		return cond.ValidationFailure("missing-field", "keys is required")
+	}
+
+	appName := args.AppName()
+	clusterId := args.ClusterId()
+	service := ""
+	if args.HasService() {
+		service = args.Service()
+	}
+
+	// Call shared helper to create new version
+	delResult, err := appclient.DeleteEnvVars(ctx, d.EC, appName, nil, args.Keys(), service)
+	if err != nil {
+		d.Log.Error("Failed to delete env vars", "error", err, "app", appName)
+		results.SetError(fmt.Sprintf("failed to delete env vars: %v", err))
+		return nil
+	}
+
+	results.SetVersionId(delResult.VersionID)
+	deletedSources := delResult.DeletedSources
+	results.SetDeletedSources(&deletedSources)
+
+	// Create deployment record and handle lock/activation
+	deployErr := d.createEnvVarDeployment(ctx, appName, clusterId, &delResult.MutateResult, results)
+	if deployErr != nil {
+		return deployErr
+	}
+
+	return nil
+}
+
+// envVarDeployResults is the subset of result setters needed by createEnvVarDeployment.
+type envVarDeployResults interface {
+	SetDeployment(*deployment_v1alpha.DeploymentInfo)
+	SetError(string)
+	SetLockInfo(*deployment_v1alpha.DeploymentLockInfo)
+	SetAccessInfo(**deployment_v1alpha.AccessInfo)
+}
+
+// createEnvVarDeployment handles the deployment record creation, lock checking,
+// and access info population shared by SetEnvVars and DeleteEnvVars.
+func (d *DeploymentServer) createEnvVarDeployment(ctx context.Context, appName, clusterId string,
+	mutResult *appclient.MutateResult, results envVarDeployResults) error {
+
+	appVersionId := mutResult.VersionID
+
+	// Check for existing in_progress deployments (deployment lock)
+	existingDeployments, err := d.listDeploymentsInternal(ctx, appName, clusterId, "in_progress", 1)
+	if err != nil {
+		d.Log.Error("Failed to check for existing deployments", "error", err)
+		results.SetError("failed to check deployment lock")
+		return nil
+	}
+
+	if len(existingDeployments) > 0 {
+		existing := existingDeployments[0]
+
+		deploymentTime, parseErr := time.Parse(time.RFC3339, existing.DeployedBy.Timestamp)
+		if parseErr != nil {
+			deploymentTime = time.Time{}
+		}
+
+		isExpired := deploymentTime.IsZero() || time.Since(deploymentTime) >= deploymentLockTimeout
+		if !isExpired {
+			lockExpiresAt := deploymentTime.Add(deploymentLockTimeout)
+
+			displayEmail := existing.DeployedBy.UserEmail
+			if displayEmail == "" || displayEmail == "unknown@example.com" || displayEmail == "user@example.com" {
+				displayEmail = "-"
+			}
+
+			lockInfo := &deployment_v1alpha.DeploymentLockInfo{}
+			lockInfo.SetAppName(appName)
+			lockInfo.SetClusterId(clusterId)
+			lockInfo.SetBlockingDeploymentId(string(existing.ID))
+			lockInfo.SetStartedBy(displayEmail)
+			lockInfo.SetStartedAt(standard.ToTimestamp(deploymentTime))
+			lockInfo.SetCurrentPhase(existing.Phase)
+			lockInfo.SetLockExpiresAt(standard.ToTimestamp(lockExpiresAt))
+
+			results.SetLockInfo(lockInfo)
+			results.SetError("deployment blocked by existing in-progress deployment")
+			return nil
+		}
+
+		// Expired lock — mark as failed and continue
+		d.Log.Warn("Found expired in_progress deployment, marking as failed",
+			"deployment_id", string(existing.ID),
+			"age", time.Since(deploymentTime))
+
+		existing.Status = "failed"
+		existing.ErrorMessage = fmt.Sprintf("Deployment timed out after %v", deploymentLockTimeout)
+		existing.CompletedAt = time.Now().Format(time.RFC3339)
+
+		updateAttrs := existing.Encode()
+		updateEntity := &entityserver_v1alpha.Entity{}
+		updateEntity.SetId(string(existing.ID))
+		updateEntity.SetAttrs(updateAttrs)
+
+		if existingEntity, getErr := d.EAC.Get(ctx, string(existing.ID)); getErr == nil {
+			updateEntity.SetRevision(existingEntity.Entity().Revision())
+			if _, putErr := d.EAC.Put(ctx, updateEntity); putErr != nil {
+				d.Log.Error("Failed to mark expired deployment as failed", "error", putErr)
+			}
+		}
+	}
+
+	// Create new deployment entity
+	now := time.Now()
+
+	deployment := &core_v1alpha.Deployment{
+		AppName:    appName,
+		AppVersion: appVersionId,
+		ClusterId:  clusterId,
+		Status:     "active",
+		Phase:      "activating",
+		DeployedBy: core_v1alpha.DeployedBy{
+			Timestamp: now.Format(time.RFC3339),
+		},
+		CompletedAt: now.Format(time.RFC3339),
+	}
+
+	// Create entity
+	attrs := deployment.Encode()
+	rpcEntity := &entityserver_v1alpha.Entity{}
+	rpcEntity.SetAttrs(attrs)
+
+	putResp, err := d.EAC.Put(ctx, rpcEntity)
+	if err != nil {
+		d.Log.Error("Failed to create deployment entity", "error", err)
+		results.SetError("failed to create deployment")
+		return nil
+	}
+
+	deployment.ID = entity.Id(putResp.Id())
+	newDeploymentId := putResp.Id()
+
+	// Mark previous active deployments as succeeded
+	if err := d.markPreviousActiveAs(ctx, appName, clusterId, newDeploymentId, "succeeded"); err != nil {
+		d.Log.Error("Failed to mark previous active deployments", "error", err)
+	}
+
+	deploymentInfo := d.toDeploymentInfo(deployment)
+	results.SetDeployment(deploymentInfo)
+
+	accessInfo := d.getAccessInfo(ctx, appName)
+	results.SetAccessInfo(&accessInfo)
+
+	d.Log.Info("Env var deployment completed",
+		"deployment_id", newDeploymentId,
+		"app", appName,
+		"cluster", clusterId,
+		"version", appVersionId)
+
+	return nil
+}
+
 // getAccessInfo queries routes to determine how the app can be accessed
 func (d *DeploymentServer) getAccessInfo(ctx context.Context, appName string) *deployment_v1alpha.AccessInfo {
 	info := &deployment_v1alpha.AccessInfo{}
