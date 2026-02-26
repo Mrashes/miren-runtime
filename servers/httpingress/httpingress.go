@@ -38,6 +38,21 @@ import (
 	"miren.dev/runtime/pkg/rpc"
 )
 
+// idleTimeoutConn wraps a net.Conn and sets a read deadline before each
+// Read call. If no data arrives within the idle timeout, the read fails
+// with a timeout error. Each successful read resets the deadline, so
+// active streams (SSE, WebSocket, chunked) are unaffected as long as
+// data keeps flowing.
+type idleTimeoutConn struct {
+	net.Conn
+	idleTimeout time.Duration
+}
+
+func (c *idleTimeoutConn) Read(p []byte) (int, error) {
+	c.SetReadDeadline(time.Now().Add(c.idleTimeout))
+	return c.Conn.Read(p)
+}
+
 var httpingressTracer = otel.Tracer("miren.dev/runtime/httpingress")
 
 const (
@@ -65,9 +80,9 @@ type Server struct {
 	eac           *entityserver_v1alpha.EntityAccessClient
 	ingressClient *ingress.Client
 	appClient     *app.Client
-	handler       http.Handler
 
-	aa activator.AppActivator
+	aa        activator.AppActivator
+	transport http.RoundTripper
 
 	httpMetrics *metrics.HTTPMetrics
 	logWriter   observability.LogWriter
@@ -102,6 +117,19 @@ func NewServer(
 		config.RequestTimeout = 60 * time.Second
 	}
 
+	baseTransport := http.DefaultTransport.(*http.Transport).Clone()
+	baseTransport.ResponseHeaderTimeout = config.RequestTimeout
+	baseTransport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		conn, err := (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		return &idleTimeoutConn{Conn: conn, idleTimeout: config.RequestTimeout}, nil
+	}
+
 	var signingKey []byte
 	if config.DataPath != "" {
 		var err error
@@ -119,19 +147,13 @@ func NewServer(
 		ingressClient:      ingress.NewClient(log, rpcClient),
 		appClient:          app.NewClient(log, rpcClient),
 		aa:                 aa,
+		transport:          baseTransport,
 		httpMetrics:        httpMetrics,
 		logWriter:          logWriter,
 		apps:               make(map[string]*appUsage),
 		oidcSessionManager: oidc.NewSessionManager(false, "", signingKey),
 		oidcHandlers:       make(map[string]*oidcHandler),
 	}
-
-	// Build the timeout handler once at initialization
-	serv.handler = http.TimeoutHandler(
-		http.HandlerFunc(serv.handleRequest),
-		config.RequestTimeout,
-		timeoutMessage,
-	)
 
 	if httpMetrics == nil {
 		serv.Log.Warn("HTTPMetrics is nil in httpingress")
@@ -301,35 +323,10 @@ func (h *Server) invalidateLease(ctx context.Context, app string, lease *lease) 
 }
 
 func (h *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	// WebSocket upgrade requests require connection hijacking, which is not
-	// supported by http.TimeoutHandler's wrapped ResponseWriter. Bypass the
-	// timeout handler for upgrade requests so the proxy can hijack the connection.
-	if isUpgradeRequest(req) {
-		h.handleRequest(w, req)
-		return
-	}
-	h.handler.ServeHTTP(w, req)
+	h.handleRequest(w, req)
 }
 
-// isUpgradeRequest checks if the request is a protocol upgrade (e.g., WebSocket).
-// These requests need to bypass http.TimeoutHandler because they require
-// hijacking the connection, which TimeoutHandler's ResponseWriter doesn't support.
-func isUpgradeRequest(req *http.Request) bool {
-	// Check for Connection: Upgrade header (case-insensitive per HTTP spec)
-	for _, v := range req.Header["Connection"] {
-		for _, token := range strings.Split(v, ",") {
-			if strings.EqualFold(strings.TrimSpace(token), "upgrade") {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// handleRequest is the inner handler wrapped by TimeoutHandler
 func (h *Server) handleRequest(w http.ResponseWriter, req *http.Request) {
-	// Capture the real stack on panic so it isn't swallowed by TimeoutHandler's
-	// recover/re-panic, which loses the original goroutine stack.
 	defer func() {
 		if r := recover(); r != nil {
 			h.Log.Error("panic in request handler",
@@ -378,15 +375,6 @@ func (h *Server) handleRequest(w http.ResponseWriter, req *http.Request) {
 
 	statusCode = rw.statusCode
 	bytesWritten = rw.bytesWritten
-
-	// TimeoutHandler writes 503 on timeout, but our metrics would show the
-	// original status. Check if timeout occurred and override metrics accordingly.
-	if err := req.Context().Err(); err == context.DeadlineExceeded {
-		statusCode = http.StatusServiceUnavailable
-		if appName == "" {
-			appName = "unknown"
-		}
-	}
 
 	span.SetAttributes(
 		attribute.Int("http.response.status_code", statusCode),
@@ -656,6 +644,7 @@ func (h *Server) proxyToLease(w http.ResponseWriter, req *http.Request, targetUR
 	var proxyErr error
 
 	proxy := &httputil.ReverseProxy{
+		Transport: h.transport,
 		Director: func(outReq *http.Request) {
 			outReq.URL.Scheme = targetParsed.Scheme
 			outReq.URL.Host = targetParsed.Host
@@ -677,6 +666,12 @@ func (h *Server) proxyToLease(w http.ResponseWriter, req *http.Request, targetUR
 		},
 		ErrorHandler: func(rw http.ResponseWriter, r *http.Request, err error) {
 			proxyErr = err
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				h.Log.Warn("request timeout", "url", targetURL, "app", appName)
+				http.Error(rw, timeoutMessage, http.StatusServiceUnavailable)
+				return
+			}
 			if isProxyConnectionError(err) {
 				h.Log.Warn("proxy connection error to sandbox", "error", err, "url", targetURL, "app", appName)
 			} else {
