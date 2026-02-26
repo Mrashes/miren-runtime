@@ -58,15 +58,24 @@ func NewCompositeAuthenticator(primary rpc.Authenticator, oidc *OIDCAuthenticato
 func (c *CompositeAuthenticator) Authenticate(ctx context.Context, r *http.Request) (*rpc.Identity, error) {
 	// Try primary authenticator first
 	identity, err := c.primary.Authenticate(ctx, r)
-	if err != nil {
-		return nil, err
-	}
 	if identity != nil {
 		return identity, nil
 	}
 
-	// Fall back to OIDC authenticator
-	return c.oidc.Authenticate(ctx, r)
+	// Fall back to OIDC authenticator. The primary may have returned an error
+	// because it couldn't validate a token that's actually meant for OIDC
+	// (e.g., cloud JWT validator failing on a GitHub Actions OIDC token).
+	oidcIdentity, oidcErr := c.oidc.Authenticate(ctx, r)
+	if oidcIdentity != nil {
+		return oidcIdentity, nil
+	}
+
+	// Neither succeeded. Return the primary error if there was one,
+	// otherwise the OIDC error.
+	if err != nil {
+		return nil, err
+	}
+	return nil, oidcErr
 }
 
 // CompositeAuthorizer handles authorization for both primary and OIDC auth methods.
