@@ -810,8 +810,10 @@ Warning: These commands are intended for advanced users and developers. They may
 	d.Dispatch("debug entity patch", Infer("debug entity patch", "Patch an existing entity", EntityPatch))
 	d.Dispatch("debug entity ensure", Infer("debug entity ensure", "Ensure an entity exists", EntityEnsure))
 
-	// Disk migration
+	// Disk commands
 	d.Dispatch("disk migrate", Infer("disk migrate", "Migrate LSVD volume to raw disk image", DiskMigrate))
+	d.Dispatch("disk backup", Infer("disk backup", "Backup a disk to a snapshot file", DiskBackup))
+	d.Dispatch("disk restore", Infer("disk restore", "Restore a disk from a snapshot file", DiskRestore))
 
 	// Debug disk commands
 	d.Dispatch("debug disk", Section("debug disk", "Disk entity debug commands", "", WithSectionDescription(diskSectionDescription)))
