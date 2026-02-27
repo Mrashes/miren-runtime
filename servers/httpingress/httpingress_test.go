@@ -1,13 +1,14 @@
 package httpingress
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -61,64 +62,132 @@ func TestIngressConfigNegative(t *testing.T) {
 	}
 }
 
-func TestHTTPTimeoutHandler(t *testing.T) {
-	// Test that the timeout handler actually triggers
-	tests := []struct {
-		name           string
-		timeout        time.Duration
-		handlerDelay   time.Duration
-		expectTimeout  bool
-		expectedStatus int
-		expectedBody   string
-	}{
-		{
-			name:           "request completes before timeout",
-			timeout:        100 * time.Millisecond,
-			handlerDelay:   10 * time.Millisecond,
-			expectTimeout:  false,
-			expectedStatus: http.StatusOK,
-			expectedBody:   "success",
-		},
-		{
-			name:           "request times out",
-			timeout:        50 * time.Millisecond,
-			handlerDelay:   200 * time.Millisecond,
-			expectTimeout:  true,
-			expectedStatus: http.StatusServiceUnavailable,
-			expectedBody:   timeoutMessage,
-		},
+func TestHTTPTimeoutProduces503(t *testing.T) {
+	// Backend that never responds — simulates a hung process
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer backend.Close()
+
+	timeout := 50 * time.Millisecond
+
+	// Build a transport with a short ResponseHeaderTimeout
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = timeout
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxy := &httputil.ReverseProxy{
+			Transport: transport,
+			Director: func(outReq *http.Request) {
+				outReq.URL.Scheme = "http"
+				outReq.URL.Host = backend.Listener.Addr().String()
+			},
+			ErrorHandler: func(rw http.ResponseWriter, req *http.Request, err error) {
+				var netErr net.Error
+				if errors.As(err, &netErr) && netErr.Timeout() {
+					http.Error(rw, timeoutMessage, http.StatusServiceUnavailable)
+					return
+				}
+				rw.WriteHeader(http.StatusBadGateway)
+			},
+		}
+		proxy.ServeHTTP(w, r)
+	})
+
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/slow")
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("Expected 503, got %d", resp.StatusCode)
+	}
+}
+
+func TestSSEStreamingNotBuffered(t *testing.T) {
+	eventReady := make(chan struct{})
+
+	// Backend that sends SSE events with explicit flushes
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("Backend ResponseWriter does not implement http.Flusher")
+			return
+		}
+
+		// Send first event and flush immediately
+		fmt.Fprintf(w, "data: hello\n\n")
+		flusher.Flush()
+
+		// Signal that the first event has been flushed
+		close(eventReady)
+
+		// Keep the handler alive — the test will close the connection
+		<-r.Context().Done()
+	}))
+	defer backend.Close()
+
+	// Generous ResponseHeaderTimeout — the point is that data arrives before it expires
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = 5 * time.Second
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxy := &httputil.ReverseProxy{
+			Transport: transport,
+			Director: func(outReq *http.Request) {
+				outReq.URL.Scheme = "http"
+				outReq.URL.Host = backend.Listener.Addr().String()
+			},
+		}
+		proxy.ServeHTTP(w, r)
+	})
+
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/events")
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", resp.StatusCode)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create a test handler that simulates delay
-			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				time.Sleep(tt.handlerDelay)
-				w.WriteHeader(http.StatusOK)
-				w.Write([]byte("success"))
-			})
+	// Wait for backend to flush the first event
+	select {
+	case <-eventReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timed out waiting for backend to flush event")
+	}
 
-			// Wrap with timeout handler (simulating what ServeHTTP does)
-			timeoutHandler := http.TimeoutHandler(handler, tt.timeout, timeoutMessage)
+	// The first SSE event should be readable immediately — if the response
+	// were buffered (as with http.TimeoutHandler), this would block until
+	// the handler returned or the timeout expired.
+	scanner := bufio.NewScanner(resp.Body)
+	readDone := make(chan string, 1)
+	go func() {
+		if scanner.Scan() {
+			readDone <- scanner.Text()
+		}
+	}()
 
-			// Create test request and recorder
-			req := httptest.NewRequest("GET", "/test", nil)
-			rec := httptest.NewRecorder()
-
-			// Serve the request
-			timeoutHandler.ServeHTTP(rec, req)
-
-			// Check status code
-			if rec.Code != tt.expectedStatus {
-				t.Errorf("Expected status %d, got %d", tt.expectedStatus, rec.Code)
-			}
-
-			// Check response body
-			body := strings.TrimSpace(rec.Body.String())
-			if !strings.Contains(body, tt.expectedBody) {
-				t.Errorf("Expected body to contain '%s', got '%s'", tt.expectedBody, body)
-			}
-		})
+	select {
+	case line := <-readDone:
+		if line != "data: hello" {
+			t.Errorf("Expected 'data: hello', got %q", line)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("SSE event was not received promptly — response is being buffered")
 	}
 }
 
@@ -269,93 +338,16 @@ func TestIsProxyConnectionError(t *testing.T) {
 	}
 }
 
-func TestIsUpgradeRequest(t *testing.T) {
-	tests := []struct {
-		name     string
-		headers  map[string]string
-		expected bool
-	}{
-		{
-			name:     "no headers",
-			headers:  nil,
-			expected: false,
-		},
-		{
-			name:     "normal GET request",
-			headers:  map[string]string{"Content-Type": "text/html"},
-			expected: false,
-		},
-		{
-			name:     "websocket upgrade",
-			headers:  map[string]string{"Connection": "Upgrade", "Upgrade": "websocket"},
-			expected: true,
-		},
-		{
-			name:     "websocket upgrade lowercase",
-			headers:  map[string]string{"Connection": "upgrade", "Upgrade": "websocket"},
-			expected: true,
-		},
-		{
-			name:     "connection with multiple values",
-			headers:  map[string]string{"Connection": "keep-alive, Upgrade", "Upgrade": "websocket"},
-			expected: true,
-		},
-		{
-			name:     "h2c upgrade",
-			headers:  map[string]string{"Connection": "Upgrade", "Upgrade": "h2c"},
-			expected: true,
-		},
-		{
-			name:     "connection keep-alive only",
-			headers:  map[string]string{"Connection": "keep-alive"},
-			expected: false,
-		},
-		{
-			name:     "upgrade header without connection upgrade",
-			headers:  map[string]string{"Upgrade": "websocket"},
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/ws", nil)
-			for k, v := range tt.headers {
-				req.Header.Set(k, v)
-			}
-			result := isUpgradeRequest(req)
-			if result != tt.expected {
-				t.Errorf("isUpgradeRequest() = %v, want %v", result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestWebSocketUpgradeBypassesTimeoutHandler verifies that WebSocket upgrade
-// requests bypass the TimeoutHandler and successfully complete the upgrade.
-//
-// Background: http.TimeoutHandler wraps the ResponseWriter in a timeoutWriter
-// that does NOT implement http.Hijacker. Without special handling, WebSocket
-// upgrades would fail with 502 Bad Gateway. The fix is to detect upgrade
-// requests early and bypass the TimeoutHandler.
-func TestWebSocketUpgradeBypassesTimeoutHandler(t *testing.T) {
-	// Create a backend server that responds with 101 Switching Protocols
+// TestWebSocketUpgrade verifies that WebSocket upgrade requests work through
+// the transport-level timeout proxy (no special-casing needed).
+func TestWebSocketUpgrade(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify this is a WebSocket upgrade request
 		if r.Header.Get("Upgrade") != "websocket" {
 			t.Error("Expected Upgrade: websocket header")
 			http.Error(w, "Expected WebSocket upgrade", http.StatusBadRequest)
 			return
 		}
-		if r.Header.Get("Connection") != "Upgrade" {
-			t.Error("Expected Connection: Upgrade header")
-			http.Error(w, "Expected Connection: Upgrade", http.StatusBadRequest)
-			return
-		}
 
-		// Simulate a WebSocket upgrade response
-		// In reality, the backend would call websocket.Upgrader.Upgrade()
-		// which sends these headers and hijacks the connection
 		hj, ok := w.(http.Hijacker)
 		if !ok {
 			t.Error("Backend ResponseWriter doesn't support hijacking")
@@ -370,7 +362,6 @@ func TestWebSocketUpgradeBypassesTimeoutHandler(t *testing.T) {
 		}
 		defer conn.Close()
 
-		// Write the 101 response manually (simulating what websocket library does)
 		response := "HTTP/1.1 101 Switching Protocols\r\n" +
 			"Upgrade: websocket\r\n" +
 			"Connection: Upgrade\r\n" +
@@ -379,45 +370,32 @@ func TestWebSocketUpgradeBypassesTimeoutHandler(t *testing.T) {
 		brw.WriteString(response)
 		brw.Flush()
 
-		// Keep the connection open briefly to simulate a real WebSocket
 		time.Sleep(100 * time.Millisecond)
 	}))
 	defer backend.Close()
 
-	// Create a reverse proxy that forwards to the backend
-	proxyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// All requests go through the same transport — no upgrade branching
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = 5 * time.Second
+
+	serverHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		proxy := &httputil.ReverseProxy{
+			Transport: transport,
 			Director: func(outReq *http.Request) {
 				outReq.URL.Scheme = "http"
 				outReq.URL.Host = backend.Listener.Addr().String()
 			},
 			ErrorHandler: func(rw http.ResponseWriter, req *http.Request, err error) {
-				t.Logf("Proxy error (expected): %v", err)
+				t.Logf("Proxy error: %v", err)
 				rw.WriteHeader(http.StatusBadGateway)
 			},
 		}
 		proxy.ServeHTTP(w, r)
 	})
 
-	// Wrap the proxy handler in http.TimeoutHandler (as httpingress does)
-	timeoutHandler := http.TimeoutHandler(proxyHandler, 60*time.Second, "timeout")
-
-	// Simulate what httpingress.Server.ServeHTTP does: bypass TimeoutHandler
-	// for upgrade requests so the connection can be hijacked
-	serverHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isUpgradeRequest(r) {
-			// Bypass TimeoutHandler for upgrade requests
-			proxyHandler.ServeHTTP(w, r)
-			return
-		}
-		timeoutHandler.ServeHTTP(w, r)
-	})
-
-	// Create a test server with the smart handler
 	proxyServer := httptest.NewServer(serverHandler)
 	defer proxyServer.Close()
 
-	// Make a WebSocket upgrade request through the proxy
 	req, err := http.NewRequest("GET", proxyServer.URL+"/ws", nil)
 	if err != nil {
 		t.Fatalf("Failed to create request: %v", err)
@@ -433,10 +411,7 @@ func TestWebSocketUpgradeBypassesTimeoutHandler(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	// With the fix in place, upgrade requests bypass TimeoutHandler and succeed
 	if resp.StatusCode != http.StatusSwitchingProtocols {
 		t.Errorf("Expected 101 Switching Protocols, got %d", resp.StatusCode)
-	} else {
-		t.Log("Got 101 Switching Protocols - WebSocket upgrade succeeded!")
 	}
 }
