@@ -54,7 +54,8 @@ func TestCompositeAuthenticator_PrimarySucceeds(t *testing.T) {
 	}
 }
 
-func TestCompositeAuthenticator_PrimaryError(t *testing.T) {
+func TestCompositeAuthenticator_PrimaryErrorOIDCNil(t *testing.T) {
+	// When primary errors and OIDC returns nil, the primary error propagates.
 	primary := &mockAuthenticator{
 		err: fmt.Errorf("auth server unavailable"),
 	}
@@ -65,6 +66,37 @@ func TestCompositeAuthenticator_PrimaryError(t *testing.T) {
 	_, err := comp.Authenticate(context.Background(), req)
 	if err == nil {
 		t.Fatal("expected error to propagate from primary")
+	}
+}
+
+func TestCompositeAuthenticator_PrimaryErrorOIDCSucceeds(t *testing.T) {
+	// When primary errors on a token it doesn't recognize, but OIDC succeeds,
+	// the OIDC identity should be returned (not the primary error).
+	primary := &mockAuthenticator{
+		err: fmt.Errorf("key with ID xyz not found"),
+	}
+	oidcStub := &mockAuthenticator{
+		identity: &rpc.Identity{
+			Subject: "repo:acme/app:ref:refs/heads/main",
+			Method:  rpc.AuthMethodOIDC,
+		},
+	}
+
+	comp := &CompositeAuthenticator{primary: primary, oidc: oidcStub}
+
+	req := httptest.NewRequest("GET", "/", nil)
+	identity, err := comp.Authenticate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected no error when OIDC succeeds, got: %v", err)
+	}
+	if identity == nil {
+		t.Fatal("expected OIDC identity, got nil")
+	}
+	if identity.Subject != "repo:acme/app:ref:refs/heads/main" {
+		t.Errorf("subject = %q, want %q", identity.Subject, "repo:acme/app:ref:refs/heads/main")
+	}
+	if identity.Method != rpc.AuthMethodOIDC {
+		t.Errorf("method = %q, want %q", identity.Method, rpc.AuthMethodOIDC)
 	}
 }
 
