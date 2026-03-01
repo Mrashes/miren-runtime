@@ -322,6 +322,26 @@ func (h *Server) invalidateLease(ctx context.Context, app string, lease *lease) 
 	}
 }
 
+// invalidateAppLeases removes all cached leases for an app.
+// During rollover, multiple cached leases may point to the same dead sandbox,
+// so invalidating all of them ensures the retry acquires a fresh lease.
+func (h *Server) invalidateAppLeases(ctx context.Context, app string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	ar, ok := h.apps[app]
+	if !ok {
+		return
+	}
+
+	for _, l := range ar.leases {
+		h.Log.Info("invalidating stale lease due to proxy error", "app", app, "url", l.Lease.URL)
+		h.aa.ReleaseLease(ctx, l.Lease)
+	}
+
+	delete(h.apps, app)
+}
+
 func (h *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	h.handleRequest(w, req)
 }
@@ -519,7 +539,7 @@ func (h *Server) serveAuthenticatedRequest(w http.ResponseWriter, req *http.Requ
 	defer leaseSpan.End()
 
 	// Retry loop: if a cached lease fails with a connection error (stale sandbox),
-	// invalidate it and retry once — the next iteration acquires a fresh lease.
+	// invalidate all cached leases and retry once to acquire a fresh lease.
 	const maxRetries = 1
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		// Try to use a cached lease
@@ -540,8 +560,9 @@ func (h *Server) serveAuthenticatedRequest(w http.ResponseWriter, req *http.Requ
 			writeErr := attempt == maxRetries
 			err = h.proxyToLease(w, req, curLease.Lease.URL, targetAppId.String(), *appName, writeErr)
 			if err != nil && isProxyConnectionError(err) {
-				// Cached lease pointed at a dead sandbox — invalidate and retry
-				h.invalidateLease(context.Background(), targetAppId.String(), curLease)
+				// Cached lease pointed at a dead sandbox — invalidate all app
+				// leases (they likely all point to the same dead sandbox) and retry
+				h.invalidateAppLeases(context.Background(), targetAppId.String())
 				h.Log.Warn("stale lease, retrying with fresh lease",
 					"stale_url", curLease.Lease.URL,
 					"attempt", attempt,
