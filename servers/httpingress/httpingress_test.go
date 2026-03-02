@@ -283,7 +283,7 @@ func TestIsProxyConnectionError(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "connection reset",
+			name: "connection reset (not treated as connection error - request may have been processed)",
 			err: &net.OpError{
 				Op:  "read",
 				Net: "tcp",
@@ -292,10 +292,10 @@ func TestIsProxyConnectionError(t *testing.T) {
 					Err:     syscall.ECONNRESET,
 				},
 			},
-			expected: true,
+			expected: false,
 		},
 		{
-			name: "connection aborted",
+			name: "connection aborted (not treated as connection error - request may have been processed)",
 			err: &net.OpError{
 				Op:  "read",
 				Net: "tcp",
@@ -304,7 +304,7 @@ func TestIsProxyConnectionError(t *testing.T) {
 					Err:     syscall.ECONNABORTED,
 				},
 			},
-			expected: true,
+			expected: false,
 		},
 		{
 			name: "net.OpError without syscall error",

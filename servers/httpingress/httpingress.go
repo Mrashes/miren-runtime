@@ -803,9 +803,11 @@ func (rw *responseWriter) Unwrap() http.ResponseWriter {
 	return rw.ResponseWriter
 }
 
-// isProxyConnectionError checks if an error indicates the backend is unreachable.
-// This includes connection refused, no route to host, and similar network failures
-// that indicate the sandbox is dead or gone.
+// isProxyConnectionError checks if an error indicates the backend is unreachable
+// because a TCP connection was never established. This is used to trigger retries
+// on stale cached leases, so it intentionally excludes ECONNRESET/ECONNABORTED —
+// those indicate a connection that *was* established and may have partially
+// processed the request, making it unsafe to retry non-idempotent methods.
 func isProxyConnectionError(err error) bool {
 	if err == nil {
 		return false
@@ -824,10 +826,6 @@ func isProxyConnectionError(err error) bool {
 				case syscall.EHOSTUNREACH: // no route to host
 					return true
 				case syscall.ENETUNREACH: // network unreachable
-					return true
-				case syscall.ECONNRESET: // connection reset by peer
-					return true
-				case syscall.ECONNABORTED: // connection aborted
 					return true
 				}
 			}
