@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"miren.dev/runtime/api/storage/storage_v1alpha"
 )
 
 const stateFileName = "lsvd-state.json"
@@ -42,6 +44,9 @@ type VolumeState struct {
 
 	// RemoteOnly indicates if this uses only remote storage
 	RemoteOnly bool `json:"remote_only"`
+
+	// Mode is the disk I/O mode (universal or accelerator)
+	Mode storage_v1alpha.DiskVolumeVolumeMode `json:"mode,omitempty"`
 }
 
 // MountState represents the state of a disk mount
@@ -66,6 +71,9 @@ type MountState struct {
 
 	// ReadOnly indicates if the mount is read-only
 	ReadOnly bool `json:"read_only"`
+
+	// Mode is the disk I/O mode used for this mount (universal or accelerator)
+	Mode storage_v1alpha.DiskVolumeVolumeMode `json:"mode,omitempty"`
 
 	// LeaseNonce is the volume lease nonce from remote Disk API
 	LeaseNonce string `json:"lease_nonce,omitempty"`

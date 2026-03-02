@@ -138,6 +138,35 @@ func (r *realDiskMountOps) LoopDetach(devicePath string) error {
 	return nil
 }
 
+func (r *realDiskMountOps) LbdAttach(imagePath, logDir string) (string, error) {
+	cmd := exec.Command("lbdctl", "add", imagePath, "--log-dir", logDir)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("lbdctl add failed: %w\noutput: %s", err, string(output))
+	}
+
+	devicePath := strings.TrimSpace(string(output))
+	if devicePath == "" {
+		return "", fmt.Errorf("lbdctl add returned empty device path")
+	}
+
+	return devicePath, nil
+}
+
+func (r *realDiskMountOps) LbdDetach(devicePath string) error {
+	cmd := exec.Command("lbdctl", "remove", devicePath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("lbdctl remove failed: %w\noutput: %s", err, string(output))
+	}
+	return nil
+}
+
+func (r *realDiskMountOps) LbdAvailable() bool {
+	_, err := exec.LookPath("lbdctl")
+	return err == nil
+}
+
 func (r *realDiskMountOps) Mount(device, mountPath, filesystem string, readOnly bool) error {
 	flags := uintptr(0)
 	if readOnly {
@@ -299,6 +328,22 @@ func ensureLoopDeviceNode(log *slog.Logger, index int) error {
 		return fmt.Errorf("mknod %s: %w", path, err)
 	}
 
+	return nil
+}
+
+// EnsureLbdDevices checks if the lbd kernel module and lbdctl are available.
+func EnsureLbdDevices(log *slog.Logger) error {
+	// Try modprobe lbd
+	if out, err := exec.Command("modprobe", "lbd").CombinedOutput(); err != nil {
+		log.Warn("modprobe lbd failed", "error", err, "output", string(out))
+	}
+
+	// Check that lbdctl is in PATH
+	if _, err := exec.LookPath("lbdctl"); err != nil {
+		return fmt.Errorf("lbdctl not found in PATH: %w", err)
+	}
+
+	log.Info("lbd devices available")
 	return nil
 }
 

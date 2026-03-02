@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	containerd "github.com/containerd/containerd/v2/client"
@@ -31,6 +32,7 @@ import (
 	"miren.dev/runtime/controllers/service"
 	"miren.dev/runtime/network"
 	"miren.dev/runtime/observability"
+	"miren.dev/runtime/pkg/cloudauth"
 	"miren.dev/runtime/pkg/controller"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/entity/types"
@@ -476,6 +478,11 @@ func (r *Runner) SetupControllers(
 		log.Warn("Loop devices not available, disk mounts will fail", "error", err)
 	}
 
+	// Try to set up lbd devices for accelerator mode
+	if err := diskio.EnsureLbdDevices(log); err != nil {
+		log.Info("lbd devices not available, accelerator mode will not work", "error", err)
+	}
+
 	diskioState := diskio.NewState()
 	diskioState.SetPath(dataPath)
 
@@ -489,6 +496,48 @@ func (r *Runner) SetupControllers(
 	dmc.SetEAC(eas)
 
 	r.closers = append(r.closers, shutdownCloser{dmc})
+
+	// Start log watcher for accelerator mode volumes if cloud auth is configured
+	if r.CloudAuth != nil && r.CloudAuth.Enabled && r.CloudAuth.PrivateKey != "" {
+		cloudURL := r.CloudAuth.CloudURL
+		if cloudURL == "" {
+			cloudURL = coordinate.DefaultCloudURL
+		}
+
+		var keyData []byte
+		if strings.HasPrefix(r.CloudAuth.PrivateKey, "-----BEGIN PRIVATE KEY-----") {
+			keyData = []byte(r.CloudAuth.PrivateKey)
+		} else {
+			keyData, err = os.ReadFile(r.CloudAuth.PrivateKey)
+			if err != nil {
+				log.Warn("failed to load cloud auth private key for log watcher", "error", err)
+			}
+		}
+
+		if keyData != nil {
+			keyPair, kerr := cloudauth.LoadKeyPairFromPEM(string(keyData))
+			if kerr != nil {
+				log.Warn("failed to parse cloud auth private key for log watcher", "error", kerr)
+			} else {
+				authClient, aerr := cloudauth.NewAuthClient(cloudURL, keyPair)
+				if aerr != nil {
+					log.Warn("failed to create auth client for log watcher", "error", aerr)
+				} else {
+					cloudDiskClient := diskio.NewCloudDiskClient(log, cloudURL, authClient)
+					dmc.SetCloudClient(cloudDiskClient)
+
+					uploader := diskio.NewCloudSegmentUploader(log, cloudURL, authClient, diskioState)
+					watcher := diskio.NewLogWatcher(log, diskioState, uploader, 5*time.Second)
+					go func() {
+						if werr := watcher.Run(ctx); werr != nil {
+							log.Error("log watcher stopped", "error", werr)
+						}
+					}()
+					log.Info("started log watcher for accelerator mode volumes")
+				}
+			}
+		}
+	}
 
 	volHandler := controller.AdaptReconcileController[storage_v1alpha.DiskVolume](dvc)
 	cm.AddController(controller.NewReconcileController(

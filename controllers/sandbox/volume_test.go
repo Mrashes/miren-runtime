@@ -30,10 +30,10 @@ func TestAcquireDiskLease(t *testing.T) {
 		// Setup: Create a disk entity
 		diskID := entity.Id("disk/test-disk")
 		disk := &storage.Disk{
-			ID:           diskID,
-			Name:         "test-disk",
-			SizeGb:       10,
-			Status:       storage.PROVISIONED,
+			ID:       diskID,
+			Name:     "test-disk",
+			SizeGb:   10,
+			Status:   storage.PROVISIONED,
 			VolumeId: "vol-123",
 		}
 		_, err := es.EAC.Create(ctx, entity.New(
@@ -85,10 +85,10 @@ func TestAcquireDiskLease(t *testing.T) {
 		// Setup: Create a disk entity
 		diskID := entity.Id("disk/test-disk")
 		disk := &storage.Disk{
-			ID:           diskID,
-			Name:         "test-disk",
-			SizeGb:       10,
-			Status:       storage.PROVISIONED,
+			ID:       diskID,
+			Name:     "test-disk",
+			SizeGb:   10,
+			Status:   storage.PROVISIONED,
 			VolumeId: "vol-123",
 		}
 		_, err := es.EAC.Create(ctx, entity.New(
@@ -148,10 +148,10 @@ func TestAcquireDiskLease(t *testing.T) {
 		// Setup: Create a disk entity
 		diskID := entity.Id("disk/test-disk")
 		disk := &storage.Disk{
-			ID:           diskID,
-			Name:         "test-disk",
-			SizeGb:       10,
-			Status:       storage.PROVISIONED,
+			ID:       diskID,
+			Name:     "test-disk",
+			SizeGb:   10,
+			Status:   storage.PROVISIONED,
 			VolumeId: "vol-123",
 		}
 		_, err := es.EAC.Create(ctx, entity.New(
@@ -218,10 +218,10 @@ func TestAcquireDiskLease(t *testing.T) {
 		// Setup: Create a disk entity
 		diskID := entity.Id("disk/test-disk")
 		disk := &storage.Disk{
-			ID:           diskID,
-			Name:         "test-disk",
-			SizeGb:       10,
-			Status:       storage.PROVISIONED,
+			ID:       diskID,
+			Name:     "test-disk",
+			SizeGb:   10,
+			Status:   storage.PROVISIONED,
 			VolumeId: "vol-123",
 		}
 		_, err := es.EAC.Create(ctx, entity.New(
@@ -289,10 +289,10 @@ func TestAcquireDiskLease(t *testing.T) {
 		// Setup: Create a disk entity
 		diskID := entity.Id("disk/test-disk")
 		disk := &storage.Disk{
-			ID:           diskID,
-			Name:         "test-disk",
-			SizeGb:       10,
-			Status:       storage.PROVISIONED,
+			ID:       diskID,
+			Name:     "test-disk",
+			SizeGb:   10,
+			Status:   storage.PROVISIONED,
 			VolumeId: "vol-123",
 		}
 		_, err := es.EAC.Create(ctx, entity.New(

@@ -153,7 +153,7 @@ func (d *DiskController) handleProvisioning(ctx context.Context, disk *storage_v
 		case storage_v1alpha.DV_READY:
 			disk.Status = storage_v1alpha.PROVISIONED
 			disk.VolumeId = existingVolume.VolumeId
-			disk.Mode = storage_v1alpha.UNIVERSAL
+			disk.Mode = d.diskMode
 			d.Log.Info("disk provisioned via disk_volume entity",
 				"disk", disk.ID,
 				"volume_id", existingVolume.VolumeId)
@@ -183,7 +183,7 @@ func (d *DiskController) handleProvisioning(ctx context.Context, disk *storage_v
 		DiskId:       disk.ID,
 		SizeGb:       disk.SizeGb,
 		Filesystem:   filesystem,
-		Mode:         "universal",
+		VolumeMode:   diskModeToVolumeMode(d.diskMode),
 		DesiredState: storage_v1alpha.DV_PRESENT,
 		ActualState:  storage_v1alpha.DV_PENDING,
 		NodeId:       entity.Id("node/" + strings.TrimPrefix(d.NodeId, "node/")),
@@ -206,8 +206,7 @@ func (d *DiskController) handleProvisioning(ctx context.Context, disk *storage_v
 		return fmt.Errorf("failed to create disk_volume entity: %w", err)
 	}
 
-	// Set mode on disk entity so other controllers know this is universal mode
-	disk.Mode = storage_v1alpha.UNIVERSAL
+	disk.Mode = d.diskMode
 
 	d.Log.Info("created disk_volume entity, waiting for provisioning",
 		"disk", disk.ID)
@@ -331,6 +330,15 @@ func (d *DiskController) getDiskVolumeForDisk(ctx context.Context, diskId entity
 	volume.Decode(values[0].Entity())
 
 	return &volume, nil
+}
+
+func diskModeToVolumeMode(mode storage_v1alpha.DiskMode) storage_v1alpha.DiskVolumeVolumeMode {
+	switch mode {
+	case storage_v1alpha.ACCELERATOR:
+		return storage_v1alpha.VM_ACCELERATOR
+	default:
+		return storage_v1alpha.VM_UNIVERSAL
+	}
 }
 
 // Close gracefully shuts down the disk controller

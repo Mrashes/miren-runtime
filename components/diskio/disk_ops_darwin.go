@@ -56,6 +56,18 @@ func (s *stubDiskMountOps) LoopDetach(_ string) error {
 	return fmt.Errorf("loop devices not supported on darwin")
 }
 
+func (s *stubDiskMountOps) LbdAttach(_, _ string) (string, error) {
+	return "", fmt.Errorf("lbd not supported on darwin")
+}
+
+func (s *stubDiskMountOps) LbdDetach(_ string) error {
+	return fmt.Errorf("lbd not supported on darwin")
+}
+
+func (s *stubDiskMountOps) LbdAvailable() bool {
+	return false
+}
+
 func (s *stubDiskMountOps) Mount(_, _, _ string, _ bool) error {
 	return fmt.Errorf("mount not supported on darwin")
 }
@@ -78,6 +90,10 @@ func (s *stubDiskMountOps) FormatDevice(_ context.Context, _, _ string) error {
 
 func EnsureLoopDevices(_ *slog.Logger) error {
 	return fmt.Errorf("loop devices not supported on darwin")
+}
+
+func EnsureLbdDevices(_ *slog.Logger) error {
+	return fmt.Errorf("lbd not supported on darwin")
 }
 
 func LoopDeviceAvailable() bool {

@@ -214,6 +214,15 @@ func (c *DiskVolumeController) createVolume(ctx context.Context, volume *storage
 		}
 	}
 
+	// Create log directory for accelerator volumes
+	if volume.VolumeMode == storage_v1alpha.VM_ACCELERATOR {
+		logDir := filepath.Join(volumePath, "logs")
+		if err := c.ops.CreateVolumeDir(logDir); err != nil {
+			c.setVolumeError(ctx, volume.ID, fmt.Sprintf("failed to create log directory: %v", err))
+			return fmt.Errorf("failed to create log directory: %w", err)
+		}
+	}
+
 	// Use the entity ID suffix as the volume ID
 	volumeId := entityId
 	if idx := strings.LastIndex(entityId, "/"); idx != -1 {
@@ -228,6 +237,7 @@ func (c *DiskVolumeController) createVolume(ctx context.Context, volume *storage
 		DiskPath:   volumePath,
 		SizeBytes:  sizeBytes,
 		Filesystem: volume.Filesystem,
+		Mode:       volume.VolumeMode,
 	})
 
 	if err := c.state.Save(); err != nil {

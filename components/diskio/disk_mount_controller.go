@@ -23,6 +23,9 @@ type DiskMountController struct {
 	state    *State
 	ops      DiskMountOps
 
+	// Cloud client for lease management and segment replay (nil when cloud not configured)
+	cloudClient CloudDiskClient
+
 	// Track active loop mounts for shutdown cleanup
 	mu     sync.RWMutex
 	mounts map[string]*diskMountInfo
@@ -32,6 +35,7 @@ type diskMountInfo struct {
 	imagePath  string
 	devicePath string
 	mountPath  string
+	mode       storage_v1alpha.DiskVolumeVolumeMode
 }
 
 func NewDiskMountController(log *slog.Logger, dataPath, nodeId string, state *State, ops DiskMountOps) *DiskMountController {
@@ -49,6 +53,11 @@ func (c *DiskMountController) SetEAC(eac *entityserver_v1alpha.EntityAccessClien
 	c.eac = eac
 }
 
+// SetCloudClient sets the cloud client for lease management and segment replay.
+func (c *DiskMountController) SetCloudClient(client CloudDiskClient) {
+	c.cloudClient = client
+}
+
 func (c *DiskMountController) Init(ctx context.Context) error {
 	return nil
 }
@@ -62,7 +71,7 @@ func (c *DiskMountController) Index() entity.Attr {
 	return entity.Ref(storage_v1alpha.DiskMountNodeIdId, entity.Id(fullNodeId))
 }
 
-// Shutdown unmounts filesystems and detaches loop devices.
+// Shutdown unmounts filesystems, detaches loop devices, and releases cloud leases.
 func (c *DiskMountController) Shutdown() {
 	c.mu.Lock()
 	mounts := make(map[string]*diskMountInfo, len(c.mounts))
@@ -82,8 +91,27 @@ func (c *DiskMountController) Shutdown() {
 		}
 
 		if m.devicePath != "" {
-			if err := c.ops.LoopDetach(m.devicePath); err != nil {
-				c.log.Warn("failed to detach loop on shutdown", "entity_id", entityId, "error", err)
+			if m.mode == storage_v1alpha.VM_ACCELERATOR {
+				if err := c.ops.LbdDetach(m.devicePath); err != nil {
+					c.log.Warn("failed to detach lbd on shutdown", "entity_id", entityId, "error", err)
+				}
+			} else {
+				if err := c.ops.LoopDetach(m.devicePath); err != nil {
+					c.log.Warn("failed to detach loop on shutdown", "entity_id", entityId, "error", err)
+				}
+			}
+		}
+	}
+
+	// Release cloud leases for any mounts that had them
+	if c.cloudClient != nil {
+		ctx := context.Background()
+		for _, mountState := range c.state.ListMounts() {
+			if mountState.LeaseNonce != "" {
+				c.log.Info("releasing lease on shutdown", "entity_id", mountState.EntityId, "volume_id", mountState.VolumeId)
+				if err := c.cloudClient.ReleaseLease(ctx, mountState.VolumeId, mountState.LeaseNonce); err != nil {
+					c.log.Warn("failed to release lease on shutdown", "entity_id", mountState.EntityId, "error", err)
+				}
 			}
 		}
 	}
@@ -184,13 +212,41 @@ func (c *DiskMountController) attachAndMount(ctx context.Context, mount *storage
 		return fmt.Errorf("volume %s not found in state", volumeId)
 	}
 
+	// For accelerator mode with cloud configured, acquire lease and replay segments
+	var leaseNonce string
+	if volState.Mode == storage_v1alpha.VM_ACCELERATOR && c.cloudClient != nil {
+		nonce, lerr := c.cloudClient.AcquireLease(ctx, volState.VolumeId)
+		if lerr != nil {
+			c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to acquire volume lease: %v", lerr))
+			return fmt.Errorf("failed to acquire volume lease: %w", lerr)
+		}
+		leaseNonce = nonce
+
+		if rerr := c.replayMissingSegments(ctx, volState); rerr != nil {
+			c.cloudClient.ReleaseLease(ctx, volState.VolumeId, nonce)
+			c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to replay segments: %v", rerr))
+			return fmt.Errorf("failed to replay segments: %w", rerr)
+		}
+	}
+
 	imagePath := filepath.Join(volState.DiskPath, "disk.img")
 
-	// Attach loop device
-	devicePath, err := c.ops.LoopAttach(imagePath)
-	if err != nil {
-		c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to attach loop device: %v", err))
-		return fmt.Errorf("failed to attach loop device: %w", err)
+	// Attach device based on volume mode
+	var devicePath string
+	var err error
+	if volState.Mode == storage_v1alpha.VM_ACCELERATOR {
+		logDir := filepath.Join(volState.DiskPath, "logs")
+		devicePath, err = c.ops.LbdAttach(imagePath, logDir)
+		if err != nil {
+			c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to attach lbd device: %v", err))
+			return fmt.Errorf("failed to attach lbd device: %w", err)
+		}
+	} else {
+		devicePath, err = c.ops.LoopAttach(imagePath)
+		if err != nil {
+			c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to attach loop device: %v", err))
+			return fmt.Errorf("failed to attach loop device: %w", err)
+		}
 	}
 
 	// Track the mount for shutdown cleanup
@@ -199,6 +255,7 @@ func (c *DiskMountController) attachAndMount(ctx context.Context, mount *storage
 		imagePath:  imagePath,
 		devicePath: devicePath,
 		mountPath:  mount.MountPath,
+		mode:       volState.Mode,
 	}
 	c.mu.Unlock()
 
@@ -210,6 +267,8 @@ func (c *DiskMountController) attachAndMount(ctx context.Context, mount *storage
 		MountPath:  mount.MountPath,
 		Mounted:    false,
 		ReadOnly:   mount.ReadOnly,
+		Mode:       volState.Mode,
+		LeaseNonce: leaseNonce,
 	})
 
 	if err := c.state.Save(); err != nil {
@@ -383,10 +442,23 @@ func (c *DiskMountController) unmountAndDetach(ctx context.Context, mount *stora
 		c.log.Warn("failed to update mount state to detaching", "error", err)
 	}
 
-	// Detach loop device
+	// Detach device based on mode (use persisted mode from MountState)
 	if mountState.DevicePath != "" {
-		if err := c.ops.LoopDetach(mountState.DevicePath); err != nil {
-			c.log.Warn("failed to detach loop device", "error", err)
+		if mountState.Mode == storage_v1alpha.VM_ACCELERATOR {
+			if err := c.ops.LbdDetach(mountState.DevicePath); err != nil {
+				c.log.Warn("failed to detach lbd device", "error", err)
+			}
+		} else {
+			if err := c.ops.LoopDetach(mountState.DevicePath); err != nil {
+				c.log.Warn("failed to detach loop device", "error", err)
+			}
+		}
+	}
+
+	// Release cloud lease if one was acquired
+	if mountState.LeaseNonce != "" && c.cloudClient != nil {
+		if err := c.cloudClient.ReleaseLease(ctx, mountState.VolumeId, mountState.LeaseNonce); err != nil {
+			c.log.Warn("failed to release volume lease", "entity_id", entityId, "error", err)
 		}
 	}
 
@@ -524,8 +596,14 @@ func (c *DiskMountController) ReconcileWithEntities(ctx context.Context) error {
 		}
 
 		if mountState.DevicePath != "" {
-			if err := c.ops.LoopDetach(mountState.DevicePath); err != nil {
-				c.log.Warn("failed to detach loop for orphaned mount", "entity_id", mountState.EntityId, "error", err)
+			if mountState.Mode == storage_v1alpha.VM_ACCELERATOR {
+				if err := c.ops.LbdDetach(mountState.DevicePath); err != nil {
+					c.log.Warn("failed to detach lbd for orphaned mount", "entity_id", mountState.EntityId, "error", err)
+				}
+			} else {
+				if err := c.ops.LoopDetach(mountState.DevicePath); err != nil {
+					c.log.Warn("failed to detach loop for orphaned mount", "entity_id", mountState.EntityId, "error", err)
+				}
 			}
 		}
 

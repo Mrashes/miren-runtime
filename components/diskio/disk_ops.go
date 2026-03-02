@@ -22,6 +22,9 @@ type DiskMountOps interface {
 	RemoveFile(path string) error
 	LoopAttach(imagePath string) (devicePath string, err error)
 	LoopDetach(devicePath string) error
+	LbdAttach(imagePath, logDir string) (devicePath string, err error)
+	LbdDetach(devicePath string) error
+	LbdAvailable() bool
 	Mount(device, mountPath, filesystem string, readOnly bool) error
 	Unmount(path string) error
 	IsMounted(path string) bool

@@ -641,7 +641,10 @@ func TestDiskVolumeControllerNoLSVDVolume(t *testing.T) {
 
 // createTestLSVDVolume creates an LSVD volume at dataPath with the given name and size,
 // writes the provided blocks, and closes it. Each block entry is (lba, fill_byte).
-func createTestLSVDVolume(t *testing.T, ctx context.Context, log *slog.Logger, dataPath, volumeName string, sizeBytes int64, blocks []struct{ lba int; fill byte }) {
+func createTestLSVDVolume(t *testing.T, ctx context.Context, log *slog.Logger, dataPath, volumeName string, sizeBytes int64, blocks []struct {
+	lba  int
+	fill byte
+}) {
 	t.Helper()
 
 	volDir := filepath.Join(dataPath, "volumes", volumeName)
@@ -699,7 +702,10 @@ func TestMigrateLSVDVolume(t *testing.T) {
 		dataPath := t.TempDir()
 
 		createTestLSVDVolume(t, ctx, log, dataPath, "single-block", 1<<20, // 1MB
-			[]struct{ lba int; fill byte }{{0, 0xAB}})
+			[]struct {
+				lba  int
+				fill byte
+			}{{0, 0xAB}})
 
 		destDir := filepath.Join(dataPath, "dest")
 		require.NoError(t, os.MkdirAll(destDir, 0755))
@@ -731,7 +737,10 @@ func TestMigrateLSVDVolume(t *testing.T) {
 
 		// Write at LBA 0 and LBA 10, gap between should be zeros
 		createTestLSVDVolume(t, ctx, log, dataPath, "sparse-vol", 1<<20,
-			[]struct{ lba int; fill byte }{{0, 0x11}, {10, 0x22}})
+			[]struct {
+				lba  int
+				fill byte
+			}{{0, 0x11}, {10, 0x22}})
 
 		destDir := filepath.Join(dataPath, "dest")
 		require.NoError(t, os.MkdirAll(destDir, 0755))
@@ -775,7 +784,10 @@ func TestMigrateLSVDVolume(t *testing.T) {
 		dataPath := t.TempDir()
 
 		createTestLSVDVolume(t, ctx, log, dataPath, "rename-test", 1<<20,
-			[]struct{ lba int; fill byte }{{0, 0x01}})
+			[]struct {
+				lba  int
+				fill byte
+			}{{0, 0x01}})
 
 		destDir := filepath.Join(dataPath, "dest")
 		require.NoError(t, os.MkdirAll(destDir, 0755))
@@ -804,7 +816,10 @@ func TestMigrateLSVDVolume(t *testing.T) {
 
 		lsvdSize := int64(2 * 1024 * 1024) // 2MB LSVD volume
 		createTestLSVDVolume(t, ctx, log, dataPath, "big-vol", lsvdSize,
-			[]struct{ lba int; fill byte }{{0, 0xCC}})
+			[]struct {
+				lba  int
+				fill byte
+			}{{0, 0xCC}})
 
 		destDir := filepath.Join(dataPath, "dest")
 		require.NoError(t, os.MkdirAll(destDir, 0755))
@@ -830,7 +845,10 @@ func TestMigrateLSVDVolume(t *testing.T) {
 
 		lsvdSize := int64(1 * 1024 * 1024) // 1MB LSVD volume
 		createTestLSVDVolume(t, ctx, log, dataPath, "small-vol", lsvdSize,
-			[]struct{ lba int; fill byte }{{0, 0xDD}})
+			[]struct {
+				lba  int
+				fill byte
+			}{{0, 0xDD}})
 
 		destDir := filepath.Join(dataPath, "dest")
 		require.NoError(t, os.MkdirAll(destDir, 0755))
@@ -857,7 +875,10 @@ func TestMigrateLSVDVolume(t *testing.T) {
 		// chunkBlocks is 1024 in the migration code, so write at LBA 1023, 1024, 1025
 		// to straddle a chunk boundary
 		createTestLSVDVolume(t, ctx, log, dataPath, "chunk-boundary", 8*1024*1024,
-			[]struct{ lba int; fill byte }{
+			[]struct {
+				lba  int
+				fill byte
+			}{
 				{1023, 0xAA}, // last block of first chunk
 				{1024, 0xBB}, // first block of second chunk
 				{1025, 0xCC}, // second block of second chunk
@@ -1051,7 +1072,10 @@ func TestMigrateLSVDVolume(t *testing.T) {
 		dataPath := t.TempDir()
 
 		createTestLSVDVolume(t, ctx, log, dataPath, "dest-err", 1<<20,
-			[]struct{ lba int; fill byte }{{0, 0x01}})
+			[]struct {
+				lba  int
+				fill byte
+			}{{0, 0x01}})
 
 		vc := newMigrateTestController(t, dataPath)
 

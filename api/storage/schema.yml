@@ -139,9 +139,11 @@ kinds:
       doc: Filesystem type (ext4, xfs, btrfs)
       default: ext4
 
-    mode:
-      type: string
-      doc: Disk I/O mode (universal or accelerator)
+    volume_mode:
+      type: enum
+      doc: Disk I/O mode
+      choices: [vm_universal, vm_accelerator]
+      default: vm_universal
 
     image_path:
       type: string

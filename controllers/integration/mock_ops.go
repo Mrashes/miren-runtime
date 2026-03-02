@@ -90,6 +90,27 @@ func (m *mockDiskMountOps) LoopDetach(devicePath string) error {
 	return nil
 }
 
+func (m *mockDiskMountOps) LbdAttach(imagePath, _ string) (string, error) {
+	devPath := "/dev/lbd" + string(rune('0'+m.nextLoopIndex))
+	m.nextLoopIndex++
+	m.loopDevices[imagePath] = devPath
+	return devPath, nil
+}
+
+func (m *mockDiskMountOps) LbdDetach(devicePath string) error {
+	for img, dev := range m.loopDevices {
+		if dev == devicePath {
+			delete(m.loopDevices, img)
+			break
+		}
+	}
+	return nil
+}
+
+func (m *mockDiskMountOps) LbdAvailable() bool {
+	return false
+}
+
 func (m *mockDiskMountOps) Mount(_, mountPath, _ string, _ bool) error {
 	m.existingMounts[mountPath] = true
 	return nil

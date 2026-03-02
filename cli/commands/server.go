@@ -785,21 +785,21 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 
 	// Build RunnerDeps from ServerState (all dependencies already initialized)
 	deps := runner.RunnerDeps{
-		CC:               ctx.ServerState.CC,
-		Namespace:        ctx.ServerState.Namespace,
-		Bridge:           ctx.ServerState.Bridge,
-		Tempdir:          ctx.ServerState.Tempdir,
-		Subnet:           ctx.ServerState.Subnet,
-		NetServ:          ctx.ServerState.NetServ,
-		LogsMaintainer:   ctx.ServerState.LogsMaintainer,
-		LogWriter:        logWriter,
-		StatusMon:        ctx.ServerState.StatusMon,
-		IPv4Routable:     ctx.ServerState.IPv4Routable,
-		ServicePrefixes:  ctx.ServerState.ServicePrefixes,
-		DisableLocalNet:  false,
-		Resolver:         res,
-		SandboxMetrics:   ctx.ServerState.SandboxMetrics,
-		IsCoordinator:    true,
+		CC:              ctx.ServerState.CC,
+		Namespace:       ctx.ServerState.Namespace,
+		Bridge:          ctx.ServerState.Bridge,
+		Tempdir:         ctx.ServerState.Tempdir,
+		Subnet:          ctx.ServerState.Subnet,
+		NetServ:         ctx.ServerState.NetServ,
+		LogsMaintainer:  ctx.ServerState.LogsMaintainer,
+		LogWriter:       logWriter,
+		StatusMon:       ctx.ServerState.StatusMon,
+		IPv4Routable:    ctx.ServerState.IPv4Routable,
+		ServicePrefixes: ctx.ServerState.ServicePrefixes,
+		DisableLocalNet: false,
+		Resolver:        res,
+		SandboxMetrics:  ctx.ServerState.SandboxMetrics,
+		IsCoordinator:   true,
 	}
 
 	rc.DataPath = cfg.Server.GetDataPath()
@@ -1154,4 +1154,3 @@ func stopAllSandboxContainers(ctx context.Context, log *slog.Logger, cc *contain
 	log.Info("stopped sandbox containers", "count", stoppedCount)
 	return nil
 }
-

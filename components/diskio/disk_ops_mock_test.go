@@ -76,6 +76,8 @@ type mockDiskMountOps struct {
 	removedFiles  []string
 	attachedLoops []string
 	detachedLoops []string
+	attachedLbds  []mockLbdAttach
+	detachedLbds  []string
 	mounts        []diskMockMount
 	unmounts      []string
 	mountedPaths  map[string]bool
@@ -85,12 +87,21 @@ type mockDiskMountOps struct {
 	createDirErr  error
 	attachErr     error
 	detachErr     error
+	lbdAttachErr  error
+	lbdDetachErr  error
+	lbdAvailable  bool
 	mountErr      error
 	unmountErr    error
 	isFormattedFn func(device, filesystem string) (bool, error)
 	formatErr     error
 
 	nextLoopDevice string
+	nextLbdDevice  string
+}
+
+type mockLbdAttach struct {
+	imagePath string
+	logDir    string
 }
 
 type diskMockMount struct {
@@ -110,6 +121,7 @@ func newMockDiskMountOps() *mockDiskMountOps {
 		mountedPaths:   make(map[string]bool),
 		formattedDevs:  make(map[string]string),
 		nextLoopDevice: "/dev/loop0",
+		nextLbdDevice:  "/dev/lbd0",
 	}
 }
 
@@ -140,6 +152,26 @@ func (m *mockDiskMountOps) LoopDetach(devicePath string) error {
 	}
 	m.detachedLoops = append(m.detachedLoops, devicePath)
 	return nil
+}
+
+func (m *mockDiskMountOps) LbdAttach(imagePath, logDir string) (string, error) {
+	if m.lbdAttachErr != nil {
+		return "", m.lbdAttachErr
+	}
+	m.attachedLbds = append(m.attachedLbds, mockLbdAttach{imagePath: imagePath, logDir: logDir})
+	return m.nextLbdDevice, nil
+}
+
+func (m *mockDiskMountOps) LbdDetach(devicePath string) error {
+	if m.lbdDetachErr != nil {
+		return m.lbdDetachErr
+	}
+	m.detachedLbds = append(m.detachedLbds, devicePath)
+	return nil
+}
+
+func (m *mockDiskMountOps) LbdAvailable() bool {
+	return m.lbdAvailable
 }
 
 func (m *mockDiskMountOps) Mount(device, mountPath, filesystem string, readOnly bool) error {
