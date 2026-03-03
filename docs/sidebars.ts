@@ -25,6 +25,7 @@ const sidebars: SidebarsConfig = {
         'app-configuration',
         'languages',
         'services',
+        'traffic-routing',
         'scaling',
         'disks',
         'tls',
