@@ -246,6 +246,10 @@ func (ac *AppConfig) Validate() error {
 				if p.Protocol != "" && p.Protocol != "tcp" && p.Protocol != "udp" {
 					return fmt.Errorf("service %s: ports[%d] protocol must be \"tcp\" or \"udp\"", serviceName, i)
 				}
+				proto := p.Protocol
+				if proto == "" {
+					proto = "tcp"
+				}
 				if p.NodePort < 0 || p.NodePort > 65535 {
 					return fmt.Errorf("service %s: ports[%d] node_port must be between 0 and 65535", serviceName, i)
 				}
@@ -253,9 +257,9 @@ func (ac *AppConfig) Validate() error {
 					return fmt.Errorf("service %s: ports[%d] duplicate port name %q", serviceName, i, p.Name)
 				}
 				seenNames[p.Name] = true
-				pp := portProto{p.Port, p.Protocol}
+				pp := portProto{p.Port, proto}
 				if seenPortProto[pp] {
-					return fmt.Errorf("service %s: ports[%d] duplicate port number %d (protocol %q)", serviceName, i, p.Port, p.Protocol)
+					return fmt.Errorf("service %s: ports[%d] duplicate port number %d (protocol %q)", serviceName, i, p.Port, proto)
 				}
 				seenPortProto[pp] = true
 			}

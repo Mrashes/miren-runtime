@@ -1060,6 +1060,24 @@ protocol = "tcp"
 		assert.Contains(t, err.Error(), "duplicate port number 8080")
 	})
 
+	t.Run("duplicate port empty protocol treated as tcp", func(t *testing.T) {
+		config := `
+name = "test-app"
+
+[[services.web.ports]]
+port = 8080
+name = "http"
+
+[[services.web.ports]]
+port = 8080
+name = "also-http"
+protocol = "tcp"
+`
+		_, err := Parse([]byte(config))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "duplicate port number 8080")
+	})
+
 	t.Run("same port different protocol is valid", func(t *testing.T) {
 		config := `
 name = "test-app"

@@ -19,6 +19,7 @@ import (
 	coreutil "miren.dev/runtime/api/core"
 	"miren.dev/runtime/api/core/core_v1alpha"
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
+	"miren.dev/runtime/api/network/network_v1alpha"
 	"miren.dev/runtime/pkg/cond"
 	"miren.dev/runtime/pkg/containerdx"
 	"miren.dev/runtime/pkg/controller"
@@ -223,6 +224,32 @@ func (l *Launcher) reconcileAppVersion(ctx context.Context, app *core_v1alpha.Ap
 			newPoolIDs = append(newPoolIDs, poolID)
 		}
 	}
+
+	// Ensure Service entities for services with non-HTTP ports.
+	// These are needed for L4 (TCP/UDP) traffic routing via ipalloc → ServiceController → nftables.
+	appResp, err := l.EAC.Get(ctx, app.ID.String())
+	if err != nil {
+		return fmt.Errorf("failed to get app metadata for service entities: %w", err)
+	}
+	var appMD core_v1alpha.Metadata
+	appMD.Decode(appResp.Entity().Entity())
+
+	var desiredServices []string
+	for _, svc := range spec.Services {
+		svcID, err := l.ensureServiceForPorts(ctx, app, &appMD, spec, svc.Name)
+		if err != nil {
+			l.Log.Error("failed to ensure service entity",
+				"app", app.ID,
+				"service", svc.Name,
+				"error", err)
+			continue
+		}
+		if svcID != "" {
+			desiredServices = append(desiredServices, svc.Name)
+		}
+	}
+
+	l.cleanupStaleServices(ctx, app, desiredServices)
 
 	// Wait for new pools to have ready instances before killing old ones.
 	// This prevents a gap where the old sandbox is dead but the new one
@@ -1004,4 +1031,202 @@ func (l *Launcher) cleanupOldVersionPools(ctx context.Context, app *core_v1alpha
 	}
 
 	return nil
+}
+
+// ensureServiceForPorts creates or updates a network Service entity for a service
+// that has non-HTTP ports. Returns the service entity ID if one was created/updated,
+// or empty string if the service doesn't need a Service entity (all ports are HTTP).
+func (l *Launcher) ensureServiceForPorts(ctx context.Context, app *core_v1alpha.App, appMD *core_v1alpha.Metadata, spec *core_v1alpha.ConfigSpec, serviceName string) (string, error) {
+	// Find the service's ports from ConfigSpec
+	var ports []core_v1alpha.ConfigSpecServicesPorts
+	for _, svc := range spec.Services {
+		if svc.Name == serviceName {
+			ports = svc.Ports
+			break
+		}
+	}
+
+	// Filter: only act on services with at least one non-HTTP port
+	hasNonHTTP := false
+	for _, p := range ports {
+		if p.Type != "http" {
+			hasNonHTTP = true
+			break
+		}
+	}
+	if !hasNonHTTP {
+		return "", nil
+	}
+
+	// Map ConfigSpec ports to network Service ports
+	var svcPorts []network_v1alpha.Port
+	for _, p := range ports {
+		np := network_v1alpha.Port{
+			Port:     p.Port,
+			Name:     p.Name,
+			Type:     p.Type,
+			NodePort: p.NodePort,
+		}
+		switch p.Protocol {
+		case core_v1alpha.ConfigSpecServicesPortsUDP:
+			np.Protocol = network_v1alpha.UDP
+		default:
+			np.Protocol = network_v1alpha.TCP
+		}
+		svcPorts = append(svcPorts, np)
+	}
+
+	svcEntityID := fmt.Sprintf("svc/%s-%s", appMD.Name, serviceName)
+
+	existing, err := l.EAC.Get(ctx, svcEntityID)
+	if err != nil {
+		if !errors.Is(err, cond.ErrNotFound{}) {
+			return "", fmt.Errorf("failed to get service entity %s: %w", svcEntityID, err)
+		}
+
+		// Not found — create new Service entity
+		svc := &network_v1alpha.Service{
+			Port: svcPorts,
+			Match: types.LabelSet(
+				"app", appMD.Name,
+			),
+		}
+
+		_, err := l.EAC.Create(ctx, entity.New(
+			(&core_v1alpha.Metadata{
+				Name: fmt.Sprintf("%s-%s", appMD.Name, serviceName),
+				Labels: types.LabelSet(
+					"app", app.ID.String(),
+					"service", serviceName,
+					"managed-by", "launcher",
+				),
+			}).Encode,
+			entity.DBId, entity.Id(svcEntityID),
+			svc.Encode,
+		).Attrs())
+		if err != nil {
+			return "", fmt.Errorf("failed to create service entity %s: %w", svcEntityID, err)
+		}
+
+		l.Log.Info("created service entity",
+			"service_entity", svcEntityID,
+			"app", app.ID,
+			"service", serviceName,
+			"ports", len(svcPorts))
+
+		return svcEntityID, nil
+	}
+
+	// Found — check if ports changed
+	var existingSvc network_v1alpha.Service
+	existingSvc.Decode(existing.Entity().Entity())
+
+	if servicePortsEqual(existingSvc.Port, svcPorts) {
+		return svcEntityID, nil
+	}
+
+	// Ports changed — update the Service entity, preserving existing IPs
+	updatedSvc := &network_v1alpha.Service{
+		Ip:   existingSvc.Ip,
+		Port: svcPorts,
+		Match: types.LabelSet(
+			"app", appMD.Name,
+		),
+	}
+
+	newAttrs := updatedSvc.Encode()
+
+	// Preserve existing entity attrs that we're not replacing
+	replacingIDs := make(map[entity.Id]bool)
+	for _, attr := range newAttrs {
+		replacingIDs[attr.ID] = true
+	}
+
+	var finalAttrs []entity.Attr
+	for _, attr := range existing.Entity().Entity().Attrs() {
+		if !replacingIDs[attr.ID] {
+			finalAttrs = append(finalAttrs, attr)
+		}
+	}
+	finalAttrs = append(finalAttrs, newAttrs...)
+
+	_, err = l.EAC.Replace(ctx, finalAttrs, 0)
+	if err != nil {
+		return "", fmt.Errorf("failed to update service entity %s: %w", svcEntityID, err)
+	}
+
+	l.Log.Info("updated service entity",
+		"service_entity", svcEntityID,
+		"app", app.ID,
+		"service", serviceName,
+		"ports", len(svcPorts))
+
+	return svcEntityID, nil
+}
+
+// servicePortsEqual compares two network Service port slices for equality
+func servicePortsEqual(a, b []network_v1alpha.Port) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Port != b[i].Port ||
+			a[i].Name != b[i].Name ||
+			a[i].Protocol != b[i].Protocol ||
+			a[i].Type != b[i].Type ||
+			a[i].NodePort != b[i].NodePort {
+			return false
+		}
+	}
+	return true
+}
+
+// cleanupStaleServices removes Service entities that are no longer needed.
+// This handles: services removed from config, services changed from non-HTTP to HTTP-only,
+// and all ports removed from a service.
+func (l *Launcher) cleanupStaleServices(ctx context.Context, app *core_v1alpha.App, desiredServices []string) {
+	results, err := l.EAC.List(ctx, entity.Ref(entity.EntityKind, network_v1alpha.KindService))
+	if err != nil {
+		l.Log.Error("failed to list service entities for cleanup", "error", err)
+		return
+	}
+
+	desiredSet := make(map[string]bool)
+	for _, s := range desiredServices {
+		desiredSet[s] = true
+	}
+
+	for _, ent := range results.Values() {
+		var meta core_v1alpha.Metadata
+		meta.Decode(ent.Entity())
+
+		managedBy, _ := meta.Labels.Get("managed-by")
+		if managedBy != "launcher" {
+			continue
+		}
+
+		appLabel, _ := meta.Labels.Get("app")
+		if appLabel != app.ID.String() {
+			continue
+		}
+
+		serviceLabel, _ := meta.Labels.Get("service")
+		if desiredSet[serviceLabel] {
+			continue
+		}
+
+		var svc network_v1alpha.Service
+		svc.Decode(ent.Entity())
+
+		l.Log.Info("deleting stale service entity",
+			"service_entity", svc.ID,
+			"app", app.ID,
+			"service", serviceLabel)
+
+		if _, err := l.EAC.Delete(ctx, svc.ID.String()); err != nil {
+			l.Log.Error("failed to delete stale service entity",
+				"service_entity", svc.ID,
+				"error", err)
+		}
+	}
 }

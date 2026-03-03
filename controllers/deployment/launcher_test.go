@@ -13,6 +13,7 @@ import (
 	"miren.dev/runtime/api/compute/compute_v1alpha"
 	"miren.dev/runtime/api/core/core_v1alpha"
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
+	"miren.dev/runtime/api/network/network_v1alpha"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/entity/testutils"
 )
@@ -1734,4 +1735,396 @@ func TestScalarPortBackwardCompatWithMultiPort(t *testing.T) {
 	assert.Equal(t, "http", container.Port[0].Name)
 	assert.Equal(t, "http", container.Port[0].Type)
 	assert.Contains(t, container.Env, "PORT=8080")
+}
+
+// listAllServices lists all network Service entities from the in-mem store
+func listAllServices(t *testing.T, ctx context.Context, server *testutils.InMemEntityServer) []network_v1alpha.Service {
+	t.Helper()
+
+	resp, err := server.EAC.List(ctx, entity.Ref(entity.EntityKind, network_v1alpha.KindService))
+	require.NoError(t, err)
+
+	var services []network_v1alpha.Service
+	for _, ent := range resp.Values() {
+		var svc network_v1alpha.Service
+		svc.Decode(ent.Entity())
+		services = append(services, svc)
+	}
+
+	return services
+}
+
+// TestServiceEntityCreatedForNonHTTPPorts tests that the launcher creates a network
+// Service entity for services that have non-HTTP ports (e.g., TCP/UDP).
+func TestServiceEntityCreatedForNonHTTPPorts(t *testing.T) {
+	ctx := context.Background()
+	log := testutils.TestLogger(t)
+
+	server, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	app := &core_v1alpha.App{
+		Project: entity.Id("project-1"),
+	}
+	appID, err := server.Client.Create(ctx, "tcp-echo", app)
+	require.NoError(t, err)
+	app.ID = appID
+
+	version := &core_v1alpha.AppVersion{
+		App:      app.ID,
+		Version:  "v1",
+		ImageUrl: "tcp-echo:latest",
+		Config: core_v1alpha.Config{
+			Services: []core_v1alpha.Services{
+				{
+					Name: "echo",
+					Ports: []core_v1alpha.Ports{
+						{
+							Port:     3000,
+							Name:     "health",
+							Type:     "http",
+							Protocol: core_v1alpha.TCP,
+						},
+						{
+							Port:     7000,
+							Name:     "echo",
+							Type:     "tcp",
+							Protocol: core_v1alpha.TCP,
+							NodePort: 7000,
+						},
+					},
+					ServiceConcurrency: core_v1alpha.ServiceConcurrency{
+						Mode:         "fixed",
+						NumInstances: 1,
+					},
+				},
+			},
+		},
+	}
+	verID, err := server.Client.Create(ctx, "test-ver", version)
+	require.NoError(t, err)
+	version.ID = verID
+
+	app.ActiveVersion = version.ID
+	err = server.Client.Update(ctx, app)
+	require.NoError(t, err)
+
+	launcher := newTestLauncher(log, server.EAC)
+	err = launcher.Reconcile(ctx, app, nil)
+	require.NoError(t, err)
+
+	// Verify Service entity was created
+	services := listAllServices(t, ctx, server)
+	require.Len(t, services, 1, "should create one service entity")
+
+	svc := services[0]
+	assert.Equal(t, entity.Id("svc/tcp-echo-echo"), svc.ID)
+	require.Len(t, svc.Port, 2, "service should have 2 ports")
+
+	assert.Equal(t, int64(3000), svc.Port[0].Port)
+	assert.Equal(t, "health", svc.Port[0].Name)
+	assert.Equal(t, "http", svc.Port[0].Type)
+	assert.Equal(t, network_v1alpha.TCP, svc.Port[0].Protocol)
+
+	assert.Equal(t, int64(7000), svc.Port[1].Port)
+	assert.Equal(t, "echo", svc.Port[1].Name)
+	assert.Equal(t, "tcp", svc.Port[1].Type)
+	assert.Equal(t, int64(7000), svc.Port[1].NodePort)
+	assert.Equal(t, network_v1alpha.TCP, svc.Port[1].Protocol)
+
+	// Verify match labels on the service
+	appLabel, ok := svc.Match.Get("app")
+	assert.True(t, ok, "service should have app match label")
+	assert.Equal(t, "tcp-echo", appLabel)
+
+	// Verify metadata labels
+	svcResp, err := server.EAC.Get(ctx, "svc/tcp-echo-echo")
+	require.NoError(t, err)
+	var meta core_v1alpha.Metadata
+	meta.Decode(svcResp.Entity().Entity())
+	managedBy, _ := meta.Labels.Get("managed-by")
+	assert.Equal(t, "launcher", managedBy)
+	svcLabel, _ := meta.Labels.Get("service")
+	assert.Equal(t, "echo", svcLabel)
+}
+
+// TestServiceEntityUpdatedWhenPortsChange tests that deploying a new version
+// with changed ports updates the existing Service entity.
+func TestServiceEntityUpdatedWhenPortsChange(t *testing.T) {
+	ctx := context.Background()
+	log := testutils.TestLogger(t)
+
+	server, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	app := &core_v1alpha.App{
+		Project: entity.Id("project-1"),
+	}
+	appID, err := server.Client.Create(ctx, "irc-server", app)
+	require.NoError(t, err)
+	app.ID = appID
+
+	// v1: single TCP port
+	v1 := &core_v1alpha.AppVersion{
+		App:      app.ID,
+		Version:  "v1",
+		ImageUrl: "irc:v1",
+		Config: core_v1alpha.Config{
+			Services: []core_v1alpha.Services{
+				{
+					Name: "irc",
+					Ports: []core_v1alpha.Ports{
+						{
+							Port:     6667,
+							Name:     "plaintext",
+							Type:     "tcp",
+							Protocol: core_v1alpha.TCP,
+						},
+					},
+					ServiceConcurrency: core_v1alpha.ServiceConcurrency{
+						Mode:         "fixed",
+						NumInstances: 1,
+					},
+				},
+			},
+		},
+	}
+	v1ID, err := server.Client.Create(ctx, "test-v1", v1)
+	require.NoError(t, err)
+	v1.ID = v1ID
+
+	app.ActiveVersion = v1.ID
+	err = server.Client.Update(ctx, app)
+	require.NoError(t, err)
+
+	launcher := newTestLauncher(log, server.EAC)
+	err = launcher.Reconcile(ctx, app, nil)
+	require.NoError(t, err)
+
+	services := listAllServices(t, ctx, server)
+	require.Len(t, services, 1)
+	require.Len(t, services[0].Port, 1, "v1 should have 1 port")
+	assert.Equal(t, int64(6667), services[0].Port[0].Port)
+
+	// v2: add a second TCP port (TLS)
+	v2 := &core_v1alpha.AppVersion{
+		App:      app.ID,
+		Version:  "v2",
+		ImageUrl: "irc:v2",
+		Config: core_v1alpha.Config{
+			Services: []core_v1alpha.Services{
+				{
+					Name: "irc",
+					Ports: []core_v1alpha.Ports{
+						{
+							Port:     6667,
+							Name:     "plaintext",
+							Type:     "tcp",
+							Protocol: core_v1alpha.TCP,
+						},
+						{
+							Port:     6697,
+							Name:     "tls",
+							Type:     "tcp",
+							Protocol: core_v1alpha.TCP,
+							NodePort: 6697,
+						},
+					},
+					ServiceConcurrency: core_v1alpha.ServiceConcurrency{
+						Mode:         "fixed",
+						NumInstances: 1,
+					},
+				},
+			},
+		},
+	}
+	v2ID, err := server.Client.Create(ctx, "test-v2", v2)
+	require.NoError(t, err)
+	v2.ID = v2ID
+
+	app.ActiveVersion = v2.ID
+	err = server.Client.Update(ctx, app)
+	require.NoError(t, err)
+
+	err = launcher.Reconcile(ctx, app, nil)
+	require.NoError(t, err)
+
+	// Verify Service entity was updated with 2 ports
+	services = listAllServices(t, ctx, server)
+	require.Len(t, services, 1, "should still have one service entity")
+	assert.Equal(t, entity.Id("svc/irc-server-irc"), services[0].ID)
+	require.Len(t, services[0].Port, 2, "v2 should have 2 ports")
+	assert.Equal(t, int64(6667), services[0].Port[0].Port)
+	assert.Equal(t, int64(6697), services[0].Port[1].Port)
+	assert.Equal(t, int64(6697), services[0].Port[1].NodePort)
+}
+
+// TestServiceEntityDeletedWhenServiceRemoved tests that Service entities are
+// cleaned up when a service is removed or all its ports become HTTP-only.
+func TestServiceEntityDeletedWhenServiceRemoved(t *testing.T) {
+	ctx := context.Background()
+	log := testutils.TestLogger(t)
+
+	server, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	app := &core_v1alpha.App{
+		Project: entity.Id("project-1"),
+	}
+	appID, err := server.Client.Create(ctx, "tcp-app", app)
+	require.NoError(t, err)
+	app.ID = appID
+
+	// v1: has TCP service
+	v1 := &core_v1alpha.AppVersion{
+		App:      app.ID,
+		Version:  "v1",
+		ImageUrl: "app:v1",
+		Config: core_v1alpha.Config{
+			Services: []core_v1alpha.Services{
+				{
+					Name: "tcp-svc",
+					Ports: []core_v1alpha.Ports{
+						{
+							Port:     9000,
+							Name:     "data",
+							Type:     "tcp",
+							Protocol: core_v1alpha.TCP,
+						},
+					},
+					ServiceConcurrency: core_v1alpha.ServiceConcurrency{
+						Mode:         "fixed",
+						NumInstances: 1,
+					},
+				},
+				{
+					Name: "web",
+					Ports: []core_v1alpha.Ports{
+						{
+							Port:     3000,
+							Name:     "http",
+							Type:     "http",
+							Protocol: core_v1alpha.TCP,
+						},
+					},
+					ServiceConcurrency: core_v1alpha.ServiceConcurrency{
+						Mode:                "auto",
+						RequestsPerInstance: 10,
+					},
+				},
+			},
+		},
+	}
+	v1ID, err := server.Client.Create(ctx, "test-v1", v1)
+	require.NoError(t, err)
+	v1.ID = v1ID
+
+	app.ActiveVersion = v1.ID
+	err = server.Client.Update(ctx, app)
+	require.NoError(t, err)
+
+	launcher := newTestLauncher(log, server.EAC)
+	err = launcher.Reconcile(ctx, app, nil)
+	require.NoError(t, err)
+
+	// Verify: tcp-svc service entity exists, web does not (HTTP-only)
+	services := listAllServices(t, ctx, server)
+	require.Len(t, services, 1, "should have one service entity (tcp-svc)")
+	assert.Equal(t, entity.Id("svc/tcp-app-tcp-svc"), services[0].ID)
+
+	// v2: remove tcp-svc, only keep web
+	v2 := &core_v1alpha.AppVersion{
+		App:      app.ID,
+		Version:  "v2",
+		ImageUrl: "app:v2",
+		Config: core_v1alpha.Config{
+			Services: []core_v1alpha.Services{
+				{
+					Name: "web",
+					Ports: []core_v1alpha.Ports{
+						{
+							Port:     3000,
+							Name:     "http",
+							Type:     "http",
+							Protocol: core_v1alpha.TCP,
+						},
+					},
+					ServiceConcurrency: core_v1alpha.ServiceConcurrency{
+						Mode:                "auto",
+						RequestsPerInstance: 10,
+					},
+				},
+			},
+		},
+	}
+	v2ID, err := server.Client.Create(ctx, "test-v2", v2)
+	require.NoError(t, err)
+	v2.ID = v2ID
+
+	app.ActiveVersion = v2.ID
+	err = server.Client.Update(ctx, app)
+	require.NoError(t, err)
+
+	err = launcher.Reconcile(ctx, app, nil)
+	require.NoError(t, err)
+
+	// Verify: tcp-svc service entity was deleted
+	services = listAllServices(t, ctx, server)
+	assert.Empty(t, services, "service entity should be deleted when service is removed")
+}
+
+// TestNoServiceEntityForHTTPOnlyService verifies that services with only HTTP
+// ports do not get a Service entity created (they use httpingress instead).
+func TestNoServiceEntityForHTTPOnlyService(t *testing.T) {
+	ctx := context.Background()
+	log := testutils.TestLogger(t)
+
+	server, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	app := &core_v1alpha.App{
+		Project: entity.Id("project-1"),
+	}
+	appID, err := server.Client.Create(ctx, "web-app", app)
+	require.NoError(t, err)
+	app.ID = appID
+
+	version := &core_v1alpha.AppVersion{
+		App:      app.ID,
+		Version:  "v1",
+		ImageUrl: "web:latest",
+		Config: core_v1alpha.Config{
+			Services: []core_v1alpha.Services{
+				{
+					Name: "web",
+					Ports: []core_v1alpha.Ports{
+						{
+							Port:     3000,
+							Name:     "http",
+							Type:     "http",
+							Protocol: core_v1alpha.TCP,
+						},
+					},
+					ServiceConcurrency: core_v1alpha.ServiceConcurrency{
+						Mode:                "auto",
+						RequestsPerInstance: 10,
+					},
+				},
+			},
+		},
+	}
+	verID, err := server.Client.Create(ctx, "test-ver", version)
+	require.NoError(t, err)
+	version.ID = verID
+
+	app.ActiveVersion = version.ID
+	err = server.Client.Update(ctx, app)
+	require.NoError(t, err)
+
+	launcher := newTestLauncher(log, server.EAC)
+	err = launcher.Reconcile(ctx, app, nil)
+	require.NoError(t, err)
+
+	services := listAllServices(t, ctx, server)
+	assert.Empty(t, services, "HTTP-only service should not create a Service entity")
 }
