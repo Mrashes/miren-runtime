@@ -49,10 +49,13 @@ If you're running Miren on a cloud provider, you'll need to configure security g
 | 8443 | UDP | Miren API (QUIC) - CLI and client connections | Yes |
 | 80 | TCP | HTTP traffic to your applications (redirects to HTTPS) | Yes |
 | 443 | TCP | HTTPS traffic to your applications | Yes |
+| NodePorts | TCP/UDP | Direct L4 traffic to non-HTTP services (see [Traffic Routing](/traffic-routing)) | If using TCP/UDP services |
 
 **Miren API (UDP 8443):** The Miren API uses QUIC (HTTP/3) over UDP. This is how the CLI communicates with the server and how remote clients connect to your cluster.
 
 **HTTP Ingress (TCP 80/443):** Application traffic uses standard HTTP/HTTPS. Port 80 handles ACME certificate challenges and redirects to HTTPS. Port 443 serves your applications over TLS.
+
+**NodePorts:** If your app exposes non-HTTP services with `node_port` in the port configuration, those ports must also be open. For example, an IRC server with `node_port = 6667` requires TCP port 6667 to be reachable.
 
 ### Outbound Connectivity
 

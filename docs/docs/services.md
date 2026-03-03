@@ -179,7 +179,8 @@ Each service can configure:
 |--------|-------------|---------|
 | `command` | Command to run | Image's default entrypoint |
 | `image` | Container image to use | App's built image |
-| `port` | Port the web service listens on | 3000 (web only) |
+| `port` | Port the service listens on (single-port shorthand) | 3000 (web only) |
+| `ports` | Port configuration array (multi-port, see [Traffic Routing](/traffic-routing)) | (none) |
 | `env` | Service-specific environment variables | (none) |
 | `concurrency` | Scaling configuration | See [Scaling](/scaling) |
 | `concurrency.shutdown_timeout` | Time to wait for graceful shutdown during redeploy | `10s` |
@@ -256,16 +257,13 @@ num_instances = 1
 
 Connect to other services using their DNS name and standard port—`postgres.app.miren:5432` for PostgreSQL, `redis.app.miren:6379` for Redis. The container images listen on their standard ports by default; Miren doesn't manage these ports.
 
-## HTTP Routing
+## Traffic Routing
 
-Only the `web` service receives external HTTP traffic. When you create a route to your app, requests go to the web service:
+The `web` service receives external HTTP traffic through Miren's HTTP ingress. Create a route to make your app reachable:
 
 ```bash
-# Creates route to the web service
 miren route add myapp.example.com --app myapp
 ```
-
-Other services (workers, databases) are internal—they can't be reached from outside your app.
 
 The web service defaults to port 3000. Override it if your app listens elsewhere:
 
@@ -274,6 +272,8 @@ The web service defaults to port 3000. Override it if your app listens elsewhere
 command = "gunicorn app:app --bind 0.0.0.0:8000"
 port = 8000
 ```
+
+For non-HTTP services (TCP/UDP), you can expose ports directly using the `ports` array and `node_port`. See [Traffic Routing](/traffic-routing) for the full picture — HTTP ingress, L4 routing, multi-port services, and the `PORT` environment variable.
 
 ## Service Scaling
 
@@ -489,6 +489,7 @@ num_instances = 1
 
 - [App Configuration](/app-configuration) — Overview of the configuration model
 - [app.toml Reference](/app-toml) — Complete field reference for `.miren/app.toml`
+- [Traffic Routing](/traffic-routing) — HTTP ingress, TCP/UDP routing, multi-port services
 - [Persistent Storage](/disks) — Local storage and disk options for databases
 - [Application Scaling](/scaling) — Configure how each service scales
 - [Getting Started](/getting-started) — Deploy your first app

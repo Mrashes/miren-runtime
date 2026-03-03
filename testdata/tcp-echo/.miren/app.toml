@@ -1,0 +1,19 @@
+name = "tcp-echo"
+
+[services.echo]
+command = "/bin/app"
+
+[[services.echo.ports]]
+port = 3000
+name = "health"
+type = "http"
+
+[[services.echo.ports]]
+port = 7000
+name = "echo"
+type = "tcp"
+node_port = 7000
+
+[services.echo.concurrency]
+mode = "fixed"
+num_instances = 1
