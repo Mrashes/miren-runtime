@@ -154,7 +154,7 @@ func (m *mockDiskMountOps) LoopDetach(devicePath string) error {
 	return nil
 }
 
-func (m *mockDiskMountOps) LbdAttach(imagePath, logDir string) (string, error) {
+func (m *mockDiskMountOps) LbdAttach(_ context.Context, imagePath, logDir string) (string, error) {
 	if m.lbdAttachErr != nil {
 		return "", m.lbdAttachErr
 	}
@@ -162,7 +162,7 @@ func (m *mockDiskMountOps) LbdAttach(imagePath, logDir string) (string, error) {
 	return m.nextLbdDevice, nil
 }
 
-func (m *mockDiskMountOps) LbdDetach(devicePath string) error {
+func (m *mockDiskMountOps) LbdDetach(_ context.Context, devicePath string) error {
 	if m.lbdDetachErr != nil {
 		return m.lbdDetachErr
 	}
@@ -201,7 +201,7 @@ func (m *mockDiskMountOps) IsMounted(path string) bool {
 	return m.mountedPaths[path]
 }
 
-func (m *mockDiskMountOps) IsFormatted(device, filesystem string) (bool, error) {
+func (m *mockDiskMountOps) IsFormatted(_ context.Context, device, filesystem string) (bool, error) {
 	if m.isFormattedFn != nil {
 		return m.isFormattedFn(device, filesystem)
 	}

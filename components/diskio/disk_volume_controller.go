@@ -141,7 +141,29 @@ func (c *DiskVolumeController) reconcileVolumePresent(ctx context.Context, volum
 		c.log.Debug("volume is being created", "entity_id", entityId)
 		return nil
 	case storage_v1alpha.DV_READY:
-		c.log.Warn("entity says DV_READY but no local state found", "entity_id", entityId)
+		c.log.Warn("entity says DV_READY but no local state found, recovering", "entity_id", entityId)
+		volumePath := c.getVolumePath(entityId)
+		if !c.ops.VolumePathExists(volumePath) {
+			c.log.Warn("volume directory missing despite DV_READY, resetting to pending", "entity_id", entityId)
+			return c.createVolume(ctx, volume)
+		}
+		volumeId := entityId
+		if idx := strings.LastIndex(entityId, "/"); idx != -1 {
+			volumeId = entityId[idx+1:]
+		}
+		c.state.SetVolume(entityId, &VolumeState{
+			EntityId:   entityId,
+			VolumeId:   volumeId,
+			Name:       volume.Name,
+			DiskPath:   volumePath,
+			SizeBytes:  units.GigaBytes(volume.SizeGb).Bytes().Int64(),
+			Filesystem: volume.Filesystem,
+			Mode:       volume.VolumeMode,
+		})
+		if err := c.state.Save(); err != nil {
+			c.log.Warn("failed to save recovered volume state", "error", err)
+		}
+		c.log.Info("recovered volume state from entity", "entity_id", entityId)
 		return nil
 	case storage_v1alpha.DV_ERROR:
 		c.log.Info("volume in error state, attempting recreation", "entity_id", entityId)
@@ -203,8 +225,8 @@ func (c *DiskVolumeController) createVolume(ctx context.Context, volume *storage
 	// Check for LSVD volume to migrate
 	migrated, err := c.migrateLSVDVolume(ctx, volume.Name, imagePath, sizeBytes)
 	if err != nil {
-		c.log.Warn("LSVD migration failed, creating fresh volume",
-			"volume_name", volume.Name, "error", err)
+		c.setVolumeError(ctx, volume.ID, fmt.Sprintf("LSVD migration failed: %v", err))
+		return fmt.Errorf("LSVD migration failed for %s: %w", volume.Name, err)
 	}
 
 	if !migrated {
@@ -437,7 +459,9 @@ func (c *DiskVolumeController) migrateLSVDVolume(ctx context.Context, volumeName
 		"written_bytes", written)
 
 	migratedPath := infoPath + ".migrated"
-	os.Rename(infoPath, migratedPath)
+	if err := os.Rename(infoPath, migratedPath); err != nil {
+		return false, fmt.Errorf("renaming migration marker %s: %w", infoPath, err)
+	}
 
 	return true, nil
 }

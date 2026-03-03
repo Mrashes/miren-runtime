@@ -15,7 +15,7 @@ func DiskBackup(ctx *Context, opts struct {
 	Name     string `short:"n" long:"name" description:"Disk name to backup" required:"true"`
 	Output   string `short:"o" long:"output" description:"Output snapshot path (default: <name>-<timestamp>.miren.zst)"`
 	DataPath string `long:"data-path" description:"Path to miren data directory" default:"/var/lib/miren"`
-}) error {
+}) (retErr error) {
 	client, err := ctx.RPCClient("entities")
 	if err != nil {
 		return err
@@ -60,8 +60,10 @@ func DiskBackup(ctx *Context, opts struct {
 		return fmt.Errorf("creating output file: %w", err)
 	}
 	defer func() {
-		outFile.Close()
-		if err != nil {
+		if cerr := outFile.Close(); cerr != nil && retErr == nil {
+			retErr = fmt.Errorf("closing output file: %w", cerr)
+		}
+		if retErr != nil {
 			os.Remove(outputPath)
 		}
 	}()

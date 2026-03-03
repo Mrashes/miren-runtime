@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"time"
 
 	"miren.dev/runtime/pkg/cloudauth"
 )
@@ -42,7 +43,7 @@ func NewCloudDiskClient(log *slog.Logger, baseURL string, authClient *cloudauth.
 		log:        log.With("module", "cloud-disk-client"),
 		baseURL:    baseURL,
 		authClient: authClient,
-		client:     &http.Client{},
+		client:     &http.Client{Timeout: 30 * time.Second},
 	}
 }
 

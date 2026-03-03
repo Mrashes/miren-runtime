@@ -90,14 +90,14 @@ func (m *mockDiskMountOps) LoopDetach(devicePath string) error {
 	return nil
 }
 
-func (m *mockDiskMountOps) LbdAttach(imagePath, _ string) (string, error) {
+func (m *mockDiskMountOps) LbdAttach(_ context.Context, imagePath, _ string) (string, error) {
 	devPath := "/dev/lbd" + string(rune('0'+m.nextLoopIndex))
 	m.nextLoopIndex++
 	m.loopDevices[imagePath] = devPath
 	return devPath, nil
 }
 
-func (m *mockDiskMountOps) LbdDetach(devicePath string) error {
+func (m *mockDiskMountOps) LbdDetach(_ context.Context, devicePath string) error {
 	for img, dev := range m.loopDevices {
 		if dev == devicePath {
 			delete(m.loopDevices, img)
@@ -125,7 +125,7 @@ func (m *mockDiskMountOps) IsMounted(path string) bool {
 	return m.existingMounts[path]
 }
 
-func (m *mockDiskMountOps) IsFormatted(device, _ string) (bool, error) {
+func (m *mockDiskMountOps) IsFormatted(_ context.Context, device, _ string) (bool, error) {
 	_, ok := m.formattedDisks[device]
 	return ok, nil
 }

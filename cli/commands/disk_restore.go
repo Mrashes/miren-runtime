@@ -17,7 +17,7 @@ func DiskRestore(ctx *Context, opts struct {
 	Name     string `short:"n" long:"name" description:"Disk name to restore to (default: original name from snapshot)"`
 	DataPath string `long:"data-path" description:"Path to miren data directory" default:"/var/lib/miren"`
 	Force    bool   `short:"f" long:"force" description:"Overwrite existing disk image without confirmation"`
-}) error {
+}) (retErr error) {
 	snapFile, err := os.Open(opts.Snapshot)
 	if err != nil {
 		return fmt.Errorf("opening snapshot file: %w", err)
@@ -60,6 +60,8 @@ func DiskRestore(ctx *Context, opts struct {
 			return fmt.Errorf("disk image already exists at %s — use --force to overwrite", target.ImagePath)
 		}
 		ctx.Warn("Overwriting existing disk image at %s", target.ImagePath)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("checking existing image at %s: %w", target.ImagePath, err)
 	}
 
 	ctx.Info("Restoring to: %s", target.ImagePath)
@@ -70,11 +72,17 @@ func DiskRestore(ctx *Context, opts struct {
 		return fmt.Errorf("creating image directory: %w", err)
 	}
 
-	outFile, err := os.Create(target.ImagePath)
+	tmpPath := target.ImagePath + ".restore.tmp"
+	outFile, err := os.Create(tmpPath)
 	if err != nil {
-		return fmt.Errorf("creating image file: %w", err)
+		return fmt.Errorf("creating temp image file: %w", err)
 	}
-	defer outFile.Close()
+	defer func() {
+		outFile.Close()
+		if retErr != nil {
+			os.Remove(tmpPath)
+		}
+	}()
 
 	if err := outFile.Truncate(meta.SizeBytes); err != nil {
 		return fmt.Errorf("truncating image file: %w", err)
@@ -84,6 +92,14 @@ func DiskRestore(ctx *Context, opts struct {
 
 	if err := snapshot.RestoreImage(outFile, snapFile, meta); err != nil {
 		return err
+	}
+
+	if err := outFile.Close(); err != nil {
+		return fmt.Errorf("closing restored image: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, target.ImagePath); err != nil {
+		return fmt.Errorf("moving restored image into place: %w", err)
 	}
 
 	duration := time.Since(start)

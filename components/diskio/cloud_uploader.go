@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"time"
 
 	"miren.dev/runtime/pkg/cloudauth"
 )
@@ -36,7 +37,7 @@ func NewCloudSegmentUploader(log *slog.Logger, baseURL string, authClient *cloud
 		log:        log.With("module", "cloud-uploader"),
 		baseURL:    baseURL,
 		authClient: authClient,
-		client:     &http.Client{},
+		client:     &http.Client{Timeout: 60 * time.Second},
 		state:      state,
 	}
 }

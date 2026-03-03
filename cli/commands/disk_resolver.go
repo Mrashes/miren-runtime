@@ -27,20 +27,28 @@ func (r *entityDiskResolver) FindDisk(ctx context.Context, name string) (*snapsh
 		return nil, fmt.Errorf("listing disks: %w", err)
 	}
 
+	var matches []snapshot.DiskState
 	for _, e := range results.Values() {
 		var disk storage_v1alpha.Disk
 		disk.Decode(e.Entity())
 		if disk.Name == name {
-			return &snapshot.DiskState{
+			matches = append(matches, snapshot.DiskState{
 				ID:         string(disk.ID),
 				Name:       disk.Name,
 				Status:     string(disk.Status),
 				Filesystem: string(disk.Filesystem),
-			}, nil
+			})
 		}
 	}
 
-	return nil, fmt.Errorf("disk %q not found", name)
+	switch len(matches) {
+	case 0:
+		return nil, fmt.Errorf("disk %q not found", name)
+	case 1:
+		return &matches[0], nil
+	default:
+		return nil, fmt.Errorf("multiple disks found with name %q (%d matches)", name, len(matches))
+	}
 }
 
 func (r *entityDiskResolver) FindVolume(ctx context.Context, diskID string) (*snapshot.VolumeState, error) {
@@ -52,6 +60,9 @@ func (r *entityDiskResolver) FindVolume(ctx context.Context, diskID string) (*sn
 	values := resp.Values()
 	if len(values) == 0 {
 		return nil, fmt.Errorf("no disk volume found for disk %s", diskID)
+	}
+	if len(values) > 1 {
+		return nil, fmt.Errorf("multiple disk volumes found for disk %s (%d matches)", diskID, len(values))
 	}
 
 	var vol storage_v1alpha.DiskVolume

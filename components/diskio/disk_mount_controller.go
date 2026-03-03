@@ -92,7 +92,7 @@ func (c *DiskMountController) Shutdown() {
 
 		if m.devicePath != "" {
 			if m.mode == storage_v1alpha.VM_ACCELERATOR {
-				if err := c.ops.LbdDetach(m.devicePath); err != nil {
+				if err := c.ops.LbdDetach(context.Background(), m.devicePath); err != nil {
 					c.log.Warn("failed to detach lbd on shutdown", "entity_id", entityId, "error", err)
 				}
 			} else {
@@ -236,7 +236,7 @@ func (c *DiskMountController) attachAndMount(ctx context.Context, mount *storage
 	var err error
 	if volState.Mode == storage_v1alpha.VM_ACCELERATOR {
 		logDir := filepath.Join(volState.DiskPath, "logs")
-		devicePath, err = c.ops.LbdAttach(imagePath, logDir)
+		devicePath, err = c.ops.LbdAttach(ctx, imagePath, logDir)
 		if err != nil {
 			if leaseNonce != "" {
 				c.cloudClient.ReleaseLease(ctx, volState.VolumeId, leaseNonce)
@@ -322,7 +322,7 @@ func (c *DiskMountController) mountVolume(ctx context.Context, mount *storage_v1
 		filesystem = volState.Filesystem
 	}
 
-	formatted, err := c.ops.IsFormatted(mountState.DevicePath, filesystem)
+	formatted, err := c.ops.IsFormatted(ctx, mountState.DevicePath, filesystem)
 	if err != nil {
 		c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to check if formatted: %v", err))
 		return fmt.Errorf("failed to check if formatted: %w", err)
@@ -448,7 +448,7 @@ func (c *DiskMountController) unmountAndDetach(ctx context.Context, mount *stora
 	// Detach device based on mode (use persisted mode from MountState)
 	if mountState.DevicePath != "" {
 		if mountState.Mode == storage_v1alpha.VM_ACCELERATOR {
-			if err := c.ops.LbdDetach(mountState.DevicePath); err != nil {
+			if err := c.ops.LbdDetach(ctx, mountState.DevicePath); err != nil {
 				c.log.Warn("failed to detach lbd device", "error", err)
 			}
 		} else {
@@ -600,7 +600,7 @@ func (c *DiskMountController) ReconcileWithEntities(ctx context.Context) error {
 
 		if mountState.DevicePath != "" {
 			if mountState.Mode == storage_v1alpha.VM_ACCELERATOR {
-				if err := c.ops.LbdDetach(mountState.DevicePath); err != nil {
+				if err := c.ops.LbdDetach(ctx, mountState.DevicePath); err != nil {
 					c.log.Warn("failed to detach lbd for orphaned mount", "entity_id", mountState.EntityId, "error", err)
 				}
 			} else {

@@ -3,6 +3,7 @@ package diskio
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -95,7 +96,7 @@ func (r *realDiskMountOps) LoopAttach(imagePath string) (string, error) {
 	// Ensure the device node exists (may be missing in containers)
 	if _, err := os.Stat(devicePath); err != nil {
 		dev := unix.Mkdev(loopMajor, uint32(idx))
-		if err := unix.Mknod(devicePath, unix.S_IFBLK|0660, int(dev)); err != nil {
+		if err := unix.Mknod(devicePath, unix.S_IFBLK|0660, int(dev)); err != nil && !errors.Is(err, unix.EEXIST) {
 			return "", fmt.Errorf("failed to create device node %s: %w", devicePath, err)
 		}
 	}
@@ -138,8 +139,8 @@ func (r *realDiskMountOps) LoopDetach(devicePath string) error {
 	return nil
 }
 
-func (r *realDiskMountOps) LbdAttach(imagePath, logDir string) (string, error) {
-	cmd := exec.Command("lbdctl", "add", imagePath, "--log-dir", logDir)
+func (r *realDiskMountOps) LbdAttach(ctx context.Context, imagePath, logDir string) (string, error) {
+	cmd := exec.CommandContext(ctx, "lbdctl", "add", imagePath, "--log-dir", logDir)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("lbdctl add failed: %w\noutput: %s", err, string(output))
@@ -153,8 +154,8 @@ func (r *realDiskMountOps) LbdAttach(imagePath, logDir string) (string, error) {
 	return devicePath, nil
 }
 
-func (r *realDiskMountOps) LbdDetach(devicePath string) error {
-	cmd := exec.Command("lbdctl", "remove", devicePath)
+func (r *realDiskMountOps) LbdDetach(ctx context.Context, devicePath string) error {
+	cmd := exec.CommandContext(ctx, "lbdctl", "remove", devicePath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("lbdctl remove failed: %w\noutput: %s", err, string(output))
@@ -205,8 +206,8 @@ func (r *realDiskMountOps) IsMounted(path string) bool {
 	return false
 }
 
-func (r *realDiskMountOps) IsFormatted(device, filesystem string) (bool, error) {
-	cmd := exec.Command("blkid", "-o", "value", "-s", "TYPE", device)
+func (r *realDiskMountOps) IsFormatted(ctx context.Context, device, filesystem string) (bool, error) {
+	cmd := exec.CommandContext(ctx, "blkid", "-o", "value", "-s", "TYPE", device)
 	output, err := cmd.Output()
 	if err != nil {
 		// blkid returns exit code 2 if no filesystem is found
@@ -291,7 +292,7 @@ func ensureLoopControl(log *slog.Logger) error {
 	// Create the device node directly.
 	log.Info("Creating /dev/loop-control via mknod")
 	dev := unix.Mkdev(loopControlMajor, loopControlMinor)
-	if err := unix.Mknod("/dev/loop-control", unix.S_IFCHR|0660, int(dev)); err != nil {
+	if err := unix.Mknod("/dev/loop-control", unix.S_IFCHR|0660, int(dev)); err != nil && !errors.Is(err, unix.EEXIST) {
 		return fmt.Errorf("mknod /dev/loop-control: %w", err)
 	}
 
@@ -324,7 +325,7 @@ func ensureLoopDeviceNode(log *slog.Logger, index int) error {
 
 	log.Info("Creating loop device node via mknod", "path", path)
 	dev := unix.Mkdev(loopMajor, uint32(index))
-	if err := unix.Mknod(path, unix.S_IFBLK|0660, int(dev)); err != nil {
+	if err := unix.Mknod(path, unix.S_IFBLK|0660, int(dev)); err != nil && !errors.Is(err, unix.EEXIST) {
 		return fmt.Errorf("mknod %s: %w", path, err)
 	}
 

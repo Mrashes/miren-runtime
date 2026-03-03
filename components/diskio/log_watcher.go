@@ -2,6 +2,7 @@ package diskio
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -38,6 +39,9 @@ func NewLogWatcher(log *slog.Logger, state *State, uploader LogSegmentUploader, 
 
 // Run starts the log watcher loop. It blocks until the context is cancelled.
 func (w *LogWatcher) Run(ctx context.Context) error {
+	if w.interval <= 0 {
+		return fmt.Errorf("log watcher interval must be positive, got %s", w.interval)
+	}
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
 
@@ -88,7 +92,8 @@ func (w *LogWatcher) scanAndUpload(ctx context.Context) {
 
 			// Update the log horizon so replay won't re-apply this segment
 			if err := updateLogHorizonFromPath(vol.DiskPath, segPath); err != nil {
-				w.log.Warn("failed to update log horizon", "path", segPath, "error", err)
+				w.log.Warn("failed to update log horizon, keeping segment file", "path", segPath, "error", err)
+				continue
 			}
 
 			if err := os.Remove(segPath); err != nil {

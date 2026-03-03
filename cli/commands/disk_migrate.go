@@ -14,7 +14,7 @@ func DiskMigrate(ctx *Context, opts struct {
 	DataPath   string `long:"data-path" description:"Path to LSVD data directory" required:"true"`
 	VolumeName string `long:"volume-name" description:"LSVD volume name" required:"true"`
 	Output     string `short:"o" long:"output" description:"Output raw disk image path" required:"true"`
-}) error {
+}) (retErr error) {
 	log := slog.Default()
 
 	disk, err := lsvd.NewDisk(context.Background(), log, opts.DataPath,
@@ -38,7 +38,14 @@ func DiskMigrate(ctx *Context, opts struct {
 	if err != nil {
 		return fmt.Errorf("creating output file: %w", err)
 	}
-	defer out.Close()
+	defer func() {
+		if cerr := out.Close(); cerr != nil && retErr == nil {
+			retErr = fmt.Errorf("closing output file: %w", cerr)
+		}
+		if retErr != nil {
+			os.Remove(opts.Output)
+		}
+	}()
 
 	// Pre-allocate sparse file
 	if err := out.Truncate(totalSize); err != nil {

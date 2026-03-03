@@ -145,6 +145,8 @@ func DebugDiskList(ctx *Context, opts struct {
 		}
 		if disk.VolumeId != "" {
 			ctx.Info("  Volume ID: %s", disk.VolumeId)
+		} else if disk.LsvdVolumeId != "" {
+			ctx.Info("  LSVD Volume ID: %s (legacy)", disk.LsvdVolumeId)
 		}
 		ctx.Info("")
 	}

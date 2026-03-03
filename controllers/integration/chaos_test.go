@@ -242,7 +242,7 @@ func pickFault(rng *rand.Rand, catalog []chaosFault) *chaosFault {
 	return &catalog[len(catalog)-1]
 }
 
-// faultDeleteMount deletes a random MNT_MOUNTED mount entity.
+// faultDeleteMount deletes a random DM_MOUNTED mount entity.
 func faultDeleteMount(t *testing.T, ctx context.Context, h *TestHarness, rng *rand.Rand, _ *chaosState) bool {
 	t.Helper()
 	mounts := listDiskMounts(t, ctx, h)
@@ -582,7 +582,7 @@ func validateChaosInvariants(t *testing.T, ctx context.Context, h *TestHarness, 
 		}
 	}
 
-	// Invariant 2: Every BOUND lease has exactly 1 MNT_MOUNTED mount
+	// Invariant 2: Every BOUND lease has exactly 1 DM_MOUNTED mount
 	for _, lease := range allLeases {
 		if lease.Status != storage.BOUND {
 			continue
@@ -595,7 +595,7 @@ func validateChaosInvariants(t *testing.T, ctx context.Context, h *TestHarness, 
 			t.Errorf("INVARIANT 2 violated: BOUND lease %s has %d mounts (expected 1)", lease.ID, len(mounts))
 			violations++
 		} else if mounts[0].ActualState != storage.DM_MOUNTED {
-			t.Errorf("INVARIANT 2 violated: BOUND lease %s mount %s is %s (expected MNT_MOUNTED)", lease.ID, mounts[0].ID, mounts[0].ActualState)
+			t.Errorf("INVARIANT 2 violated: BOUND lease %s mount %s is %s (expected DM_MOUNTED)", lease.ID, mounts[0].ID, mounts[0].ActualState)
 			violations++
 		}
 	}
@@ -623,7 +623,7 @@ func validateChaosInvariants(t *testing.T, ctx context.Context, h *TestHarness, 
 		}
 	}
 
-	// Invariant 5: No orphaned mounts — every MNT_MOUNTED mount has a corresponding BOUND lease.
+	// Invariant 5: No orphaned mounts — every DM_MOUNTED mount has a corresponding BOUND lease.
 	// NOTE: If this invariant is violated by a FAILED lease with a mounted mount, it indicates
 	// a real controller bug — FAILED leases are terminal and never trigger mount cleanup,
 	// leaking the mount resource.
@@ -633,10 +633,10 @@ func validateChaosInvariants(t *testing.T, ctx context.Context, h *TestHarness, 
 		}
 		lease := leaseByID[mount.DiskLeaseId]
 		if lease == nil {
-			t.Errorf("INVARIANT 5 violated: MNT_MOUNTED mount %s references missing lease %s", mount.ID, mount.DiskLeaseId)
+			t.Errorf("INVARIANT 5 violated: DM_MOUNTED mount %s references missing lease %s", mount.ID, mount.DiskLeaseId)
 			violations++
 		} else if lease.Status != storage.BOUND {
-			t.Errorf("INVARIANT 5 violated: MNT_MOUNTED mount %s lease %s is %s (expected BOUND)", mount.ID, mount.DiskLeaseId, lease.Status)
+			t.Errorf("INVARIANT 5 violated: DM_MOUNTED mount %s lease %s is %s (expected BOUND)", mount.ID, mount.DiskLeaseId, lease.Status)
 			violations++
 		}
 	}
