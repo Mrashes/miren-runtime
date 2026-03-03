@@ -31,7 +31,6 @@ type CloudSegmentUploader struct {
 	state      *State
 }
 
-// NewCloudSegmentUploader creates a new CloudSegmentUploader.
 func NewCloudSegmentUploader(log *slog.Logger, baseURL string, authClient *cloudauth.AuthClient, state *State) *CloudSegmentUploader {
 	return &CloudSegmentUploader{
 		log:        log.With("module", "cloud-uploader"),

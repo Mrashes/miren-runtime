@@ -310,7 +310,9 @@ func (c *DiskVolumeController) deleteVolume(ctx context.Context, volume *storage
 
 	if volState.DiskPath != "" {
 		if err := c.ops.RemoveVolumeDir(volState.DiskPath); err != nil {
-			c.log.Warn("failed to remove volume directory", "path", volState.DiskPath, "error", err)
+			if !os.IsNotExist(err) {
+				return fmt.Errorf("failed to remove volume directory %s: %w", volState.DiskPath, err)
+			}
 		}
 	}
 
@@ -388,7 +390,10 @@ func (c *DiskVolumeController) setVolumeError(ctx context.Context, id entity.Id,
 func (c *DiskVolumeController) migrateLSVDVolume(ctx context.Context, volumeName, destImagePath string, sizeBytes int64) (bool, error) {
 	infoPath := filepath.Join(c.dataPath, "volumes", volumeName, "info.json")
 	if _, err := os.Stat(infoPath); err != nil {
-		return false, nil
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("checking LSVD metadata at %s: %w", infoPath, err)
 	}
 
 	c.log.Info("found LSVD volume, migrating to universal mode",
@@ -480,6 +485,10 @@ func isAllZeros(data, zeros []byte) bool {
 
 // ReconcileWithEntities reconciles local state with entity server
 func (c *DiskVolumeController) ReconcileWithEntities(ctx context.Context) error {
+	if c.eac == nil {
+		return fmt.Errorf("entity access client not set; call SetEAC before reconciling")
+	}
+
 	fullNodeId := "node/" + c.nodeId
 	nodeIdRef := entity.Id(fullNodeId)
 	indexAttr := entity.Ref(storage_v1alpha.DiskVolumeNodeIdId, nodeIdRef)
