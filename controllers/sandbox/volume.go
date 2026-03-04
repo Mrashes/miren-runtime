@@ -249,7 +249,7 @@ func (c *SandboxController) ensureDisk(ctx context.Context, diskName string, siz
 // so we don't need transfer logic here.
 func (c *SandboxController) acquireDiskLease(ctx context.Context, diskID entity.Id, nodeID entity.Id, sandboxID entity.Id, appID entity.Id, mountPath string, readOnly bool) (entity.Id, error) {
 	// Check if we already have a lease for this disk on this node
-	listResp, err := c.EAC.List(ctx, entity.Ref(entity.EntityKind, storage.KindDiskLease))
+	listResp, err := c.EAC.List(ctx, entity.Ref(storage.DiskLeaseDiskIdId, diskID))
 	if err != nil {
 		return entity.Id(""), fmt.Errorf("failed to list disk leases: %w", err)
 	}
@@ -258,8 +258,8 @@ func (c *SandboxController) acquireDiskLease(ctx context.Context, diskID entity.
 		var lease storage.DiskLease
 		lease.Decode(e.Entity())
 
-		// Check if this lease is for our disk and node
-		if lease.DiskId == diskID && lease.NodeId == nodeID {
+		// Index already filters by diskID; also check nodeID
+		if lease.NodeId == nodeID {
 			// If the lease is owned by this sandbox, return it (retry case)
 			if lease.SandboxId == sandboxID {
 				c.Log.Info("found existing disk lease for this sandbox",
