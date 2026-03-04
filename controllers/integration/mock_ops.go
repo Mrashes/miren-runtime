@@ -135,5 +135,9 @@ func (m *mockDiskMountOps) FormatDevice(_ context.Context, device, filesystem st
 	return nil
 }
 
+func (m *mockDiskMountOps) FindMounts(_ string) []diskio.ActiveMount {
+	return nil
+}
+
 // Verify interface compliance
 var _ diskio.DiskMountOps = (*mockDiskMountOps)(nil)
