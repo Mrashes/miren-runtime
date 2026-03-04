@@ -2270,13 +2270,17 @@ func (c *SandboxController) stopSandbox(ctx context.Context, id entity.Id) error
 		c.Log.Warn("failed to load pause container", "id", id, "err", err)
 	}
 
-	// Fallback: if we couldn't get IPs from container labels, try the entity store
-	if len(sandboxIPs) == 0 {
-		resp, err := c.EAC.Get(ctx, id.String())
-		if err == nil {
-			var sb compute.Sandbox
-			sb.Decode(resp.Entity().Entity())
+	// Fetch sandbox entity for firewall cleanup and as IP fallback
+	resp, entityErr := c.EAC.Get(ctx, id.String())
+	if entityErr == nil {
+		var sb compute.Sandbox
+		sb.Decode(resp.Entity().Entity())
 
+		// Clean up iptables DNAT rules before destroying containers
+		c.unconfigureFirewall(&sb)
+
+		// Use entity store IPs as fallback if container labels didn't have them
+		if len(sandboxIPs) == 0 {
 			sandboxIPs = make(map[string]bool)
 			for _, net := range sb.Network {
 				addr := net.Address
@@ -2293,9 +2297,11 @@ func (c *SandboxController) stopSandbox(ctx context.Context, id entity.Id) error
 			if len(sandboxIPs) > 0 {
 				c.Log.Debug("retrieved IPs from entity store for cleanup", "id", id, "ips", sandboxIPs)
 			}
-		} else if !errors.Is(err, cond.ErrNotFound{}) {
-			c.Log.Warn("failed to get sandbox entity for IP cleanup", "id", id, "err", err)
 		}
+	} else if !errors.Is(entityErr, cond.ErrNotFound{}) {
+		c.Log.Warn("failed to get sandbox entity for cleanup", "id", id, "err", entityErr)
+	} else {
+		c.Log.Warn("sandbox entity already deleted, skipping firewall cleanup", "id", id)
 	}
 
 	// Fallback if we couldn't get LogEntity from labels
