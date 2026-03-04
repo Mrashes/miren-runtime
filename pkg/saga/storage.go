@@ -8,6 +8,7 @@ import (
 	"log/slog"
 
 	saga_v1alpha "miren.dev/runtime/api/saga/saga_v1alpha"
+	"miren.dev/runtime/pkg/cond"
 	"miren.dev/runtime/pkg/entity"
 )
 
@@ -61,7 +62,7 @@ func (s *EntityStorage) Save(ctx context.Context, exec *Execution) error {
 
 	// Create or update the entity
 	ent := entity.New(
-		entity.DBId, exec.ID,
+		entity.DBId, entity.Id(exec.ID),
 		sagaEntity.Encode(),
 	)
 
@@ -77,7 +78,7 @@ func (s *EntityStorage) Save(ctx context.Context, exec *Execution) error {
 func (s *EntityStorage) Get(ctx context.Context, id string) (*Execution, error) {
 	ent, err := s.store.GetEntity(ctx, entity.Id(id))
 	if err != nil {
-		if errors.Is(err, entity.ErrEntityNotFound) {
+		if errors.Is(err, entity.ErrEntityNotFound) || errors.Is(err, cond.ErrNotFound{}) {
 			return nil, fmt.Errorf("%w: %s", ErrExecutionNotFound, id)
 		}
 		return nil, fmt.Errorf("getting saga entity: %w", err)
