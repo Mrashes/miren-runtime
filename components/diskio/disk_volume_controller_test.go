@@ -18,7 +18,8 @@ import (
 )
 
 func newTestDiskVolumeController(log *slog.Logger, dataPath, nodeId string, eac *entityserver_v1alpha.EntityAccessClient, state *State, ops DiskVolumeOps) *DiskVolumeController {
-	vc := NewDiskVolumeController(log, dataPath, nodeId, state, ops)
+	mntOps := newMockDiskMountOps()
+	vc := NewDiskVolumeController(log, dataPath, nodeId, state, ops, mntOps)
 	vc.SetEAC(eac)
 	return vc
 }
@@ -676,7 +677,8 @@ func newMigrateTestController(t *testing.T, dataPath string) *DiskVolumeControll
 	log := testutils.TestLogger(t)
 	state := NewState()
 	ops := newMockDiskVolumeOps()
-	return NewDiskVolumeController(log, dataPath, "test-node", state, ops)
+	mntOps := newMockDiskMountOps()
+	return NewDiskVolumeController(log, dataPath, "test-node", state, ops, mntOps)
 }
 
 func TestMigrateLSVDVolume(t *testing.T) {
@@ -1129,7 +1131,7 @@ func TestDiskVolumeControllerCleanupMigratedLSVD(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(oldVolDir, "info.json.migrated"), []byte("{}"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(oldVolDir, "segments"), []byte("seg-data"), 0644))
 
-	vc := NewDiskVolumeController(log, dataPath, nodeId, state, ops)
+	vc := NewDiskVolumeController(log, dataPath, nodeId, state, ops, newMockDiskMountOps())
 
 	err := vc.Init(t.Context())
 	require.NoError(t, err)
@@ -1168,7 +1170,7 @@ func TestDiskVolumeControllerCleanupSkipsUnmigrated(t *testing.T) {
 	require.NoError(t, os.MkdirAll(unmigratedDir, 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(unmigratedDir, "info.json"), []byte("{}"), 0644))
 
-	vc := NewDiskVolumeController(log, dataPath, nodeId, state, ops)
+	vc := NewDiskVolumeController(log, dataPath, nodeId, state, ops, newMockDiskMountOps())
 
 	err := vc.Init(t.Context())
 	require.NoError(t, err)
@@ -1180,4 +1182,271 @@ func TestDiskVolumeControllerCleanupSkipsUnmigrated(t *testing.T) {
 	// Verify migrated marker was NOT removed
 	_, err = os.Stat(filepath.Join(migratedDir, "info.json.migrated"))
 	assert.NoError(t, err, "info.json.migrated should NOT be removed")
+}
+
+func TestDiskVolumeControllerUniversalMountAtCreation(t *testing.T) {
+	ctx := t.Context()
+	log := testutils.TestLogger(t)
+
+	es, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	dataPath := t.TempDir()
+	nodeId := "test-node-1"
+	state := NewState()
+	volOps := newMockDiskVolumeOps()
+	mntOps := newMockDiskMountOps()
+
+	vc := NewDiskVolumeController(log, dataPath, nodeId, state, volOps, mntOps)
+	vc.SetEAC(es.EAC)
+
+	vol := &storage_v1alpha.DiskVolume{
+		ID:           "disk_volume/vol-uni",
+		NodeId:       entity.Id("node/" + nodeId),
+		SizeGb:       10,
+		Filesystem:   "ext4",
+		VolumeMode:   storage_v1alpha.VM_UNIVERSAL,
+		DesiredState: storage_v1alpha.DV_PRESENT,
+		ActualState:  storage_v1alpha.DV_PENDING,
+	}
+	createDiskVolumeEntity(ctx, t, es, vol)
+
+	err := vc.ReconcileWithEntities(ctx)
+	require.NoError(t, err)
+
+	// Verify volume was created
+	assert.Len(t, volOps.createdDirs, 1)
+	assert.Len(t, volOps.createdImages, 1)
+
+	// Verify loop attach was called (alwaysMount)
+	assert.Len(t, mntOps.attachedLoops, 1)
+
+	// Verify format was called
+	assert.Len(t, mntOps.formatCalls, 1)
+	assert.Equal(t, "ext4", mntOps.formatCalls[0].filesystem)
+
+	// Verify mount was called
+	assert.Len(t, mntOps.mounts, 1)
+
+	// Verify state reflects mount
+	volState := state.GetVolume("disk_volume/vol-uni")
+	require.NotNil(t, volState)
+	assert.True(t, volState.Mounted)
+	assert.Equal(t, "/dev/loop0", volState.DevicePath)
+	assert.NotEmpty(t, volState.MountPath)
+	assert.Equal(t, storage_v1alpha.VM_UNIVERSAL, volState.Mode)
+}
+
+func TestDiskVolumeControllerUniversalRemountOnReconcile(t *testing.T) {
+	ctx := t.Context()
+	log := testutils.TestLogger(t)
+
+	es, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	dataPath := t.TempDir()
+	nodeId := "test-node-1"
+	state := NewState()
+	volOps := newMockDiskVolumeOps()
+	mntOps := newMockDiskMountOps()
+
+	volPath := filepath.Join(dataPath, "volumes", "vol-remount")
+	mountPath := filepath.Join(dataPath, "vol-remount")
+
+	// Pre-populate state: volume is ready but NOT mounted (simulating restart)
+	state.SetVolume("disk_volume/vol-remount", &VolumeState{
+		EntityId:   "disk_volume/vol-remount",
+		VolumeId:   "vol-remount",
+		DiskPath:   volPath,
+		SizeBytes:  10 * 1024 * 1024 * 1024,
+		Filesystem: "ext4",
+		Mode:       storage_v1alpha.VM_UNIVERSAL,
+		Mounted:    false,
+		MountPath:  mountPath,
+	})
+	volOps.existingPaths[volPath] = true
+
+	vc := NewDiskVolumeController(log, dataPath, nodeId, state, volOps, mntOps)
+	vc.SetEAC(es.EAC)
+
+	vol := &storage_v1alpha.DiskVolume{
+		ID:           "disk_volume/vol-remount",
+		NodeId:       entity.Id("node/" + nodeId),
+		SizeGb:       10,
+		Filesystem:   "ext4",
+		VolumeMode:   storage_v1alpha.VM_UNIVERSAL,
+		DesiredState: storage_v1alpha.DV_PRESENT,
+		ActualState:  storage_v1alpha.DV_READY,
+	}
+	createDiskVolumeEntity(ctx, t, es, vol)
+
+	err := vc.ReconcileWithEntities(ctx)
+	require.NoError(t, err)
+
+	// Verify loop attach was called for remount
+	assert.Len(t, mntOps.attachedLoops, 1)
+	assert.Len(t, mntOps.mounts, 1)
+
+	// Verify state reflects mount
+	volState := state.GetVolume("disk_volume/vol-remount")
+	require.NotNil(t, volState)
+	assert.True(t, volState.Mounted)
+}
+
+func TestDiskVolumeControllerUniversalUnmountOnDelete(t *testing.T) {
+	ctx := t.Context()
+	log := testutils.TestLogger(t)
+
+	es, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	dataPath := t.TempDir()
+	nodeId := "test-node-1"
+	state := NewState()
+	volOps := newMockDiskVolumeOps()
+	mntOps := newMockDiskMountOps()
+
+	mountPath := filepath.Join(dataPath, "vol-del")
+	state.SetVolume("disk_volume/vol-del", &VolumeState{
+		EntityId:   "disk_volume/vol-del",
+		VolumeId:   "vol-del",
+		DiskPath:   "/data/volumes/vol-del",
+		SizeBytes:  10 * 1024 * 1024 * 1024,
+		Filesystem: "ext4",
+		Mode:       storage_v1alpha.VM_UNIVERSAL,
+		DevicePath: "/dev/loop3",
+		MountPath:  mountPath,
+		Mounted:    true,
+	})
+	volOps.existingPaths["/data/volumes/vol-del"] = true
+	mntOps.mountedPaths[mountPath] = true
+
+	vc := NewDiskVolumeController(log, dataPath, nodeId, state, volOps, mntOps)
+	vc.SetEAC(es.EAC)
+
+	vol := &storage_v1alpha.DiskVolume{
+		ID:           "disk_volume/vol-del",
+		NodeId:       entity.Id("node/" + nodeId),
+		SizeGb:       10,
+		Filesystem:   "ext4",
+		VolumeMode:   storage_v1alpha.VM_UNIVERSAL,
+		DesiredState: storage_v1alpha.DV_ABSENT,
+		ActualState:  storage_v1alpha.DV_READY,
+	}
+	createDiskVolumeEntity(ctx, t, es, vol)
+
+	err := vc.ReconcileWithEntities(ctx)
+	require.NoError(t, err)
+
+	// Verify unmount was called
+	assert.Contains(t, mntOps.unmounts, mountPath)
+	// Verify loop detach was called
+	assert.Contains(t, mntOps.detachedLoops, "/dev/loop3")
+	// Verify volume directory was removed
+	assert.Contains(t, volOps.removedDirs, "/data/volumes/vol-del")
+}
+
+func TestDiskVolumeControllerShutdown(t *testing.T) {
+	log := testutils.TestLogger(t)
+
+	dataPath := t.TempDir()
+	nodeId := "test-node-1"
+	state := NewState()
+	volOps := newMockDiskVolumeOps()
+	mntOps := newMockDiskMountOps()
+
+	// Mount paths under diskMountBasePath (what the real system uses)
+	mountPath1 := diskMountBasePath + "/vol-a"
+	mountPath2 := diskMountBasePath + "/vol-b"
+	accMountPath := diskMountBasePath + "/vol-acc"
+
+	state.SetVolume("disk_volume/vol-a", &VolumeState{
+		EntityId:   "disk_volume/vol-a",
+		VolumeId:   "vol-a",
+		DiskPath:   "/data/volumes/vol-a",
+		Mode:       storage_v1alpha.VM_UNIVERSAL,
+		DevicePath: "/dev/loop1",
+		MountPath:  mountPath1,
+		Mounted:    true,
+	})
+	state.SetVolume("disk_volume/vol-b", &VolumeState{
+		EntityId:   "disk_volume/vol-b",
+		VolumeId:   "vol-b",
+		DiskPath:   "/data/volumes/vol-b",
+		Mode:       storage_v1alpha.VM_UNIVERSAL,
+		DevicePath: "/dev/loop2",
+		MountPath:  mountPath2,
+		Mounted:    true,
+	})
+
+	// Simulate kernel mount table: these are the actual mounts the kernel reports
+	mntOps.mountedPaths[mountPath1] = true
+	mntOps.mountDevices[mountPath1] = "/dev/loop1"
+	mntOps.mountedPaths[mountPath2] = true
+	mntOps.mountDevices[mountPath2] = "/dev/loop2"
+	mntOps.mountedPaths[accMountPath] = true
+	mntOps.mountDevices[accMountPath] = "/dev/lbd0"
+
+	vc := NewDiskVolumeController(log, dataPath, nodeId, state, volOps, mntOps)
+
+	vc.Shutdown()
+
+	// All three mounts should be unmounted (found via kernel mount table scan)
+	assert.Len(t, mntOps.unmounts, 3)
+	assert.Contains(t, mntOps.unmounts, mountPath1)
+	assert.Contains(t, mntOps.unmounts, mountPath2)
+	assert.Contains(t, mntOps.unmounts, accMountPath)
+
+	// Loop devices detached for universal volumes
+	assert.Contains(t, mntOps.detachedLoops, "/dev/loop1")
+	assert.Contains(t, mntOps.detachedLoops, "/dev/loop2")
+
+	// LBD device detached for accelerator volume
+	assert.Contains(t, mntOps.detachedLbds, "/dev/lbd0")
+
+	// Verify volume state reflects unmounted
+	volA := state.GetVolume("disk_volume/vol-a")
+	require.NotNil(t, volA)
+	assert.False(t, volA.Mounted)
+}
+
+func TestDiskVolumeControllerAcceleratorNoMountAtCreation(t *testing.T) {
+	ctx := t.Context()
+	log := testutils.TestLogger(t)
+
+	es, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	dataPath := t.TempDir()
+	nodeId := "test-node-1"
+	state := NewState()
+	volOps := newMockDiskVolumeOps()
+	mntOps := newMockDiskMountOps()
+
+	vc := NewDiskVolumeController(log, dataPath, nodeId, state, volOps, mntOps)
+	vc.SetEAC(es.EAC)
+
+	vol := &storage_v1alpha.DiskVolume{
+		ID:           "disk_volume/vol-acc",
+		NodeId:       entity.Id("node/" + nodeId),
+		SizeGb:       10,
+		Filesystem:   "ext4",
+		VolumeMode:   storage_v1alpha.VM_ACCELERATOR,
+		DesiredState: storage_v1alpha.DV_PRESENT,
+		ActualState:  storage_v1alpha.DV_PENDING,
+	}
+	createDiskVolumeEntity(ctx, t, es, vol)
+
+	err := vc.ReconcileWithEntities(ctx)
+	require.NoError(t, err)
+
+	// Volume should be created but NOT mounted
+	assert.Len(t, volOps.createdDirs, 2) // volume dir + log dir
+	assert.Len(t, volOps.createdImages, 1)
+	assert.Empty(t, mntOps.attachedLoops, "accelerator mode should not mount at creation")
+	assert.Empty(t, mntOps.mounts, "accelerator mode should not mount at creation")
+
+	volState := state.GetVolume("disk_volume/vol-acc")
+	require.NotNil(t, volState)
+	assert.False(t, volState.Mounted)
 }

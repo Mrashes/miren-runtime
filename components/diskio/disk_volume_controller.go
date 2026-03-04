@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
 	"miren.dev/runtime/api/storage/storage_v1alpha"
@@ -14,6 +15,12 @@ import (
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/units"
 )
+
+// alwaysMount returns true if volumes with this mode should be mounted
+// at creation time and stay mounted regardless of lease lifecycle.
+func alwaysMount(mode storage_v1alpha.DiskVolumeVolumeMode) bool {
+	return mode == storage_v1alpha.VM_UNIVERSAL
+}
 
 // DiskVolumeController watches disk_volume entities and manages sparse disk images
 // using loop devices.
@@ -24,20 +31,32 @@ type DiskVolumeController struct {
 	eac      *entityserver_v1alpha.EntityAccessClient
 	state    *State
 	ops      DiskVolumeOps
+	mntOps   DiskMountOps
+
+	// keepMounts, when true, causes Shutdown to skip unmounting volumes.
+	// Set during reload (SIGUSR2) so the new process can pick them up.
+	keepMounts bool
 }
 
-func NewDiskVolumeController(log *slog.Logger, dataPath, nodeId string, state *State, ops DiskVolumeOps) *DiskVolumeController {
+func NewDiskVolumeController(log *slog.Logger, dataPath, nodeId string, state *State, ops DiskVolumeOps, mntOps DiskMountOps) *DiskVolumeController {
 	return &DiskVolumeController{
 		log:      log.With("module", "disk-volume"),
 		dataPath: dataPath,
 		nodeId:   nodeId,
 		state:    state,
 		ops:      ops,
+		mntOps:   mntOps,
 	}
 }
 
 func (c *DiskVolumeController) SetEAC(eac *entityserver_v1alpha.EntityAccessClient) {
 	c.eac = eac
+}
+
+// SetKeepMounts tells the controller to skip unmounting during Shutdown.
+// Used during reload so the replacement process inherits the mounts.
+func (c *DiskVolumeController) SetKeepMounts(v bool) {
+	c.keepMounts = v
 }
 
 func (c *DiskVolumeController) Init(ctx context.Context) error {
@@ -118,6 +137,14 @@ func (c *DiskVolumeController) reconcileVolumePresent(ctx context.Context, volum
 				c.setVolumeError(ctx, volume.ID, "volume directory missing")
 				return fmt.Errorf("volume directory missing: %s", existing.DiskPath)
 			}
+			// For alwaysMount volumes, verify the mount is present
+			if alwaysMount(existing.Mode) && (!existing.Mounted || !c.mntOps.IsMounted(existing.MountPath)) {
+				c.log.Info("volume ready but not mounted, re-mounting", "entity_id", entityId)
+				if err := c.ensureVolumeMount(ctx, entityId, existing); err != nil {
+					c.log.Warn("failed to re-mount volume", "entity_id", entityId, "error", err)
+					return err
+				}
+			}
 			c.log.Debug("volume already ready", "entity_id", entityId)
 			return nil
 		}
@@ -129,6 +156,13 @@ func (c *DiskVolumeController) reconcileVolumePresent(ctx context.Context, volum
 			)
 			if err := c.updateVolumeState(ctx, volume.ID, storage_v1alpha.DV_READY, existing.VolumeId, ""); err != nil {
 				c.log.Warn("failed to update volume state from persisted volume", "entity_id", entityId, "error", err)
+			}
+			// Ensure mount for alwaysMount volumes
+			if alwaysMount(existing.Mode) {
+				if err := c.ensureVolumeMount(ctx, entityId, existing); err != nil {
+					c.log.Warn("failed to mount persisted volume", "entity_id", entityId, "error", err)
+					return err
+				}
 			}
 			return nil
 		}
@@ -151,7 +185,7 @@ func (c *DiskVolumeController) reconcileVolumePresent(ctx context.Context, volum
 		if idx := strings.LastIndex(entityId, "/"); idx != -1 {
 			volumeId = entityId[idx+1:]
 		}
-		c.state.SetVolume(entityId, &VolumeState{
+		volState := &VolumeState{
 			EntityId:   entityId,
 			VolumeId:   volumeId,
 			Name:       volume.Name,
@@ -159,11 +193,19 @@ func (c *DiskVolumeController) reconcileVolumePresent(ctx context.Context, volum
 			SizeBytes:  units.GigaBytes(volume.SizeGb).Bytes().Int64(),
 			Filesystem: volume.Filesystem,
 			Mode:       volume.VolumeMode,
-		})
+		}
+		c.state.SetVolume(entityId, volState)
 		if err := c.state.Save(); err != nil {
 			c.log.Warn("failed to save recovered volume state", "error", err)
 		}
 		c.log.Info("recovered volume state from entity", "entity_id", entityId)
+		// Mount the recovered volume if it's an alwaysMount volume
+		if alwaysMount(volume.VolumeMode) {
+			if err := c.ensureVolumeMount(ctx, entityId, volState); err != nil {
+				c.log.Warn("failed to mount recovered volume", "entity_id", entityId, "error", err)
+				return err
+			}
+		}
 		return nil
 	case storage_v1alpha.DV_ERROR:
 		c.log.Info("volume in error state, attempting recreation", "entity_id", entityId)
@@ -252,7 +294,7 @@ func (c *DiskVolumeController) createVolume(ctx context.Context, volume *storage
 	}
 
 	// Update state
-	c.state.SetVolume(entityId, &VolumeState{
+	volState := &VolumeState{
 		EntityId:   entityId,
 		VolumeId:   volumeId,
 		Name:       volume.Name,
@@ -260,10 +302,19 @@ func (c *DiskVolumeController) createVolume(ctx context.Context, volume *storage
 		SizeBytes:  sizeBytes,
 		Filesystem: volume.Filesystem,
 		Mode:       volume.VolumeMode,
-	})
+	}
+	c.state.SetVolume(entityId, volState)
 
 	if err := c.state.Save(); err != nil {
 		c.log.Warn("failed to save state after volume creation", "error", err)
+	}
+
+	// For alwaysMount volumes, attach and mount immediately
+	if alwaysMount(volume.VolumeMode) {
+		if err := c.ensureVolumeMount(ctx, entityId, volState); err != nil {
+			c.setVolumeError(ctx, volume.ID, fmt.Sprintf("failed to mount volume: %v", err))
+			return fmt.Errorf("failed to mount volume: %w", err)
+		}
 	}
 
 	c.log.Info("disk volume created",
@@ -306,6 +357,11 @@ func (c *DiskVolumeController) deleteVolume(ctx context.Context, volume *storage
 			c.log.Warn("failed to update volume state to deleted", "error", err)
 		}
 		return nil
+	}
+
+	// Unmount before deleting if alwaysMount
+	if alwaysMount(volState.Mode) && volState.Mounted {
+		c.unmountVolume(volState)
 	}
 
 	if volState.DiskPath != "" {
@@ -474,6 +530,192 @@ func (c *DiskVolumeController) migrateLSVDVolume(ctx context.Context, volumeName
 	return true, nil
 }
 
+// diskMountBasePath is the standard path where disk volumes are mounted,
+// matching the path used by the DiskLeaseController.
+const diskMountBasePath = "/var/lib/miren/disks"
+
+// getMountPath returns the mount path for a volume.
+func (c *DiskVolumeController) getMountPath(volumeId string) string {
+	return filepath.Join(diskMountBasePath, volumeId)
+}
+
+// ensureVolumeMount loop-attaches, formats if needed, and mounts a volume.
+// It updates the VolumeState with mount info and persists state.
+// If the volume is already mounted, this is a no-op.
+func (c *DiskVolumeController) ensureVolumeMount(ctx context.Context, entityId string, volState *VolumeState) error {
+	mountPath := c.getMountPath(volState.VolumeId)
+
+	// Already mounted — nothing to do
+	if c.mntOps.IsMounted(mountPath) {
+		if !volState.Mounted || volState.MountPath != mountPath {
+			volState.MountPath = mountPath
+			volState.Mounted = true
+			c.state.SetVolume(entityId, volState)
+			c.state.Save()
+		}
+		return nil
+	}
+
+	imagePath := filepath.Join(volState.DiskPath, "disk.img")
+
+	c.log.Info("mounting volume",
+		"entity_id", entityId,
+		"image_path", imagePath,
+		"mount_path", mountPath,
+	)
+
+	// If we had a previous loop device recorded, try to detach it first.
+	// After a restart the device is already gone, so ignore errors.
+	if volState.DevicePath != "" {
+		_ = c.mntOps.LoopDetach(volState.DevicePath)
+		volState.DevicePath = ""
+	}
+
+	devicePath, err := c.mntOps.LoopAttach(imagePath)
+	if err != nil {
+		return fmt.Errorf("failed to attach loop device: %w", err)
+	}
+
+	filesystem := volState.Filesystem
+	if filesystem == "" {
+		filesystem = "ext4"
+	}
+
+	formatted, err := c.mntOps.IsFormatted(ctx, devicePath, filesystem)
+	if err != nil {
+		c.mntOps.LoopDetach(devicePath)
+		return fmt.Errorf("failed to check if formatted: %w", err)
+	}
+
+	if !formatted {
+		c.log.Info("formatting device", "device", devicePath, "filesystem", filesystem)
+		formatDeadline := time.Now().Add(10 * time.Minute)
+		backoff := 1 * time.Second
+		maxBackoff := 30 * time.Second
+
+		for {
+			err := c.mntOps.FormatDevice(ctx, devicePath, filesystem)
+			if err == nil {
+				break
+			}
+
+			c.log.Error("format device failed, will retry", "device", devicePath, "error", err)
+
+			if time.Now().After(formatDeadline) {
+				c.mntOps.LoopDetach(devicePath)
+				return fmt.Errorf("failed to format device after 10 minutes: %w", err)
+			}
+
+			select {
+			case <-ctx.Done():
+				c.mntOps.LoopDetach(devicePath)
+				return ctx.Err()
+			case <-time.After(backoff):
+			}
+
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+	}
+
+	if err := c.mntOps.CreateDir(mountPath, 0755); err != nil {
+		c.mntOps.LoopDetach(devicePath)
+		return fmt.Errorf("failed to create mount point: %w", err)
+	}
+
+	if err := c.mntOps.Mount(devicePath, mountPath, filesystem, false); err != nil {
+		c.mntOps.LoopDetach(devicePath)
+		return fmt.Errorf("failed to mount: %w", err)
+	}
+
+	// Update state with mount info
+	volState.DevicePath = devicePath
+	volState.MountPath = mountPath
+	volState.Mounted = true
+	c.state.SetVolume(entityId, volState)
+
+	if err := c.state.Save(); err != nil {
+		c.log.Warn("failed to save state after volume mount", "error", err)
+	}
+
+	c.log.Info("volume mounted",
+		"entity_id", entityId,
+		"device", devicePath,
+		"mount_path", mountPath,
+	)
+
+	return nil
+}
+
+// unmountVolume unmounts and detaches a loop device for an alwaysMount volume.
+func (c *DiskVolumeController) unmountVolume(volState *VolumeState) {
+	if volState.MountPath != "" && c.mntOps.IsMounted(volState.MountPath) {
+		if err := c.mntOps.Unmount(volState.MountPath); err != nil {
+			c.log.Warn("failed to unmount volume", "entity_id", volState.EntityId, "error", err)
+		}
+	}
+	if volState.DevicePath != "" {
+		if err := c.mntOps.LoopDetach(volState.DevicePath); err != nil {
+			c.log.Warn("failed to detach loop device", "entity_id", volState.EntityId, "error", err)
+		}
+	}
+	volState.Mounted = false
+	volState.DevicePath = ""
+	volState.MountPath = ""
+}
+
+// Shutdown unmounts all disk volumes and detaches their backing devices.
+// It uses the actual kernel mount table rather than trusting persisted state,
+// finding all mounts under diskMountBasePath and tearing them down.
+// If keepMounts is set (reload), everything is left in place for the new process.
+func (c *DiskVolumeController) Shutdown() {
+	if c.keepMounts {
+		c.log.Info("keeping volumes mounted for reload")
+		return
+	}
+
+	// Scan the actual kernel mount table for our mounts
+	activeMounts := c.mntOps.FindMounts(diskMountBasePath)
+
+	for _, am := range activeMounts {
+		c.log.Info("shutting down disk mount",
+			"mount_path", am.MountPath,
+			"device", am.Device,
+		)
+
+		if err := c.mntOps.Unmount(am.MountPath); err != nil {
+			c.log.Warn("failed to unmount on shutdown", "mount_path", am.MountPath, "error", err)
+			continue
+		}
+
+		if strings.HasPrefix(am.Device, "/dev/lbd") {
+			if err := c.mntOps.LbdDetach(context.Background(), am.Device); err != nil {
+				c.log.Warn("failed to detach lbd on shutdown", "device", am.Device, "error", err)
+			}
+		} else if strings.HasPrefix(am.Device, "/dev/loop") {
+			if err := c.mntOps.LoopDetach(am.Device); err != nil {
+				c.log.Warn("failed to detach loop on shutdown", "device", am.Device, "error", err)
+			}
+		}
+	}
+
+	// Update persisted state to reflect unmounted volumes
+	for _, vol := range c.state.ListVolumes() {
+		if vol.Mounted {
+			vol.Mounted = false
+			vol.DevicePath = ""
+			vol.MountPath = ""
+			c.state.SetVolume(vol.EntityId, vol)
+		}
+	}
+
+	if err := c.state.Save(); err != nil {
+		c.log.Warn("failed to save state after shutdown", "error", err)
+	}
+}
+
 func isAllZeros(data, zeros []byte) bool {
 	for i := range data {
 		if data[i] != zeros[i] {
@@ -532,6 +774,11 @@ func (c *DiskVolumeController) ReconcileWithEntities(ctx context.Context) error 
 
 		c.log.Info("cleaning up orphaned disk volume", "entity_id", volState.EntityId)
 
+		// Unmount orphaned alwaysMount volumes before removing
+		if alwaysMount(volState.Mode) && volState.Mounted {
+			c.unmountVolume(volState)
+		}
+
 		if volState.DiskPath != "" {
 			if err := c.ops.RemoveVolumeDir(volState.DiskPath); err != nil {
 				c.log.Warn("failed to remove orphaned volume directory", "entity_id", volState.EntityId, "error", err)
@@ -545,6 +792,19 @@ func (c *DiskVolumeController) ReconcileWithEntities(ctx context.Context) error 
 	if orphanCleaned {
 		if err := c.state.Save(); err != nil {
 			c.log.Warn("failed to save state after orphan cleanup", "error", err)
+		}
+	}
+
+	// Re-mount any alwaysMount volumes that are DV_READY but not currently mounted (restart recovery)
+	for _, volState := range c.state.ListVolumes() {
+		if !alwaysMount(volState.Mode) {
+			continue
+		}
+		if !volState.Mounted || !c.mntOps.IsMounted(volState.MountPath) {
+			c.log.Info("re-mounting alwaysMount volume after reconcile", "entity_id", volState.EntityId)
+			if err := c.ensureVolumeMount(ctx, volState.EntityId, volState); err != nil {
+				c.log.Warn("failed to re-mount volume", "entity_id", volState.EntityId, "error", err)
+			}
 		}
 	}
 

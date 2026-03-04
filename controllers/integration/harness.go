@@ -69,7 +69,7 @@ func NewTestHarness(t *testing.T) *TestHarness {
 	// Create mock ops
 	volOps := newMockDiskVolumeOps()
 	mntOps := newMockDiskMountOps()
-	diskVolCtrl := diskio.NewDiskVolumeController(log, dataPath, testNodeId, diskioState, volOps)
+	diskVolCtrl := diskio.NewDiskVolumeController(log, dataPath, testNodeId, diskioState, volOps, mntOps)
 	diskVolCtrl.SetEAC(eac)
 
 	diskMntCtrl := diskio.NewDiskMountController(log, dataPath, testNodeId, diskioState, mntOps)

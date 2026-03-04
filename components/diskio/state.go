@@ -47,6 +47,15 @@ type VolumeState struct {
 
 	// Mode is the disk I/O mode (universal or accelerator)
 	Mode storage_v1alpha.DiskVolumeVolumeMode `json:"mode,omitempty"`
+
+	// DevicePath is the loop device backing this volume (alwaysMount modes only)
+	DevicePath string `json:"device_path,omitempty"`
+
+	// MountPath is where the volume is mounted (alwaysMount modes only)
+	MountPath string `json:"mount_path,omitempty"`
+
+	// Mounted indicates if the volume is currently mounted (alwaysMount modes only)
+	Mounted bool `json:"mounted,omitempty"`
 }
 
 // MountState represents the state of a disk mount

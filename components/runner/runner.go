@@ -146,6 +146,10 @@ type Runner struct {
 	namespace string
 
 	sbController *sandbox.SandboxController
+
+	// Disk controllers, stored for SetRestartMode propagation
+	dvc *diskio.DiskVolumeController
+	dmc *diskio.DiskMountController
 }
 
 func (r *Runner) Close() error {
@@ -162,7 +166,14 @@ func (r *Runner) Close() error {
 }
 
 // SetRestartMode sets whether outboard processes should be preserved when closing.
+// When true, disk mounts are left in place so the replacement process can pick them up.
 func (r *Runner) SetRestartMode(v bool) {
+	if r.dvc != nil {
+		r.dvc.SetKeepMounts(v)
+	}
+	if r.dmc != nil {
+		r.dmc.SetKeepMounts(v)
+	}
 }
 
 // Drain sets the runner's node status to disabled and stops all running sandboxes
@@ -483,19 +494,38 @@ func (r *Runner) SetupControllers(
 		log.Info("lbd devices not available, accelerator mode will not work", "error", err)
 	}
 
-	diskioState := diskio.NewState()
-	diskioState.SetPath(dataPath)
+	diskioState, err := diskio.LoadState(dataPath)
+	if err != nil {
+		log.Warn("failed to load disk state, starting fresh", "error", err)
+		diskioState = diskio.NewState()
+		diskioState.SetPath(dataPath)
+	}
 
 	volOps := diskio.NewRealDiskVolumeOps(log)
 	mntOps := diskio.NewRealDiskMountOps(log)
 
-	dvc := diskio.NewDiskVolumeController(log, dataPath, r.Id, diskioState, volOps)
-	dvc.SetEAC(eas)
+	r.dvc = diskio.NewDiskVolumeController(log, dataPath, r.Id, diskioState, volOps, mntOps)
+	r.dvc.SetEAC(eas)
 
-	dmc := diskio.NewDiskMountController(log, dataPath, r.Id, diskioState, mntOps)
-	dmc.SetEAC(eas)
+	// Reconcile volumes with entity server on startup to re-mount any
+	// universal mode volumes that were mounted before the last shutdown.
+	if err := r.dvc.ReconcileWithEntities(ctx); err != nil {
+		log.Warn("failed to reconcile disk volumes on startup", "error", err)
+	}
 
-	r.closers = append(r.closers, shutdownCloser{dmc})
+	r.dmc = diskio.NewDiskMountController(log, dataPath, r.Id, diskioState, mntOps)
+	r.dmc.SetEAC(eas)
+
+	// Reconcile mounts with entity server on startup to re-mount any
+	// accelerator volumes that were mounted before the last shutdown.
+	if err := r.dmc.ReconcileWithEntities(ctx); err != nil {
+		log.Warn("failed to reconcile disk mounts on startup", "error", err)
+	}
+
+	// Register volume controller shutdown before mount controller so mounts
+	// owned by the volume controller are cleaned up first
+	r.closers = append(r.closers, shutdownCloser{r.dvc})
+	r.closers = append(r.closers, shutdownCloser{r.dmc})
 
 	// Start log watcher for accelerator mode volumes if cloud auth is configured
 	if r.CloudAuth != nil && r.CloudAuth.Enabled && r.CloudAuth.PrivateKey != "" {
@@ -524,7 +554,7 @@ func (r *Runner) SetupControllers(
 					log.Warn("failed to create auth client for log watcher", "error", aerr)
 				} else {
 					cloudDiskClient := diskio.NewCloudDiskClient(log, cloudURL, authClient)
-					dmc.SetCloudClient(cloudDiskClient)
+					r.dmc.SetCloudClient(cloudDiskClient)
 
 					uploader := diskio.NewCloudSegmentUploader(log, cloudURL, authClient, diskioState)
 					watcher := diskio.NewLogWatcher(log, diskioState, uploader, 5*time.Second)
@@ -539,14 +569,14 @@ func (r *Runner) SetupControllers(
 		}
 	}
 
-	volHandler := controller.AdaptReconcileController[storage_v1alpha.DiskVolume](dvc)
+	volHandler := controller.AdaptReconcileController[storage_v1alpha.DiskVolume](r.dvc)
 	cm.AddController(controller.NewReconcileController(
-		"disk-volume", log, dvc.Index(), eas, volHandler, 0, 1,
+		"disk-volume", log, r.dvc.Index(), eas, volHandler, 5*time.Minute, 1,
 	))
 
-	mntHandler := controller.AdaptReconcileController[storage_v1alpha.DiskMount](dmc)
+	mntHandler := controller.AdaptReconcileController[storage_v1alpha.DiskMount](r.dmc)
 	cm.AddController(controller.NewReconcileController(
-		"disk-mount", log, dmc.Index(), eas, mntHandler, 0, 1,
+		"disk-mount", log, r.dmc.Index(), eas, mntHandler, 5*time.Minute, 1,
 	))
 
 	// Use entity mode controllers

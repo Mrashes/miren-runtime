@@ -3,6 +3,7 @@ package diskio
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,7 +18,6 @@ import (
 
 const (
 	loopCtlGetFree = 0x4C82
-	loopSetFd      = 0x4C00
 	loopClrFd      = 0x4C01
 )
 
@@ -115,10 +115,14 @@ func (r *realDiskMountOps) LoopAttach(imagePath string) (string, error) {
 	}
 	defer backingFile.Close()
 
-	// Attach the backing file to the loop device
-	_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, loopDev.Fd(), loopSetFd, backingFile.Fd())
-	if errno != 0 {
-		return "", fmt.Errorf("LOOP_SET_FD failed for %s: %w", devicePath, errno)
+	// Use LOOP_CONFIGURE to attach with 4K sector size in a single ioctl
+	config := unix.LoopConfig{
+		Fd:   uint32(backingFile.Fd()),
+		Size: 4096, // 4K logical block size
+	}
+
+	if err := unix.IoctlLoopConfigure(int(loopDev.Fd()), &config); err != nil {
+		return "", fmt.Errorf("LOOP_CONFIGURE failed for %s: %w", devicePath, err)
 	}
 
 	return devicePath, nil
@@ -140,26 +144,33 @@ func (r *realDiskMountOps) LoopDetach(devicePath string) error {
 }
 
 func (r *realDiskMountOps) LbdAttach(ctx context.Context, imagePath, logDir string) (string, error) {
-	cmd := exec.CommandContext(ctx, "lbdctl", "add", imagePath, "--log-dir", logDir)
+	cmd := exec.CommandContext(ctx, "lbdctl", "add", "--json", imagePath, "--log-dir", logDir)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("lbdctl add failed: %w\noutput: %s", err, string(output))
 	}
 
-	devicePath := strings.TrimSpace(string(output))
-	if devicePath == "" {
+	var result struct {
+		Device string `json:"device"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		return "", fmt.Errorf("lbdctl add: failed to parse JSON output: %w\noutput: %s", err, string(output))
+	}
+
+	if result.Device == "" {
 		return "", fmt.Errorf("lbdctl add returned empty device path")
 	}
 
-	return devicePath, nil
+	return result.Device, nil
 }
 
 func (r *realDiskMountOps) LbdDetach(ctx context.Context, devicePath string) error {
-	cmd := exec.CommandContext(ctx, "lbdctl", "remove", devicePath)
+	cmd := exec.CommandContext(ctx, "lbdctl", "remove", "--json", devicePath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("lbdctl remove failed: %w\noutput: %s", err, string(output))
 	}
+	_ = output // JSON output available but not needed for remove
 	return nil
 }
 
@@ -204,6 +215,27 @@ func (r *realDiskMountOps) IsMounted(path string) bool {
 		}
 	}
 	return false
+}
+
+func (r *realDiskMountOps) FindMounts(pathPrefix string) []ActiveMount {
+	f, err := os.Open("/proc/mounts")
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	var result []ActiveMount
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) >= 2 && strings.HasPrefix(fields[1], pathPrefix) {
+			result = append(result, ActiveMount{
+				Device:    fields[0],
+				MountPath: fields[1],
+			})
+		}
+	}
+	return result
 }
 
 func (r *realDiskMountOps) IsFormatted(ctx context.Context, device, filesystem string) (bool, error) {

@@ -80,6 +80,10 @@ func (s *stubDiskMountOps) IsMounted(_ string) bool {
 	return false
 }
 
+func (s *stubDiskMountOps) FindMounts(_ string) []ActiveMount {
+	return nil
+}
+
 func (s *stubDiskMountOps) IsFormatted(_ context.Context, _, _ string) (bool, error) {
 	return false, fmt.Errorf("not supported on darwin")
 }

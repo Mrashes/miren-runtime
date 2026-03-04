@@ -3,6 +3,7 @@ package diskio
 import (
 	"context"
 	"os"
+	"strings"
 )
 
 // mockDiskVolumeOps implements DiskVolumeOps for testing
@@ -81,6 +82,7 @@ type mockDiskMountOps struct {
 	mounts        []diskMockMount
 	unmounts      []string
 	mountedPaths  map[string]bool
+	mountDevices  map[string]string // mount path → device, for FindMounts
 	formattedDevs map[string]string
 	formatCalls   []diskMockFormat
 
@@ -119,6 +121,7 @@ type diskMockFormat struct {
 func newMockDiskMountOps() *mockDiskMountOps {
 	return &mockDiskMountOps{
 		mountedPaths:   make(map[string]bool),
+		mountDevices:   make(map[string]string),
 		formattedDevs:  make(map[string]string),
 		nextLoopDevice: "/dev/loop0",
 		nextLbdDevice:  "/dev/lbd0",
@@ -199,6 +202,19 @@ func (m *mockDiskMountOps) Unmount(path string) error {
 
 func (m *mockDiskMountOps) IsMounted(path string) bool {
 	return m.mountedPaths[path]
+}
+
+func (m *mockDiskMountOps) FindMounts(pathPrefix string) []ActiveMount {
+	var result []ActiveMount
+	for path := range m.mountedPaths {
+		if strings.HasPrefix(path, pathPrefix) {
+			result = append(result, ActiveMount{
+				Device:    m.mountDevices[path],
+				MountPath: path,
+			})
+		}
+	}
+	return result
 }
 
 func (m *mockDiskMountOps) IsFormatted(_ context.Context, device, filesystem string) (bool, error) {

@@ -15,6 +15,12 @@ type DiskVolumeOps interface {
 	RemoveDiskImage(path string) error
 }
 
+// ActiveMount describes a mount found on the running system.
+type ActiveMount struct {
+	Device    string
+	MountPath string
+}
+
 // DiskMountOps abstracts OS operations for disk mount management.
 // This interface enables testing without requiring actual loop device or mount operations.
 type DiskMountOps interface {
@@ -30,4 +36,7 @@ type DiskMountOps interface {
 	IsMounted(path string) bool
 	IsFormatted(ctx context.Context, device, filesystem string) (bool, error)
 	FormatDevice(ctx context.Context, device, filesystem string) error
+
+	// FindMounts returns all mounts whose mount path starts with the given prefix.
+	FindMounts(pathPrefix string) []ActiveMount
 }

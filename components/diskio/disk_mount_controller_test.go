@@ -536,39 +536,20 @@ func TestDiskMountControllerShutdown(t *testing.T) {
 
 	mc := NewDiskMountController(log, dataPath, nodeId, state, ops)
 
-	// Track active mounts manually
-	ops.mountedPaths["/mnt/a"] = true
-	ops.mountedPaths["/mnt/b"] = true
-
-	mc.mu.Lock()
-	mc.mounts["disk_mount/mnt-a"] = &diskMountInfo{
-		imagePath:  "/data/volumes/vol-a/disk.img",
-		devicePath: "/dev/loop1",
-		mountPath:  "/mnt/a",
-	}
-	mc.mounts["disk_mount/mnt-b"] = &diskMountInfo{
-		imagePath:  "/data/volumes/vol-b/disk.img",
-		devicePath: "/dev/loop2",
-		mountPath:  "/mnt/b",
-	}
-	mc.mu.Unlock()
+	// Mount state with no cloud client — Shutdown should be a no-op for unmount/detach
+	// (DiskVolumeController handles that now)
+	state.SetMount("disk_mount/mnt-a", &MountState{
+		EntityId:   "disk_mount/mnt-a",
+		DevicePath: "/dev/loop1",
+		MountPath:  "/mnt/a",
+		Mounted:    true,
+	})
 
 	mc.Shutdown()
 
-	// Verify all mounts were unmounted
-	assert.Len(t, ops.unmounts, 2)
-	assert.Contains(t, ops.unmounts, "/mnt/a")
-	assert.Contains(t, ops.unmounts, "/mnt/b")
-
-	// Verify all loop devices were detached
-	assert.Len(t, ops.detachedLoops, 2)
-	assert.Contains(t, ops.detachedLoops, "/dev/loop1")
-	assert.Contains(t, ops.detachedLoops, "/dev/loop2")
-
-	// Verify mounts map is cleared
-	mc.mu.RLock()
-	assert.Empty(t, mc.mounts)
-	mc.mu.RUnlock()
+	// DiskMountController.Shutdown no longer unmounts/detaches — that's DiskVolumeController's job
+	assert.Empty(t, ops.unmounts)
+	assert.Empty(t, ops.detachedLoops)
 }
 
 func TestDiskMountControllerUnmountNotInState(t *testing.T) {
@@ -605,4 +586,188 @@ func TestDiskMountControllerUnmountNotInState(t *testing.T) {
 	var updated storage_v1alpha.DiskMount
 	updated.Decode(resp.Entity().Entity())
 	assert.Equal(t, storage_v1alpha.DM_DETACHED, updated.ActualState)
+}
+
+func TestDiskMountControllerUniversalSkipsMountOnAttach(t *testing.T) {
+	ctx := t.Context()
+	log := testutils.TestLogger(t)
+
+	es, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	dataPath := t.TempDir()
+	nodeId := "test-node-1"
+	state := NewState()
+	ops := newMockDiskMountOps()
+
+	// Volume is already mounted by volume controller (alwaysMount)
+	state.SetVolume("disk_volume/vol-uni", &VolumeState{
+		EntityId:   "disk_volume/vol-uni",
+		VolumeId:   "vol-uni",
+		DiskPath:   "/data/volumes/vol-uni",
+		SizeBytes:  10 * 1024 * 1024 * 1024,
+		Filesystem: "ext4",
+		Mode:       storage_v1alpha.VM_UNIVERSAL,
+		DevicePath: "/dev/loop5",
+		MountPath:  "/mnt/vol-uni",
+		Mounted:    true,
+	})
+
+	mc := newTestDiskMountController(log, dataPath, nodeId, es.EAC, state, ops)
+
+	mount := &storage_v1alpha.DiskMount{
+		ID:           "disk_mount/mnt-uni",
+		NodeId:       entity.Id("node/" + nodeId),
+		VolumeId:     "disk_volume/vol-uni",
+		MountPath:    "/mnt/vol-uni",
+		DesiredState: storage_v1alpha.DM_WANT_MOUNTED,
+		ActualState:  storage_v1alpha.DM_PENDING,
+	}
+	createDiskMountEntity(ctx, t, es, mount)
+
+	err := mc.ReconcileWithEntities(ctx)
+	require.NoError(t, err)
+
+	// No actual loop attach or mount should have been called
+	assert.Empty(t, ops.attachedLoops, "should not loop attach for universal mode")
+	assert.Empty(t, ops.mounts, "should not mount for universal mode")
+	assert.Empty(t, ops.formatCalls, "should not format for universal mode")
+
+	// State should be tracking the mount
+	mountState := state.GetMount("disk_mount/mnt-uni")
+	require.NotNil(t, mountState)
+	assert.True(t, mountState.Mounted)
+	assert.Equal(t, "/dev/loop5", mountState.DevicePath)
+	assert.Equal(t, "/mnt/vol-uni", mountState.MountPath)
+	assert.Equal(t, storage_v1alpha.VM_UNIVERSAL, mountState.Mode)
+
+	// Entity should be MOUNTED
+	resp, err := es.EAC.Get(ctx, "disk_mount/mnt-uni")
+	require.NoError(t, err)
+	var updated storage_v1alpha.DiskMount
+	updated.Decode(resp.Entity().Entity())
+	assert.Equal(t, storage_v1alpha.DM_MOUNTED, updated.ActualState)
+}
+
+func TestDiskMountControllerUniversalSkipsUnmountOnDetach(t *testing.T) {
+	ctx := t.Context()
+	log := testutils.TestLogger(t)
+
+	es, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	dataPath := t.TempDir()
+	nodeId := "test-node-1"
+	state := NewState()
+	ops := newMockDiskMountOps()
+
+	// Pre-populate with mounted universal volume
+	state.SetMount("disk_mount/mnt-uni-off", &MountState{
+		EntityId:   "disk_mount/mnt-uni-off",
+		VolumeId:   "disk_volume/vol-uni",
+		DevicePath: "/dev/loop5",
+		MountPath:  "/mnt/vol-uni",
+		Mounted:    true,
+		Mode:       storage_v1alpha.VM_UNIVERSAL,
+	})
+	ops.mountedPaths["/mnt/vol-uni"] = true
+
+	mc := newTestDiskMountController(log, dataPath, nodeId, es.EAC, state, ops)
+
+	mount := &storage_v1alpha.DiskMount{
+		ID:           "disk_mount/mnt-uni-off",
+		NodeId:       entity.Id("node/" + nodeId),
+		VolumeId:     "disk_volume/vol-uni",
+		MountPath:    "/mnt/vol-uni",
+		DesiredState: storage_v1alpha.DM_WANT_UNMOUNTED,
+		ActualState:  storage_v1alpha.DM_MOUNTED,
+	}
+	createDiskMountEntity(ctx, t, es, mount)
+
+	err := mc.ReconcileWithEntities(ctx)
+	require.NoError(t, err)
+
+	// No actual unmount or detach should have been called
+	assert.Empty(t, ops.unmounts, "should not unmount for universal mode")
+	assert.Empty(t, ops.detachedLoops, "should not detach for universal mode")
+
+	// Mount state should be cleaned up
+	assert.Nil(t, state.GetMount("disk_mount/mnt-uni-off"))
+
+	// Entity should be DETACHED
+	resp, err := es.EAC.Get(ctx, "disk_mount/mnt-uni-off")
+	require.NoError(t, err)
+	var updated storage_v1alpha.DiskMount
+	updated.Decode(resp.Entity().Entity())
+	assert.Equal(t, storage_v1alpha.DM_DETACHED, updated.ActualState)
+}
+
+func TestDiskMountControllerUniversalShutdownSkips(t *testing.T) {
+	log := testutils.TestLogger(t)
+
+	dataPath := t.TempDir()
+	nodeId := "test-node-1"
+	state := NewState()
+	ops := newMockDiskMountOps()
+
+	mc := NewDiskMountController(log, dataPath, nodeId, state, ops)
+
+	ops.mountedPaths["/mnt/uni"] = true
+	ops.mountedPaths["/mnt/acc"] = true
+
+	state.SetMount("disk_mount/mnt-uni", &MountState{
+		EntityId:   "disk_mount/mnt-uni",
+		DevicePath: "/dev/loop1",
+		MountPath:  "/mnt/uni",
+		Mounted:    true,
+		Mode:       storage_v1alpha.VM_UNIVERSAL,
+	})
+	state.SetMount("disk_mount/mnt-acc", &MountState{
+		EntityId:   "disk_mount/mnt-acc",
+		DevicePath: "/dev/loop2",
+		MountPath:  "/mnt/acc",
+		Mounted:    true,
+		Mode:       storage_v1alpha.VM_ACCELERATOR,
+	})
+
+	mc.Shutdown()
+
+	// DiskMountController no longer unmounts/detaches anything — DiskVolumeController handles that
+	assert.Empty(t, ops.unmounts)
+	assert.Empty(t, ops.detachedLoops)
+}
+
+func TestDiskMountControllerUniversalOrphanSkipsUnmount(t *testing.T) {
+	ctx := t.Context()
+	log := testutils.TestLogger(t)
+
+	es, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	dataPath := t.TempDir()
+	nodeId := "test-node-1"
+	state := NewState()
+	ops := newMockDiskMountOps()
+
+	// Orphan mount with universal mode
+	state.SetMount("disk_mount/mnt-orphan-uni", &MountState{
+		EntityId:   "disk_mount/mnt-orphan-uni",
+		VolumeId:   "disk_volume/vol-orphan-uni",
+		DevicePath: "/dev/loop7",
+		MountPath:  "/mnt/orphan-uni",
+		Mounted:    true,
+		Mode:       storage_v1alpha.VM_UNIVERSAL,
+	})
+
+	mc := newTestDiskMountController(log, dataPath, nodeId, es.EAC, state, ops)
+
+	err := mc.ReconcileWithEntities(ctx)
+	require.NoError(t, err)
+
+	// Should NOT unmount or detach (volume controller owns it)
+	assert.Empty(t, ops.unmounts)
+	assert.Empty(t, ops.detachedLoops)
+
+	// Mount state should still be cleaned up from mount controller's perspective
+	assert.Nil(t, state.GetMount("disk_mount/mnt-orphan-uni"))
 }

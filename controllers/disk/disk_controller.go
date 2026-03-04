@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"strings"
 
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
@@ -25,7 +26,11 @@ func detectDiskMode() storage_v1alpha.DiskMode {
 		}
 	}
 
-	// Loop devices are available on all Linux systems
+	// Use accelerator mode if lbd is available
+	if _, err := exec.LookPath("lbdctl"); err == nil {
+		return storage_v1alpha.ACCELERATOR
+	}
+
 	return storage_v1alpha.UNIVERSAL
 }
 

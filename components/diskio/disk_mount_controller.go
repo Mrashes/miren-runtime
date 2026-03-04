@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
@@ -26,16 +25,9 @@ type DiskMountController struct {
 	// Cloud client for lease management and segment replay (nil when cloud not configured)
 	cloudClient CloudDiskClient
 
-	// Track active loop mounts for shutdown cleanup
-	mu     sync.RWMutex
-	mounts map[string]*diskMountInfo
-}
-
-type diskMountInfo struct {
-	imagePath  string
-	devicePath string
-	mountPath  string
-	mode       storage_v1alpha.DiskVolumeVolumeMode
+	// keepMounts, when true, causes Shutdown to skip unmounting.
+	// Set during reload so the new process can pick up existing mounts.
+	keepMounts bool
 }
 
 func NewDiskMountController(log *slog.Logger, dataPath, nodeId string, state *State, ops DiskMountOps) *DiskMountController {
@@ -45,7 +37,6 @@ func NewDiskMountController(log *slog.Logger, dataPath, nodeId string, state *St
 		nodeId:   nodeId,
 		state:    state,
 		ops:      ops,
-		mounts:   make(map[string]*diskMountInfo),
 	}
 }
 
@@ -56,6 +47,12 @@ func (c *DiskMountController) SetEAC(eac *entityserver_v1alpha.EntityAccessClien
 // SetCloudClient sets the cloud client for lease management and segment replay.
 func (c *DiskMountController) SetCloudClient(client CloudDiskClient) {
 	c.cloudClient = client
+}
+
+// SetKeepMounts tells the controller to skip unmounting during Shutdown.
+// Used during reload so the replacement process inherits the mounts.
+func (c *DiskMountController) SetKeepMounts(v bool) {
+	c.keepMounts = v
 }
 
 func (c *DiskMountController) Init(ctx context.Context) error {
@@ -71,46 +68,22 @@ func (c *DiskMountController) Index() entity.Attr {
 	return entity.Ref(storage_v1alpha.DiskMountNodeIdId, entity.Id(fullNodeId))
 }
 
-// Shutdown unmounts filesystems, detaches loop devices, and releases cloud leases.
+// Shutdown releases cloud leases. Mount/detach cleanup is handled by
+// DiskVolumeController.Shutdown which owns all mount lifecycle.
+// If keepMounts is set (reload), everything is skipped.
 func (c *DiskMountController) Shutdown() {
-	c.mu.Lock()
-	mounts := make(map[string]*diskMountInfo, len(c.mounts))
-	for id, m := range c.mounts {
-		mounts[id] = m
-	}
-	c.mounts = make(map[string]*diskMountInfo)
-	c.mu.Unlock()
-
-	for entityId, m := range mounts {
-		c.log.Info("shutting down disk mount", "entity_id", entityId)
-
-		if m.mountPath != "" && c.ops.IsMounted(m.mountPath) {
-			if err := c.ops.Unmount(m.mountPath); err != nil {
-				c.log.Warn("failed to unmount on shutdown", "entity_id", entityId, "error", err)
-			}
-		}
-
-		if m.devicePath != "" {
-			if m.mode == storage_v1alpha.VM_ACCELERATOR {
-				if err := c.ops.LbdDetach(context.Background(), m.devicePath); err != nil {
-					c.log.Warn("failed to detach lbd on shutdown", "entity_id", entityId, "error", err)
-				}
-			} else {
-				if err := c.ops.LoopDetach(m.devicePath); err != nil {
-					c.log.Warn("failed to detach loop on shutdown", "entity_id", entityId, "error", err)
-				}
-			}
-		}
+	if c.keepMounts {
+		c.log.Info("keeping mounts for reload")
+		return
 	}
 
-	// Release cloud leases for any mounts that had them
+	// Release cloud leases for any active mounts
 	if c.cloudClient != nil {
-		ctx := context.Background()
-		for _, mountState := range c.state.ListMounts() {
-			if mountState.LeaseNonce != "" {
-				c.log.Info("releasing lease on shutdown", "entity_id", mountState.EntityId, "volume_id", mountState.VolumeId)
-				if err := c.cloudClient.ReleaseLease(ctx, mountState.VolumeId, mountState.LeaseNonce); err != nil {
-					c.log.Warn("failed to release lease on shutdown", "entity_id", mountState.EntityId, "error", err)
+		for _, ms := range c.state.ListMounts() {
+			if ms.LeaseNonce != "" {
+				c.log.Info("releasing lease on shutdown", "entity_id", ms.EntityId, "volume_id", ms.VolumeId)
+				if err := c.cloudClient.ReleaseLease(context.Background(), ms.VolumeId, ms.LeaseNonce); err != nil {
+					c.log.Warn("failed to release lease on shutdown", "entity_id", ms.EntityId, "error", err)
 				}
 			}
 		}
@@ -151,8 +124,36 @@ func (c *DiskMountController) reconcileMountMounted(ctx context.Context, mount *
 	case storage_v1alpha.DM_MOUNTED:
 		mountState := c.state.GetMount(entityId)
 		if mountState == nil {
-			c.log.Warn("entity says DM_MOUNTED but no local state found", "entity_id", entityId)
-			return nil
+			// No local state but entity says mounted. Check if actually mounted on the system.
+			if mount.MountPath != "" && c.ops.IsMounted(mount.MountPath) {
+				// Actually mounted — reconstruct local state from entity fields
+				c.log.Info("reconstructing mount state from entity and kernel",
+					"entity_id", entityId,
+					"mount_path", mount.MountPath,
+					"device_path", mount.DevicePath,
+				)
+				volState := c.state.GetVolume(string(mount.VolumeId))
+				var mode storage_v1alpha.DiskVolumeVolumeMode
+				if volState != nil {
+					mode = volState.Mode
+				}
+				c.state.SetMount(entityId, &MountState{
+					EntityId:   entityId,
+					VolumeId:   string(mount.VolumeId),
+					DevicePath: mount.DevicePath,
+					MountPath:  mount.MountPath,
+					Mounted:    true,
+					ReadOnly:   mount.ReadOnly,
+					Mode:       mode,
+				})
+				if err := c.state.Save(); err != nil {
+					c.log.Warn("failed to save reconstructed mount state", "error", err)
+				}
+				return nil
+			}
+			// Not actually mounted — re-attach from scratch
+			c.log.Info("entity says DM_MOUNTED but not found on system, recovering", "entity_id", entityId)
+			return c.attachAndMount(ctx, mount)
 		}
 		if mountState.MountPath != "" && !c.ops.IsMounted(mountState.MountPath) {
 			c.log.Warn("entity reports mounted but mount not found on system, recovering",
@@ -212,6 +213,39 @@ func (c *DiskMountController) attachAndMount(ctx context.Context, mount *storage
 		return fmt.Errorf("volume %s not found in state", volumeId)
 	}
 
+	// For alwaysMount volumes, the volume controller owns the mount.
+	// Just set up tracking and mark DM_MOUNTED.
+	if alwaysMount(volState.Mode) {
+		if !volState.Mounted {
+			c.setMountError(ctx, mount.ID, "volume not mounted by volume controller")
+			return fmt.Errorf("volume %s not mounted by volume controller", volumeId)
+		}
+
+		c.state.SetMount(entityId, &MountState{
+			EntityId:   entityId,
+			VolumeId:   volumeId,
+			DevicePath: volState.DevicePath,
+			MountPath:  volState.MountPath,
+			Mounted:    true,
+			ReadOnly:   mount.ReadOnly,
+			Mode:       volState.Mode,
+		})
+		if err := c.state.Save(); err != nil {
+			c.log.Warn("failed to save state after alwaysMount tracking", "error", err)
+		}
+
+		devPath := volState.DevicePath
+		if err := c.updateMountState(ctx, mount.ID, storage_v1alpha.DM_MOUNTED, &devPath, &devPath, nil); err != nil {
+			c.log.Warn("failed to update mount state to mounted", "error", err)
+		}
+
+		c.log.Info("alwaysMount volume already mounted, tracking lease",
+			"entity_id", entityId,
+			"mount_path", volState.MountPath,
+		)
+		return nil
+	}
+
 	// For accelerator mode with cloud configured, acquire lease and replay segments
 	var leaseNonce string
 	if volState.Mode == storage_v1alpha.VM_ACCELERATOR && c.cloudClient != nil {
@@ -252,17 +286,6 @@ func (c *DiskMountController) attachAndMount(ctx context.Context, mount *storage
 		}
 	}
 
-	// Track the mount for shutdown cleanup
-	c.mu.Lock()
-	c.mounts[entityId] = &diskMountInfo{
-		imagePath:  imagePath,
-		devicePath: devicePath,
-		mountPath:  mount.MountPath,
-		mode:       volState.Mode,
-	}
-	c.mu.Unlock()
-
-	// Update state
 	c.state.SetMount(entityId, &MountState{
 		EntityId:   entityId,
 		VolumeId:   volumeId,
@@ -304,10 +327,6 @@ func (c *DiskMountController) attachAndMount(ctx context.Context, mount *storage
 				c.log.Warn("rollback: failed to release lease", "error", lerr)
 			}
 		}
-
-		c.mu.Lock()
-		delete(c.mounts, entityId)
-		c.mu.Unlock()
 
 		c.state.DeleteMount(entityId)
 		if serr := c.state.Save(); serr != nil {
@@ -447,6 +466,25 @@ func (c *DiskMountController) unmountAndDetach(ctx context.Context, mount *stora
 		return nil
 	}
 
+	// For alwaysMount volumes, skip actual unmount/detach — volume controller owns the mount
+	if alwaysMount(mountState.Mode) {
+		c.state.DeleteMount(entityId)
+		if err := c.state.Save(); err != nil {
+			c.log.Warn("failed to save state after alwaysMount cleanup", "error", err)
+		}
+
+		clearPath := ""
+		clearErr := ""
+		if err := c.updateMountState(ctx, mount.ID, storage_v1alpha.DM_DETACHED, &clearPath, &clearPath, &clearErr); err != nil {
+			c.log.Warn("failed to update mount state to detached", "error", err)
+		}
+
+		c.log.Info("alwaysMount volume lease released, mount preserved",
+			"entity_id", entityId,
+		)
+		return nil
+	}
+
 	// Unmount if mounted
 	if mountState.Mounted && mountState.MountPath != "" {
 		// Check if another mount is using the same path
@@ -517,11 +555,6 @@ func (c *DiskMountController) unmountAndDetach(ctx context.Context, mount *stora
 		c.setMountError(ctx, mount.ID, errMsg)
 		return fmt.Errorf("detach/release failed: %s", errMsg)
 	}
-
-	// Remove from active mounts
-	c.mu.Lock()
-	delete(c.mounts, entityId)
-	c.mu.Unlock()
 
 	c.state.DeleteMount(entityId)
 	if err := c.state.Save(); err != nil {
@@ -649,6 +682,13 @@ func (c *DiskMountController) ReconcileWithEntities(ctx context.Context) error {
 
 		c.log.Info("cleaning up orphaned disk mount", "entity_id", mountState.EntityId)
 
+		// For alwaysMount volumes, skip actual unmount/detach — volume controller owns those
+		if alwaysMount(mountState.Mode) {
+			c.state.DeleteMount(mountState.EntityId)
+			orphanCleaned = true
+			continue
+		}
+
 		if mountState.Mounted && mountState.MountPath != "" {
 			if err := c.ops.Unmount(mountState.MountPath); err != nil {
 				c.log.Warn("failed to unmount orphaned mount", "entity_id", mountState.EntityId, "error", err)
@@ -672,10 +712,6 @@ func (c *DiskMountController) ReconcileWithEntities(ctx context.Context) error {
 				c.log.Warn("failed to release lease for orphaned mount", "entity_id", mountState.EntityId, "error", err)
 			}
 		}
-
-		c.mu.Lock()
-		delete(c.mounts, mountState.EntityId)
-		c.mu.Unlock()
 
 		c.state.DeleteMount(mountState.EntityId)
 		orphanCleaned = true
