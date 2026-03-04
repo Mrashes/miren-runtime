@@ -498,8 +498,11 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 		ctx.Log.Warn("VictoriaLogs not ready after 30s, system log ingestion may be delayed")
 	}
 
-	// Tee server logs to VictoriaLogs so they're queryable via `miren logs system`
-	systemHandler := observability.NewSystemLogHandler(ctx.Log.Handler(), logWriter)
+	// Tee server logs to VictoriaLogs so they're queryable via `miren logs system`.
+	// Batch writes to reduce the number of HTTP POSTs under high log volume.
+	batchWriter := observability.NewBatchLogWriter(logWriter)
+	defer batchWriter.Close()
+	systemHandler := observability.NewSystemLogHandler(ctx.Log.Handler(), batchWriter)
 	ctx.Log = slog.New(systemHandler)
 
 	// Discover local IPs using ipdiscovery
