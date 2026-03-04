@@ -2188,3 +2188,75 @@ func TestNoServiceEntityForHTTPOnlyService(t *testing.T) {
 	services := listAllServices(t, ctx, server)
 	assert.Empty(t, services, "HTTP-only service should not create a Service entity")
 }
+
+// TestWebServiceImplicitHTTPPortWithMultiPort tests that a web service with only non-HTTP
+// ports configured still gets the implicit HTTP port 3000 injected, and PORT env var is
+// set to 3000.
+func TestWebServiceImplicitHTTPPortWithMultiPort(t *testing.T) {
+	ctx := context.Background()
+	log := testutils.TestLogger(t)
+
+	server, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	app := &core_v1alpha.App{
+		Project: entity.Id("project-1"),
+	}
+	appID, err := server.Client.Create(ctx, "test-app", app)
+	require.NoError(t, err)
+	app.ID = appID
+
+	version := &core_v1alpha.AppVersion{
+		App:      app.ID,
+		Version:  "v1",
+		ImageUrl: "test:latest",
+		Config: core_v1alpha.Config{
+			Services: []core_v1alpha.Services{
+				{
+					Name: "web",
+					Ports: []core_v1alpha.Ports{
+						{Port: 6667, Name: "irc", Type: "tcp"},
+						{Port: 6697, Name: "irc-tls", Type: "tcp", NodePort: 6697},
+					},
+					ServiceConcurrency: core_v1alpha.ServiceConcurrency{
+						Mode:         "fixed",
+						NumInstances: 1,
+					},
+				},
+			},
+		},
+	}
+	verID, err := server.Client.Create(ctx, "test-ver", version)
+	require.NoError(t, err)
+	version.ID = verID
+
+	app.ActiveVersion = version.ID
+	err = server.Client.Update(ctx, app)
+	require.NoError(t, err)
+
+	launcher := newTestLauncher(log, server.EAC)
+	err = launcher.Reconcile(ctx, app, nil)
+	require.NoError(t, err)
+
+	pools := listAllPools(t, ctx, server)
+	require.Len(t, pools, 1)
+
+	container := pools[0].SandboxSpec.Container[0]
+	require.Len(t, container.Port, 3, "should have two explicit TCP ports + implicit HTTP port 3000")
+
+	assert.Equal(t, int64(6667), container.Port[0].Port)
+	assert.Equal(t, "irc", container.Port[0].Name)
+	assert.Equal(t, "tcp", container.Port[0].Type)
+
+	assert.Equal(t, int64(6697), container.Port[1].Port)
+	assert.Equal(t, "irc-tls", container.Port[1].Name)
+	assert.Equal(t, "tcp", container.Port[1].Type)
+	assert.Equal(t, int64(6697), container.Port[1].NodePort)
+
+	assert.Equal(t, int64(3000), container.Port[2].Port)
+	assert.Equal(t, "http", container.Port[2].Name)
+	assert.Equal(t, "http", container.Port[2].Type)
+
+	// PORT env var should be set to 3000 (the implicit HTTP port)
+	assert.Contains(t, container.Env, "PORT=3000")
+}
