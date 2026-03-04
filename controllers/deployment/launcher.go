@@ -514,6 +514,22 @@ func (l *Launcher) buildSandboxSpec(
 				if portEnvValue == 0 {
 					portEnvValue = svc.Ports[0].Port
 				}
+
+				if serviceName == "web" {
+					hasHTTP := false
+					for _, cp := range containerPorts {
+						if cp.Type == "http" || cp.Type == "" {
+							hasHTTP = true
+							break
+						}
+					}
+					if !hasHTTP {
+						containerPorts = append(containerPorts, compute_v1alpha.SandboxSpecContainerPort{
+							Port: 3000, Name: "http", Type: "http",
+						})
+						portEnvValue = 3000
+					}
+				}
 			} else {
 				// Scalar port path (backward compat)
 				port := svc.Port
