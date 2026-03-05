@@ -184,28 +184,42 @@ const defaultTailLimit = 100
 func (s *Server) resolveLogTarget(ctx context.Context, target *app_v1alpha.LogTarget) (observability.LogTarget, error) {
 	var logTarget observability.LogTarget
 
-	if target.HasSystem() && target.System() {
+	hasSystem := target.HasSystem() && target.System()
+	hasSandbox := target.HasSandbox() && target.Sandbox() != ""
+	hasApp := target.HasApp() && target.App() != ""
+
+	selected := 0
+	if hasSystem {
+		selected++
+	}
+	if hasSandbox {
+		selected++
+	}
+	if hasApp {
+		selected++
+	}
+	if selected != 1 {
+		return logTarget, fmt.Errorf("target must specify exactly one of app, sandbox, or system")
+	}
+
+	if hasSystem {
 		logTarget.EntityID = observability.SystemLogEntityID
 		return logTarget, nil
 	}
 
-	if target.HasSandbox() && target.Sandbox() != "" {
+	if hasSandbox {
 		logTarget.SandboxID = target.Sandbox()
 		return logTarget, nil
 	}
 
-	if target.HasApp() && target.App() != "" {
-		var appRec core_v1alpha.App
-		err := s.EC.Get(ctx, target.App(), &appRec)
-		if err != nil {
-			s.Log.Error("failed to get app", "app", target.App(), "err", err)
-			return logTarget, err
-		}
-		logTarget.EntityID = appRec.EntityId().String()
-		return logTarget, nil
+	var appRec core_v1alpha.App
+	err := s.EC.Get(ctx, target.App(), &appRec)
+	if err != nil {
+		s.Log.Error("failed to get app", "app", target.App(), "err", err)
+		return logTarget, err
 	}
-
-	return logTarget, fmt.Errorf("target must specify app, sandbox, or system")
+	logTarget.EntityID = appRec.EntityId().String()
+	return logTarget, nil
 }
 
 func (s *Server) StreamLogChunks(ctx context.Context, state *app_v1alpha.LogsStreamLogChunks) error {
