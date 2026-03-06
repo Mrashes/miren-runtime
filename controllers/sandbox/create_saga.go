@@ -9,6 +9,7 @@ import (
 
 	"github.com/containerd/containerd/namespaces"
 	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/errdefs"
 
 	compute "miren.dev/runtime/api/compute/compute_v1alpha"
 	"miren.dev/runtime/network"
@@ -181,10 +182,10 @@ func createContainer(ctx context.Context, in createContainerIn) (createContainer
 		return createContainerOut{}, fmt.Errorf("building spec: %w", err)
 	}
 
-	// Create pause container
+	// Create pause container (idempotent for crash replay)
 	cid := pauseContainerId(co.ID)
 	_, err = deps.ctrl.CC.NewContainer(ctx, cid, opts...)
-	if err != nil {
+	if err != nil && !errdefs.IsAlreadyExists(err) {
 		return createContainerOut{}, fmt.Errorf("creating container %s: %w", co.ID, err)
 	}
 
@@ -451,10 +452,13 @@ func waitPorts(ctx context.Context, in waitPortsIn) (waitPortsOut, error) {
 	log := saga.Get[*slog.Logger](ctx)
 
 	portTimeout := portWaitTimeout
+	if len(in.WaitPortIDs) != len(in.WaitPortPorts) {
+		return waitPortsOut{}, fmt.Errorf(
+			"wait port ids/ports mismatch: %d != %d",
+			len(in.WaitPortIDs), len(in.WaitPortPorts),
+		)
+	}
 	for i := range in.WaitPortIDs {
-		if i >= len(in.WaitPortPorts) {
-			break
-		}
 		log.Info("saga: waiting for port", "sandbox", in.SandboxID, "port", in.WaitPortPorts[i])
 		if err := deps.ctrl.waitForPort(ctx, in.WaitPortIDs[i], in.WaitPortPorts[i], portTimeout); err != nil {
 			return waitPortsOut{}, fmt.Errorf("port %d not reachable: %w", in.WaitPortPorts[i], err)

@@ -102,9 +102,12 @@ func (s *SagaSandboxController) Create(ctx context.Context, co *compute.Sandbox,
 							entity.Ref(entity.DBId, co.ID),
 							(&compute.Sandbox{Status: compute.RUNNING}).Encode,
 						)
-						_, err := s.inner.EAC.Patch(ctx, patchAttrs.Attrs(), meta.Revision)
+						result, err := s.inner.EAC.Patch(ctx, patchAttrs.Attrs(), meta.Revision)
 						if err != nil {
 							return fmt.Errorf("failed to update sandbox status to RUNNING: %w", err)
+						}
+						if s.inner.writeTracker != nil && result.HasRevision() {
+							s.inner.writeTracker.RecordWrite(result.Revision())
 						}
 						return nil
 					}
