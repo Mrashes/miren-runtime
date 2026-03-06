@@ -157,7 +157,10 @@ update-test-groups: ## Measure new packages and rebuild hack/test-groups.json
 	bash hack/update-test-times.sh hack/test-times.json
 	python3 hack/calc-test-groups.py hack/test-times.json -n 4 -o hack/test-groups.json
 
-.PHONY: test test-shell test-e2e test-coverage test-coverage-ci coverage-report coverage-percent coverage-by-package coverage-pr test-groups update-test-groups
+test-blackbox: ## Run blackbox tests (requires `make dev` running)
+	go test -tags blackbox -timeout 10m -v -count=1 ./blackbox/...
+
+.PHONY: test test-shell test-e2e test-blackbox test-coverage test-coverage-ci coverage-report coverage-percent coverage-by-package coverage-pr test-groups update-test-groups
 
 #
 # Building
