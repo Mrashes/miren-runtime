@@ -150,7 +150,22 @@ func (s *SagaSandboxController) createSandboxViaSaga(ctx context.Context, co *co
 		Execute(ctx)
 
 	if err != nil {
-		s.log.Error("saga sandbox creation failed", "id", co.ID, "error", err)
+		s.log.Error("saga sandbox creation failed, marking DEAD", "id", co.ID, "error", err)
+
+		// Saga compensating actions handle resource cleanup. The controller
+		// owns the domain-level outcome: mark the sandbox DEAD so the pool
+		// replaces it rather than retrying the same entity.
+		// NOTE: this runs at the call site, so a crash between saga completion
+		// and this patch leaves the entity PENDING (retried by reconciler).
+		// Durable saga outcome declaration is future work.
+		patchAttrs := entity.New(
+			entity.Ref(entity.DBId, co.ID),
+			(&compute.Sandbox{Status: compute.DEAD}).Encode,
+		)
+		if _, patchErr := s.ops.PatchSandbox(ctx, patchAttrs.Attrs(), 0); patchErr != nil {
+			s.log.Error("failed to mark sandbox DEAD after saga failure", "id", co.ID, "error", patchErr)
+		}
+
 		return fmt.Errorf("saga sandbox creation failed: %w", err)
 	}
 

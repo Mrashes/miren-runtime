@@ -455,19 +455,9 @@ func setRunning(ctx context.Context, in setRunningIn) (setRunningOut, error) {
 	return setRunningOut{}, nil
 }
 
-func undoSetRunning(ctx context.Context, in setRunningIn, _ setRunningOut) error {
-	deps := saga.Get[*createSandboxDeps](ctx)
-	log := saga.Get[*slog.Logger](ctx)
-
-	patchAttrs := entity.New(
-		entity.Ref(entity.DBId, entity.Id(in.SandboxID)),
-		(&compute.Sandbox{Status: compute.DEAD}).Encode,
-	)
-	_, err := deps.entities.PatchSandbox(ctx, patchAttrs.Attrs(), 0)
-	if err != nil {
-		log.Error("saga undo: failed to set status to DEAD", "id", in.SandboxID, "error", err)
-		return nil // best-effort
-	}
+func undoSetRunning(_ context.Context, _ setRunningIn, _ setRunningOut) error {
+	// The controller marks the sandbox DEAD after saga failure;
+	// the undo actions only handle resource cleanup.
 	return nil
 }
 
