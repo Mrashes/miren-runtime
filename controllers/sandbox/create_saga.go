@@ -8,6 +8,7 @@ import (
 	"time"
 
 	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/errdefs"
 
 	compute "miren.dev/runtime/api/compute/compute_v1alpha"
 	"miren.dev/runtime/pkg/entity"
@@ -182,8 +183,11 @@ func undoCreateContainer(ctx context.Context, _ createContainerIn, out createCon
 
 	container, err := deps.runtime.LoadContainer(ctx, out.ContainerID)
 	if err != nil {
-		log.Debug("saga undo: container not found, already cleaned up", "id", out.ContainerID)
-		return nil
+		if errdefs.IsNotFound(err) {
+			log.Debug("saga undo: container not found, already cleaned up", "id", out.ContainerID)
+			return nil
+		}
+		return fmt.Errorf("saga undo: loading container %s: %w", out.ContainerID, err)
 	}
 	deps.runtime.CleanupContainer(ctx, container)
 	log.Debug("saga undo: deleted container", "id", out.ContainerID)
@@ -329,7 +333,9 @@ func undoBootContainers(ctx context.Context, in bootContainersIn, _ bootContaine
 	deps := saga.Get[*createSandboxDeps](ctx)
 	log := saga.Get[*slog.Logger](ctx)
 
-	deps.runtime.DestroySubContainers(ctx, entity.Id(in.SandboxID))
+	if err := deps.runtime.DestroySubContainers(ctx, entity.Id(in.SandboxID)); err != nil {
+		return fmt.Errorf("saga undo: destroying subcontainers for %s: %w", in.SandboxID, err)
+	}
 	log.Debug("saga undo: destroyed subcontainers", "sandbox", in.SandboxID)
 
 	if err := deps.runtime.ReleaseDiskLeases(ctx, entity.Id(in.SandboxID)); err != nil {
@@ -431,22 +437,21 @@ func setRunning(ctx context.Context, in setRunningIn) (setRunningOut, error) {
 	deps := saga.Get[*createSandboxDeps](ctx)
 	log := saga.Get[*slog.Logger](ctx)
 
-	sb, _, err := deps.entities.GetSandbox(ctx, in.SandboxID)
+	sb, meta, err := deps.entities.GetSandbox(ctx, in.SandboxID)
 	if err != nil {
-		log.Warn("saga: failed to fetch sandbox status", "id", in.SandboxID, "error", err)
-	} else {
-		if sb.Status == compute.DEAD || sb.Status == compute.STOPPED {
-			log.Info("saga: sandbox already in terminal state",
-				"id", in.SandboxID, "status", sb.Status)
-			return setRunningOut{}, nil
-		}
+		return setRunningOut{}, fmt.Errorf("fetching sandbox status: %w", err)
+	}
+	if sb.Status == compute.DEAD || sb.Status == compute.STOPPED {
+		log.Info("saga: sandbox already in terminal state",
+			"id", in.SandboxID, "status", sb.Status)
+		return setRunningOut{}, nil
 	}
 
 	patchAttrs := entity.New(
 		entity.Ref(entity.DBId, entity.Id(in.SandboxID)),
 		(&compute.Sandbox{Status: compute.RUNNING}).Encode,
 	)
-	_, err = deps.entities.PatchSandbox(ctx, patchAttrs.Attrs(), 0)
+	_, err = deps.entities.PatchSandbox(ctx, patchAttrs.Attrs(), meta.Revision)
 	if err != nil {
 		return setRunningOut{}, fmt.Errorf("setting status to RUNNING: %w", err)
 	}

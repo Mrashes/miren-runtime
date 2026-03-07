@@ -73,6 +73,13 @@ func (c *SandboxController) configureHostVolume(sb *compute.Sandbox, volume comp
 
 	c.Log.Debug("creating host volume symlink", "path", path, "host-path", rawPath)
 
+	if existing, err := os.Readlink(rawPath); err == nil {
+		if existing == path {
+			return path, nil
+		}
+		return "", fmt.Errorf("host volume symlink %s already exists but points to %s, expected %s", rawPath, existing, path)
+	}
+
 	if err := os.Symlink(path, rawPath); err != nil {
 		return "", err
 	}
