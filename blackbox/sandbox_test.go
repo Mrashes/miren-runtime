@@ -32,9 +32,7 @@ func TestSandboxExec(t *testing.T) {
 	// Get sandbox ID from JSON listing
 	sandboxID := harness.GetSandboxID(t, m, name)
 
-	// Exec a simple command in the sandbox.
-	// Note: sandbox exec may exit non-zero due to a known CLI cleanup issue,
-	// but the command output should still be correct.
-	r := m.Run("sandbox", "exec", "-i", sandboxID, "--", "echo", "hello-from-sandbox")
+	// Exec a simple command in the sandbox
+	r := m.MustRun("sandbox", "exec", "-i", sandboxID, "--", "echo", "hello-from-sandbox")
 	r.RequireContains(t, "hello-from-sandbox")
 }

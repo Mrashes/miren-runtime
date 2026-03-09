@@ -54,7 +54,7 @@ func NewCluster(t *testing.T) *Cluster {
 	if mode == ModeLocal {
 		c.MirenBin = os.Getenv("BLACKBOX_MIREN_BIN")
 		if c.MirenBin == "" {
-			c.MirenBin = "miren"
+			c.MirenBin = filepath.Join(repoRoot, "bin", "miren")
 		}
 	}
 

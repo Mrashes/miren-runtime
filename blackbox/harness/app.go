@@ -22,10 +22,6 @@ type AppOptions struct {
 	// Env is a list of KEY=VALUE pairs to pass via -e flags.
 	Env []string
 
-	// DeployTimeout is how long to wait for the deploy command itself.
-	// Defaults to 3 minutes.
-	DeployTimeout time.Duration
-
 	// ReadyTimeout is how long to wait for the app to become healthy after deploy.
 	// Defaults to 2 minutes.
 	ReadyTimeout time.Duration
@@ -71,11 +67,12 @@ func DeployApp(t *testing.T, m *Miren, opts AppOptions) string {
 	// Register cleanup before deploying so it runs even if deploy fails partway
 	t.Cleanup(func() {
 		t.Logf("cleaning up app %s", name)
-		m.Run("app", "delete", name, "-f")
+		if r := m.Run("app", "delete", name, "-f"); !r.Success() {
+			t.Errorf("failed to delete app %s during cleanup: %s", name, strings.TrimSpace(r.Stderr))
+		}
 	})
 
-	r := m.MustRun(args...)
-	_ = r
+	m.MustRun(args...)
 
 	WaitForAppReady(t, m, name, readyTimeout)
 
