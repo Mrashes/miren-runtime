@@ -87,12 +87,8 @@ func (a *AppCentric) Validate(glbl *GlobalFlags) error {
 				return fmt.Errorf("failed to initialize app: %w", err)
 			}
 
-			// Reload the config we just created.
-			if a.Dir != "." && a.Dir != "" {
-				a.config, err = appconfig.LoadAppConfigUnder(a.Dir)
-			} else {
-				a.config, err = appconfig.LoadAppConfig()
-			}
+			// Reload the config we just created. workDir is already absolute.
+			a.config, err = appconfig.LoadAppConfigUnder(workDir)
 			if err != nil {
 				return fmt.Errorf("error loading %s: %w", appconfig.AppConfigPath, err)
 			}
