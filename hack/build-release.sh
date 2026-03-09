@@ -20,7 +20,7 @@ dir="tmp/release/$version"
 
 mkdir -p $dir
 
-if ! test -f $dir/miren-darwin-arm64.tar.gz; then
+if ! test -f $dir/miren-darwin-arm64.tar.gz || ! test -f $dir/miren-darwin-arm64.zip; then
   echo "Darwin / arm64"
   GOOS=darwin GOARCH=arm64 go build -ldflags "-X miren.dev/runtime/version.Version=$version" -o $dir/miren ./cmd/miren
 
@@ -31,7 +31,7 @@ if ! test -f $dir/miren-darwin-arm64.tar.gz; then
   rm $dir/miren
 fi
 
-if ! test -f $dir/miren-darwin-amd64.tar.gz; then
+if ! test -f $dir/miren-darwin-amd64.tar.gz || ! test -f $dir/miren-darwin-amd64.zip; then
   echo "Darwin / amd64"
   GOOS=darwin GOARCH=amd64 go build -ldflags "-X miren.dev/runtime/version.Version=$version" -o $dir/miren ./cmd/miren
 
@@ -42,7 +42,7 @@ if ! test -f $dir/miren-darwin-amd64.tar.gz; then
   rm $dir/miren
 fi
 
-if ! test -f $dir/miren-linux-arm64.tar.gz; then
+if ! test -f $dir/miren-linux-arm64.tar.gz || ! test -f $dir/miren-linux-arm64.zip; then
   echo "Linux / arm64"
   GOOS=linux GOARCH=arm64 go build -ldflags "-X miren.dev/runtime/version.Version=$version" -o $dir/miren ./cmd/miren
 
@@ -53,7 +53,7 @@ if ! test -f $dir/miren-linux-arm64.tar.gz; then
   rm $dir/miren
 fi
 
-if ! test -f $dir/miren-linux-amd64.tar.gz; then
+if ! test -f $dir/miren-linux-amd64.tar.gz || ! test -f $dir/miren-linux-amd64.zip; then
   echo "Linux / amd64"
   GOOS=linux GOARCH=amd64 go build -ldflags "-X miren.dev/runtime/version.Version=$version" -o $dir/miren ./cmd/miren
 

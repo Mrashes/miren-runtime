@@ -368,4 +368,3 @@ func (d *assetDownloader) extractTarGz(tarPath, targetDir string) (string, error
 
 	return "", fmt.Errorf("miren binary not found in archive")
 }
-
