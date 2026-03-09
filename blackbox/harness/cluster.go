@@ -32,7 +32,12 @@ func NewCluster(t *testing.T) *Cluster {
 
 	mode := ModeDev
 	if m := os.Getenv("BLACKBOX_MODE"); m != "" {
-		mode = Mode(m)
+		switch Mode(m) {
+		case ModeDev, ModeLocal:
+			mode = Mode(m)
+		default:
+			t.Fatalf("invalid BLACKBOX_MODE %q (expected %q or %q)", m, ModeDev, ModeLocal)
+		}
 	}
 
 	repoRoot := os.Getenv("BLACKBOX_REPO_ROOT")

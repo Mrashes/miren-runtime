@@ -93,5 +93,9 @@ func (m *Miren) ContainerPath(hostPath string) string {
 	if err != nil {
 		m.t.Fatalf("path %q is not under repo root %q: %v", hostPath, m.cluster.RepoRoot, err)
 	}
+	rel = filepath.Clean(rel)
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		m.t.Fatalf("path %q is outside repo root %q", hostPath, m.cluster.RepoRoot)
+	}
 	return filepath.Join("/src", rel)
 }

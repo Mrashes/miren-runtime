@@ -10,6 +10,13 @@ import (
 func Poll(t *testing.T, description string, timeout, interval time.Duration, condition func() (done bool, msg string)) {
 	t.Helper()
 
+	if timeout <= 0 {
+		t.Fatalf("Poll: timeout must be positive, got %s", timeout)
+	}
+	if interval <= 0 {
+		t.Fatalf("Poll: interval must be positive, got %s", interval)
+	}
+
 	deadline := time.Now().Add(timeout)
 	var lastMsg string
 

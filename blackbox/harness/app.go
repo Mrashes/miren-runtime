@@ -54,11 +54,6 @@ func DeployApp(t *testing.T, m *Miren, opts AppOptions) string {
 		name = UniqueAppName(t, opts.Testdata)
 	}
 
-	deployTimeout := opts.DeployTimeout
-	if deployTimeout == 0 {
-		deployTimeout = 3 * time.Minute
-	}
-
 	readyTimeout := opts.ReadyTimeout
 	if readyTimeout == 0 {
 		readyTimeout = 2 * time.Minute

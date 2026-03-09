@@ -15,14 +15,13 @@ func TestDeployAndRollback(t *testing.T) {
 	m := harness.NewMiren(t, c)
 
 	name := harness.UniqueAppName(t, "go-server")
+	t.Cleanup(func() {
+		m.Run("app", "delete", name, "-f")
+	})
 
 	// Deploy v1
 	m.MustRun("deploy", "-a", name, "-d", m.ContainerPath(c.TestdataDir+"/go-server"), "-f")
 	harness.WaitForAppReady(t, m, name, 2*time.Minute)
-
-	t.Cleanup(func() {
-		m.Run("app", "delete", name, "-f")
-	})
 
 	// Capture v1 version ID
 	r := m.MustRun("app", "list", "--format", "json")
