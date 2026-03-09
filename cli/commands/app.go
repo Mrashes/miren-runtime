@@ -58,7 +58,7 @@ func (a *AppCentric) Validate(glbl *GlobalFlags) error {
 			if workDir == "." || workDir == "" {
 				wd, err := os.Getwd()
 				if err != nil {
-					return fmt.Errorf("no app configured; run 'miren init' to set up your app, or use -a <name>")
+					return fmt.Errorf("no app configuration found — run 'miren init' to get started, or pass -a <name>")
 				}
 				workDir = wd
 			} else {
@@ -70,17 +70,19 @@ func (a *AppCentric) Validate(glbl *GlobalFlags) error {
 
 			appName := inferAppName(workDir)
 
+			noAppMsg := "no app configuration found — run 'miren init' to get started, or pass -a <name>"
+
 			if !term.IsTerminal(int(os.Stdin.Fd())) {
-				return fmt.Errorf("no app configured; run 'miren init' to set up your app, or use -a <name>")
+				return fmt.Errorf("%s", noAppMsg)
 			}
 
 			confirmed, err := ui.Confirm(
-				ui.WithMessage(fmt.Sprintf("No app configuration found. Initialize app %q in this directory?", appName)),
+				ui.WithMessage(fmt.Sprintf("Looks like this directory isn't set up yet. Run 'miren init' to create app %q here?", appName)),
 				ui.WithDefault(true),
 				ui.WithIndent("  "),
 			)
 			if err != nil || !confirmed {
-				return fmt.Errorf("no app configured; run 'miren init' to set up your app, or use -a <name>")
+				return fmt.Errorf("%s", noAppMsg)
 			}
 
 			if _, err := initApp(workDir, appName); err != nil {
