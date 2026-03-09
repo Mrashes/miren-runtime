@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `make test` - Run all tests using iso (runs hack/test.sh in isolated container)
 - `make test-serial` - Run all tests serially with `-p 1` (for debugging test interference)
 - `make test-shell` - Run tests with interactive shell (set USESHELL=1)
-- `make test-e2e` - Run end-to-end tests
+- `make test-blackbox` - Run blackbox CLI tests (requires `make dev` running)
 - `hack/it <gopkg>` - Run all tests in a package using iso
 - `hack/run <gopkg> <testname>` - Run a single focused test using iso
 
@@ -204,7 +204,7 @@ To get started with iso:
 ### Testing Notes
 
 - Tests must run without any parallelism (`-p 1`) due to shared containerd/buildkit instances
-- Integration tests in `e2e/` directory
+- Blackbox CLI tests in `blackbox/` directory (run via `make test-blackbox`)
 - Test data in various `testdata/` directories
 
 ### Code Generation

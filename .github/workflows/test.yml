@@ -95,7 +95,7 @@ jobs:
         MODULE=$(head -1 go.mod | awk '{print $2}')
 
         # Find all packages with test files via filesystem scan
-        ALL_TEST_PKGS=$(find . -name '*_test.go' -not -path './vendor/*' -not -path './e2e/*' \
+        ALL_TEST_PKGS=$(find . -name '*_test.go' -not -path './vendor/*' -not -path './blackbox/*' \
           | xargs -I{} dirname {} | sort -u \
           | sed "s|^\./|${MODULE}/|" | sed "s|^\.$$|${MODULE}|")
 
@@ -181,7 +181,7 @@ jobs:
       if: steps.docker-image-cache.outputs.cache-hit != 'true'
       run: docker save runtime-shell -o /tmp/iso-image.tar
 
-  test-e2e:
+  test-blackbox:
     runs-on: depot-ubuntu-latest
     steps:
     - uses: actions/checkout@v5
@@ -218,8 +218,8 @@ jobs:
       uses: actions/cache@v4
       with:
         path: /tmp/iso-cache
-        key: iso-cache-e2e-${{ hashFiles('go.sum') }}
-        restore-keys: iso-cache-e2e-
+        key: iso-cache-blackbox-${{ hashFiles('go.sum') }}
+        restore-keys: iso-cache-blackbox-
 
     - name: Restore Docker image cache
       id: docker-image-cache
@@ -232,25 +232,39 @@ jobs:
       if: steps.docker-image-cache.outputs.cache-hit == 'true'
       run: docker load < /tmp/iso-image.tar
 
-    - name: Test
-      run: ISO_CACHE_DIR=/tmp/iso-cache go run ./hack/cmd/testfmt ./e2e --tags=e2e -count=1 -failfast
+    - name: Start dev environment
+      run: ISO_CACHE_DIR=/tmp/iso-cache make dev-start
+
+    - name: Start miren server
+      run: make dev-server-start
+
+    - name: Run blackbox tests
+      run: go test -tags blackbox -timeout 10m -v -count=1 -p 1 ./blackbox/...
+
+    - name: Server logs on failure
+      if: failure()
+      run: ./hack/dev-exec --root cat /tmp/miren-server.log 2>&1 | tail -200 || true
 
     - name: Save Docker image to cache
       if: steps.docker-image-cache.outputs.cache-hit != 'true'
       run: docker save runtime-shell -o /tmp/iso-image.tar
 
+    - name: Cleanup
+      if: always()
+      run: make dev-stop || true
+
   # Summary job for branch protection — provides a single "test-all" check
-  # that passes only when every matrix runner and e2e succeed.
+  # that passes only when every matrix runner and blackbox tests succeed.
   test:
     if: always()
-    needs: [test-runner, test-e2e]
+    needs: [test-runner, test-blackbox]
     runs-on: ubuntu-latest
     steps:
     - name: Check results
       run: |
-        if [[ "${{ needs.test-runner.result }}" != "success" || "${{ needs.test-e2e.result }}" != "success" ]]; then
+        if [[ "${{ needs.test-runner.result }}" != "success" || "${{ needs.test-blackbox.result }}" != "success" ]]; then
           echo "test-runner result: ${{ needs.test-runner.result }}"
-          echo "test-e2e result: ${{ needs.test-e2e.result }}"
+          echo "test-blackbox result: ${{ needs.test-blackbox.result }}"
           exit 1
         fi
 
