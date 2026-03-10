@@ -59,6 +59,19 @@ func DiskRestore(ctx *Context, opts struct {
 		return err
 	}
 
+	// If the disk was freshly created and anything fails, clean up the
+	// RESTORING disk entity so it doesn't become a zombie.
+	if target.Created && target.Cleanup != nil {
+		defer func() {
+			if retErr != nil {
+				ctx.Warn("Cleaning up disk entity after failed restore")
+				if cerr := target.Cleanup(ctx); cerr != nil {
+					ctx.Warn("Failed to clean up disk entity: %v", cerr)
+				}
+			}
+		}()
+	}
+
 	if !target.Created {
 		if _, err := os.Stat(target.ImagePath); err == nil {
 			if !opts.Force {

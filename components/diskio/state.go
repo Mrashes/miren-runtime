@@ -10,7 +10,8 @@ import (
 	"miren.dev/runtime/api/storage/storage_v1alpha"
 )
 
-const stateFileName = "lsvd-state.json"
+const stateFileName = "diskio-state.json"
+const legacyStateFileName = "lsvd-state.json"
 
 // State represents the persisted state of disk volumes and mounts
 type State struct {
@@ -96,11 +97,21 @@ func NewState() *State {
 	}
 }
 
-// LoadState loads state from the data path
+// LoadState loads state from the data path. It tries the current filename
+// first, then falls back to the legacy name for backward compatibility.
 func LoadState(dataPath string) (*State, error) {
 	path := filepath.Join(dataPath, stateFileName)
 
 	data, err := os.ReadFile(path)
+	if err != nil && os.IsNotExist(err) {
+		// Try legacy filename
+		legacyPath := filepath.Join(dataPath, legacyStateFileName)
+		data, err = os.ReadFile(legacyPath)
+		if err == nil {
+			// Loaded from legacy path — will save under new name
+		}
+	}
+
 	if err != nil {
 		if os.IsNotExist(err) {
 			state := NewState()
@@ -122,15 +133,22 @@ func LoadState(dataPath string) (*State, error) {
 		state.Mounts = make(map[string]*MountState)
 	}
 
+	// Always use the new path going forward
 	state.path = path
 	return &state, nil
 }
 
-// Save persists the state to disk atomically
+// Save persists the state to disk atomically.
+// Callers that need to mutate and save atomically should use the
+// combined methods (SetVolumeAndSave, SetMountAndSave, etc.) instead.
 func (s *State) Save() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.saveLocked()
+}
 
+// saveLocked persists the state to disk. The caller must hold s.mu.
+func (s *State) saveLocked() error {
 	if s.path == "" {
 		return fmt.Errorf("state path not set")
 	}
@@ -201,11 +219,27 @@ func (s *State) SetVolume(entityId string, volume *VolumeState) {
 	s.Volumes[entityId] = volume
 }
 
+// SetVolumeAndSave atomically sets a volume state and persists to disk.
+func (s *State) SetVolumeAndSave(entityId string, volume *VolumeState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Volumes[entityId] = volume
+	return s.saveLocked()
+}
+
 // DeleteVolume removes a volume state
 func (s *State) DeleteVolume(entityId string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.Volumes, entityId)
+}
+
+// DeleteVolumeAndSave atomically removes a volume state and persists to disk.
+func (s *State) DeleteVolumeAndSave(entityId string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.Volumes, entityId)
+	return s.saveLocked()
 }
 
 // GetMount returns a copy of a mount state by entity ID
@@ -228,11 +262,27 @@ func (s *State) SetMount(entityId string, mount *MountState) {
 	s.Mounts[entityId] = mount
 }
 
+// SetMountAndSave atomically sets a mount state and persists to disk.
+func (s *State) SetMountAndSave(entityId string, mount *MountState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Mounts[entityId] = mount
+	return s.saveLocked()
+}
+
 // DeleteMount removes a mount state
 func (s *State) DeleteMount(entityId string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.Mounts, entityId)
+}
+
+// DeleteMountAndSave atomically removes a mount state and persists to disk.
+func (s *State) DeleteMountAndSave(entityId string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.Mounts, entityId)
+	return s.saveLocked()
 }
 
 // SetMountFromVolume atomically reads the current volume state and, if the

@@ -109,6 +109,10 @@ type shutdownCloser struct{ s interface{ Shutdown() } }
 
 func (c shutdownCloser) Close() error { c.s.Shutdown(); return nil }
 
+type waitCloser struct{ s interface{ Wait() } }
+
+func (c waitCloser) Close() error { c.s.Wait(); return nil }
+
 func NewRunner(log *slog.Logger, deps RunnerDeps, cfg RunnerConfig) (*Runner, error) {
 	if cfg.DataPath == "" {
 		return nil, fmt.Errorf("data_path is required")
@@ -269,7 +273,7 @@ func (r *Runner) pauseAllContainers(ctx context.Context, log *slog.Logger) []con
 
 		log.Info("pausing container for disk migration", "id", c.ID())
 		if err := task.Pause(ctx); err != nil {
-			log.Warn("failed to pause container", "id", c.ID(), "error", err)
+			log.Warn("failed to pause container, migration will proceed anyway", "id", c.ID(), "error", err)
 			continue
 		}
 		paused = append(paused, task)
@@ -653,6 +657,7 @@ func (r *Runner) SetupControllers(
 			log.Error("log watcher stopped", "error", werr)
 		}
 	}()
+	r.closers = append(r.closers, waitCloser{watcher})
 	if logUploader != nil {
 		log.Info("started log watcher with cloud upload")
 	} else {

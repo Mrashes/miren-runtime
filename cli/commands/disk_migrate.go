@@ -57,7 +57,6 @@ func DiskMigrate(ctx *Context, opts struct {
 
 	// Read in chunks of 1024 blocks (4MB)
 	const chunkBlocks = 1024
-	zeros := make([]byte, chunkBlocks*lsvd.BlockSize)
 
 	lsvdCtx := lsvd.NewContext(context.Background())
 	defer lsvdCtx.Close()
@@ -83,7 +82,7 @@ func DiskMigrate(ctx *Context, opts struct {
 		raw := data.ReadData()
 
 		// Skip all-zero chunks to preserve sparseness
-		if isZero(raw, zeros[:len(raw)]) {
+		if isZero(raw) {
 			continue
 		}
 
@@ -101,10 +100,9 @@ func DiskMigrate(ctx *Context, opts struct {
 	return nil
 }
 
-// isZero checks if data is all zeros by comparing against a pre-allocated zero buffer.
-func isZero(data, zeros []byte) bool {
-	for i := range data {
-		if data[i] != zeros[i] {
+func isZero(data []byte) bool {
+	for _, b := range data {
+		if b != 0 {
 			return false
 		}
 	}

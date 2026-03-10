@@ -61,6 +61,7 @@ type RestoreTarget struct {
 	ImagePath string
 	Created   bool                               // true if the disk was freshly created (no --force needed)
 	Finalize  func(ctx context.Context) error    // called after image is written to complete entity setup
+	Cleanup   func(ctx context.Context) error    // called on failure to remove entities created during restore
 }
 
 // PrepareBackup resolves disk entities and validates the disk is in a

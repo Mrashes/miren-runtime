@@ -131,6 +131,13 @@ func (r *entityDiskResolver) CreateDiskAndVolume(ctx context.Context, name strin
 		Name:      name,
 		ImagePath: imagePath,
 		Created:   true,
+		Cleanup: func(cctx context.Context) error {
+			_, err := r.eac.Delete(cctx, string(diskEntityId))
+			if err != nil {
+				return fmt.Errorf("deleting disk entity during cleanup: %w", err)
+			}
+			return nil
+		},
 		Finalize: func(fctx context.Context) error {
 			// Create disk_volume now that the image is written.
 			vol := &storage_v1alpha.DiskVolume{

@@ -73,6 +73,12 @@ func (c *DiskVolumeController) HasPendingMigration(ctx context.Context) bool {
 		return false
 	}
 
+	// Fast path: if no LSVD info.json files exist on disk, there's nothing
+	// to migrate and we can skip the entity scan entirely.
+	if !c.hasLSVDDataOnDisk() {
+		return false
+	}
+
 	// List all disks and check for LsvdVolumeId
 	resp, err := c.eac.List(ctx, entity.Ref(entity.EntityKind, storage_v1alpha.KindDisk))
 	if err != nil {
@@ -93,6 +99,42 @@ func (c *DiskVolumeController) HasPendingMigration(ctx context.Context) bool {
 		if err != nil || len(volResp.Values()) == 0 {
 			c.log.Info("pending LSVD migration detected", "disk", disk.ID)
 			return true
+		}
+	}
+
+	return false
+}
+
+// hasLSVDDataOnDisk checks if any unmigrated LSVD volumes exist on the
+// local filesystem by looking for info.json files in the volumes directory.
+func (c *DiskVolumeController) hasLSVDDataOnDisk() bool {
+	volumesDir := filepath.Join(c.dataPath, "volumes")
+	entries, err := os.ReadDir(volumesDir)
+	if err != nil {
+		return false
+	}
+
+	for _, ent := range entries {
+		if !ent.IsDir() {
+			continue
+		}
+		dir := filepath.Join(volumesDir, ent.Name())
+
+		// Flat layout: volumes/{name}/info.json
+		if _, err := os.Stat(filepath.Join(dir, "info.json")); err == nil {
+			return true
+		}
+
+		// Nested layout: volumes/{entity}/volumes/{volId}/info.json
+		nestedVols := filepath.Join(dir, "volumes")
+		nestedEntries, nerr := os.ReadDir(nestedVols)
+		if nerr != nil {
+			continue
+		}
+		for _, nent := range nestedEntries {
+			if _, err := os.Stat(filepath.Join(nestedVols, nent.Name(), "info.json")); err == nil {
+				return true
+			}
 		}
 	}
 

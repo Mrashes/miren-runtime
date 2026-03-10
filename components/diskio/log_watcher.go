@@ -26,6 +26,7 @@ type LogWatcher struct {
 	state    *State
 	uploader LogSegmentUploader // nil when cloud is not configured
 	interval time.Duration
+	done     chan struct{}
 }
 
 // NewLogWatcher creates a new LogWatcher that scans at the given interval.
@@ -36,11 +37,14 @@ func NewLogWatcher(log *slog.Logger, state *State, uploader LogSegmentUploader, 
 		state:    state,
 		uploader: uploader,
 		interval: interval,
+		done:     make(chan struct{}),
 	}
 }
 
 // Run starts the log watcher loop. It blocks until the context is cancelled.
 func (w *LogWatcher) Run(ctx context.Context) error {
+	defer close(w.done)
+
 	if w.interval <= 0 {
 		return fmt.Errorf("log watcher interval must be positive, got %s", w.interval)
 	}
@@ -55,6 +59,11 @@ func (w *LogWatcher) Run(ctx context.Context) error {
 			w.scanAndUpload(ctx)
 		}
 	}
+}
+
+// Wait blocks until the watcher's Run method has returned.
+func (w *LogWatcher) Wait() {
+	<-w.done
 }
 
 func (w *LogWatcher) scanAndUpload(ctx context.Context) {
