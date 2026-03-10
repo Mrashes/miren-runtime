@@ -104,12 +104,9 @@ func LoadState(dataPath string) (*State, error) {
 
 	data, err := os.ReadFile(path)
 	if err != nil && os.IsNotExist(err) {
-		// Try legacy filename
+		// Try legacy filename — loaded data will be saved under the new name
 		legacyPath := filepath.Join(dataPath, legacyStateFileName)
 		data, err = os.ReadFile(legacyPath)
-		if err == nil {
-			// Loaded from legacy path — will save under new name
-		}
 	}
 
 	if err != nil {
