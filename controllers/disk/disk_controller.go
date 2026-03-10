@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"os/exec"
 	"strings"
 
@@ -16,17 +15,17 @@ import (
 )
 
 // detectDiskMode determines which disk I/O mode to use.
-func detectDiskMode() storage_v1alpha.DiskMode {
-	if mode := os.Getenv("MIREN_DISK_MODE"); mode != "" {
-		switch mode {
-		case "universal":
-			return storage_v1alpha.UNIVERSAL
-		case "accelerator":
-			return storage_v1alpha.ACCELERATOR
-		}
+// The configured parameter is the value from server config (MIREN_DISK_MODE).
+// If empty or "auto", the mode is detected from available hardware.
+func detectDiskMode(configured string) storage_v1alpha.DiskMode {
+	switch configured {
+	case "universal":
+		return storage_v1alpha.UNIVERSAL
+	case "accelerator":
+		return storage_v1alpha.ACCELERATOR
 	}
 
-	// Use accelerator mode if lbd is available
+	// Auto-detect: use accelerator mode if lbd is available
 	if _, err := exec.LookPath("lbdctl"); err == nil {
 		return storage_v1alpha.ACCELERATOR
 	}
@@ -46,17 +45,23 @@ type DiskController struct {
 	// Base path for disk mounts (e.g., /var/lib/miren/disks)
 	mountBasePath string
 
+	// configuredMode is the disk mode from server config ("", "auto", "universal", "accelerator")
+	configuredMode string
+
 	// diskMode determines how disks are provisioned (universal or accelerator)
 	diskMode storage_v1alpha.DiskMode
 }
 
 // NewDiskController creates a disk controller that uses disk_volume entities.
-func NewDiskController(log *slog.Logger, eac *entityserver_v1alpha.EntityAccessClient, nodeId string) *DiskController {
+// The diskMode parameter comes from server config (MIREN_DISK_MODE); pass ""
+// for auto-detection.
+func NewDiskController(log *slog.Logger, eac *entityserver_v1alpha.EntityAccessClient, nodeId string, diskMode string) *DiskController {
 	return &DiskController{
-		Log:           log.With("module", "disk"),
-		EAC:           eac,
-		NodeId:        nodeId,
-		mountBasePath: "/var/lib/miren/disks",
+		Log:              log.With("module", "disk"),
+		EAC:              eac,
+		NodeId:           nodeId,
+		mountBasePath:    "/var/lib/miren/disks",
+		configuredMode:   diskMode,
 	}
 }
 
@@ -68,7 +73,7 @@ func (d *DiskController) ForceUniversalMode() {
 
 // Init initializes the disk controller
 func (d *DiskController) Init(ctx context.Context) error {
-	d.diskMode = detectDiskMode()
+	d.diskMode = detectDiskMode(d.configuredMode)
 	d.Log.Info("disk controller initialized", "mode", d.diskMode)
 	return nil
 }

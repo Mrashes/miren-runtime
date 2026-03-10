@@ -18,8 +18,8 @@ func TestRestoreImage(t *testing.T) {
 			srcData[i] = byte(i % 251)
 		}
 
-		var snapBuf bytes.Buffer
-		_, err := Backup(&snapBuf, bytes.NewReader(srcData), "test", int64(len(srcData)), "ext4")
+		snapBuf := &bufferSeeker{}
+		_, err := Backup(snapBuf, bytes.NewReader(srcData), "test", int64(len(srcData)), "ext4")
 		require.NoError(t, err)
 
 		snapReader := bytes.NewReader(snapBuf.Bytes())
@@ -48,8 +48,8 @@ func TestRestoreImage(t *testing.T) {
 			srcData[i] = byte(i%254 + 1) // no zeros
 		}
 
-		var snapBuf bytes.Buffer
-		_, err := Backup(&snapBuf, bytes.NewReader(srcData), "test", int64(len(srcData)), "ext4")
+		snapBuf := &bufferSeeker{}
+		_, err := Backup(snapBuf, bytes.NewReader(srcData), "test", int64(len(srcData)), "ext4")
 		require.NoError(t, err)
 
 		snapReader := bytes.NewReader(snapBuf.Bytes())
@@ -73,8 +73,8 @@ func TestRestoreImage(t *testing.T) {
 	t.Run("round trip all zeros", func(t *testing.T) {
 		srcData := make([]byte, 64*1024)
 
-		var snapBuf bytes.Buffer
-		_, err := Backup(&snapBuf, bytes.NewReader(srcData), "test", int64(len(srcData)), "ext4")
+		snapBuf := &bufferSeeker{}
+		_, err := Backup(snapBuf, bytes.NewReader(srcData), "test", int64(len(srcData)), "ext4")
 		require.NoError(t, err)
 
 		snapReader := bytes.NewReader(snapBuf.Bytes())
@@ -106,8 +106,8 @@ func TestRestoreImage(t *testing.T) {
 			srcData[i] = 0xBB
 		}
 
-		var snapBuf bytes.Buffer
-		_, err := Backup(&snapBuf, bytes.NewReader(srcData), "test", int64(len(srcData)), "ext4")
+		snapBuf := &bufferSeeker{}
+		_, err := Backup(snapBuf, bytes.NewReader(srcData), "test", int64(len(srcData)), "ext4")
 		require.NoError(t, err)
 
 		snapReader := bytes.NewReader(snapBuf.Bytes())
@@ -131,8 +131,8 @@ func TestRestoreImage(t *testing.T) {
 	t.Run("checksum mismatch", func(t *testing.T) {
 		srcData := []byte("hello world test data for checksum")
 
-		var snapBuf bytes.Buffer
-		_, err := Backup(&snapBuf, bytes.NewReader(srcData), "test", int64(len(srcData)), "ext4")
+		snapBuf := &bufferSeeker{}
+		_, err := Backup(snapBuf, bytes.NewReader(srcData), "test", int64(len(srcData)), "ext4")
 		require.NoError(t, err)
 
 		snapReader := bytes.NewReader(snapBuf.Bytes())

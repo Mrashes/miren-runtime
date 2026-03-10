@@ -15,7 +15,7 @@ import (
 func TestDiskAndLeaseIntegration(t *testing.T) {
 	t.Run("lease conflict detection", func(t *testing.T) {
 		log := slog.Default()
-		leaseController := NewDiskLeaseController(log, nil, "test-node")
+		leaseController := NewDiskLeaseController(log, nil, "test-node", "")
 
 		// Manually track an active lease
 		leaseController.activeLeases["disk/integration-disk"] = "disk-lease/existing-lease"
@@ -46,7 +46,7 @@ func TestDiskAndLeaseIntegration(t *testing.T) {
 
 	t.Run("lease release flow", func(t *testing.T) {
 		log := slog.Default()
-		leaseController := NewDiskLeaseController(log, nil, "test-node")
+		leaseController := NewDiskLeaseController(log, nil, "test-node", "")
 
 		// Setup active lease
 		diskId := "disk/release-test-disk"
@@ -80,7 +80,7 @@ func TestDiskAndLeaseIntegration(t *testing.T) {
 
 	t.Run("cleanup old released leases", func(t *testing.T) {
 		log := slog.Default()
-		leaseController := NewDiskLeaseController(log, nil, "test-node")
+		leaseController := NewDiskLeaseController(log, nil, "test-node", "")
 
 		// Test that cleanup doesn't fail in test mode (no EAC)
 		err := leaseController.CleanupOldReleasedLeases(context.Background())
@@ -96,7 +96,7 @@ func TestDiskControllerUpgradeLSVDToUniversal(t *testing.T) {
 		es, cleanup := testutils.NewInMemEntityServer(t)
 		defer cleanup()
 
-		dc := NewDiskController(log, es.EAC, "test-node-1")
+		dc := NewDiskController(log, es.EAC, "test-node-1", "")
 		dc.ForceUniversalMode()
 
 		// Create a disk entity that looks like it was provisioned under the old LSVD system:
@@ -145,7 +145,7 @@ func TestDiskControllerUpgradeLSVDToUniversal(t *testing.T) {
 		es, cleanup := testutils.NewInMemEntityServer(t)
 		defer cleanup()
 
-		dc := NewDiskController(log, es.EAC, "test-node-1")
+		dc := NewDiskController(log, es.EAC, "test-node-1", "")
 		dc.ForceUniversalMode()
 
 		// Disk has a VolumeId (from old system) but no corresponding disk_volume entity
@@ -185,7 +185,7 @@ func TestDiskControllerUpgradeLSVDToUniversal(t *testing.T) {
 		es, cleanup := testutils.NewInMemEntityServer(t)
 		defer cleanup()
 
-		dc := NewDiskController(log, es.EAC, "test-node-1")
+		dc := NewDiskController(log, es.EAC, "test-node-1", "")
 		dc.ForceUniversalMode()
 
 		disk := &storage_v1alpha.Disk{

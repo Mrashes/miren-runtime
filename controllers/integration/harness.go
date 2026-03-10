@@ -76,10 +76,10 @@ func NewTestHarness(t *testing.T) *TestHarness {
 	diskMntCtrl.SetEAC(eac)
 
 	// Create disk controllers using universal mode
-	diskCtrl := disk.NewDiskController(log, eac, testNodeId)
+	diskCtrl := disk.NewDiskController(log, eac, testNodeId, "")
 	diskCtrl.Init(ctx) //nolint:errcheck
 	diskCtrl.ForceUniversalMode()
-	diskLeaseCtrl := disk.NewDiskLeaseController(log, eac, testNodeId)
+	diskLeaseCtrl := disk.NewDiskLeaseController(log, eac, testNodeId, "")
 	diskLeaseCtrl.Init(ctx) //nolint:errcheck
 
 	// Create ReconcileControllers for each.

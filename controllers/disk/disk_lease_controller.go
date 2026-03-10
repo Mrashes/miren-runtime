@@ -40,19 +40,24 @@ type DiskLeaseController struct {
 	activeLeases map[string]string
 	leaseDetails map[string]*leaseInfo
 
+	// configuredMode is the disk mode from server config ("", "auto", "universal", "accelerator")
+	configuredMode string
+
 	// diskMode determines how disk mounts are performed (universal or accelerator)
 	diskMode storage_v1alpha.DiskMode
 }
 
 // NewDiskLeaseController creates a disk lease controller that uses disk_mount entities.
-func NewDiskLeaseController(log *slog.Logger, eac *entityserver_v1alpha.EntityAccessClient, nodeId string) *DiskLeaseController {
+// The diskMode parameter comes from server config (MIREN_DISK_MODE); pass "" for auto-detection.
+func NewDiskLeaseController(log *slog.Logger, eac *entityserver_v1alpha.EntityAccessClient, nodeId string, diskMode string) *DiskLeaseController {
 	return &DiskLeaseController{
-		Log:           log.With("module", "disk-lease"),
-		EAC:           eac,
-		NodeId:        nodeId,
-		mountBasePath: "/var/lib/miren/disks",
-		activeLeases:  make(map[string]string),
-		leaseDetails:  make(map[string]*leaseInfo),
+		Log:            log.With("module", "disk-lease"),
+		EAC:            eac,
+		NodeId:         nodeId,
+		mountBasePath:  "/var/lib/miren/disks",
+		activeLeases:   make(map[string]string),
+		leaseDetails:   make(map[string]*leaseInfo),
+		configuredMode: diskMode,
 	}
 }
 
@@ -64,7 +69,7 @@ func (d *DiskLeaseController) ForceUniversalMode() {
 
 // Init initializes the disk lease controller
 func (d *DiskLeaseController) Init(ctx context.Context) error {
-	d.diskMode = detectDiskMode()
+	d.diskMode = detectDiskMode(d.configuredMode)
 	d.Log.Info("disk lease controller initialized", "mode", d.diskMode)
 	return nil
 }

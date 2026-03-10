@@ -12,6 +12,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// bufferSeeker wraps bytes.Buffer to implement io.WriteSeeker for tests.
+type bufferSeeker struct {
+	buf []byte
+	pos int
+}
+
+func (b *bufferSeeker) Write(p []byte) (int, error) {
+	end := b.pos + len(p)
+	if end > len(b.buf) {
+		b.buf = append(b.buf, make([]byte, end-len(b.buf))...)
+	}
+	copy(b.buf[b.pos:], p)
+	b.pos = end
+	return len(p), nil
+}
+
+func (b *bufferSeeker) Seek(offset int64, whence int) (int64, error) {
+	switch whence {
+	case io.SeekStart:
+		b.pos = int(offset)
+	case io.SeekCurrent:
+		b.pos += int(offset)
+	case io.SeekEnd:
+		b.pos = len(b.buf) + int(offset)
+	}
+	return int64(b.pos), nil
+}
+
+func (b *bufferSeeker) Bytes() []byte { return b.buf }
+
 func TestBackup(t *testing.T) {
 	t.Run("produces valid snapshot", func(t *testing.T) {
 		srcData := make([]byte, 64*1024)
@@ -19,8 +49,8 @@ func TestBackup(t *testing.T) {
 			srcData[i] = byte(i % 251)
 		}
 
-		var dst bytes.Buffer
-		checksum, err := Backup(&dst, bytes.NewReader(srcData), "test-disk", int64(len(srcData)), "ext4")
+		dst := &bufferSeeker{}
+		checksum, err := Backup(dst, bytes.NewReader(srcData), "test-disk", int64(len(srcData)), "ext4")
 		require.NoError(t, err)
 
 		hasher := sha256.New()
@@ -51,8 +81,8 @@ func TestBackup(t *testing.T) {
 	t.Run("checksum computed correctly", func(t *testing.T) {
 		srcData := []byte("hello world, this is a disk image")
 
-		var dst bytes.Buffer
-		checksum, err := Backup(&dst, bytes.NewReader(srcData), "chk", int64(len(srcData)), "xfs")
+		dst := &bufferSeeker{}
+		checksum, err := Backup(dst, bytes.NewReader(srcData), "chk", int64(len(srcData)), "xfs")
 		require.NoError(t, err)
 
 		hasher := sha256.New()
@@ -61,8 +91,8 @@ func TestBackup(t *testing.T) {
 	})
 
 	t.Run("handles empty input", func(t *testing.T) {
-		var dst bytes.Buffer
-		checksum, err := Backup(&dst, bytes.NewReader(nil), "empty", 0, "ext4")
+		dst := &bufferSeeker{}
+		checksum, err := Backup(dst, bytes.NewReader(nil), "empty", 0, "ext4")
 		require.NoError(t, err)
 
 		hasher := sha256.New()
@@ -79,8 +109,8 @@ func TestBackup(t *testing.T) {
 	t.Run("preserves metadata fields", func(t *testing.T) {
 		srcData := make([]byte, 1024)
 
-		var dst bytes.Buffer
-		_, err := Backup(&dst, bytes.NewReader(srcData), "myapp-db", 1024, "btrfs")
+		dst := &bufferSeeker{}
+		_, err := Backup(dst, bytes.NewReader(srcData), "myapp-db", 1024, "btrfs")
 		require.NoError(t, err)
 
 		reader := bytes.NewReader(dst.Bytes())

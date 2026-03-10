@@ -57,6 +57,9 @@ type RunnerConfig struct {
 
 	// Optional cloud authentication configuration for disk replication
 	CloudAuth *coordinate.CloudAuthConfig `json:"cloud_auth,omitempty" cbor:"cloud_auth,omitempty" yaml:"cloud_auth,omitempty"`
+
+	// DiskMode configures disk I/O mode ("", "auto", "universal", "accelerator")
+	DiskMode string `json:"disk_mode,omitempty" cbor:"disk_mode,omitempty" yaml:"disk_mode,omitempty"`
 }
 
 // RunnerDeps holds dependencies needed by the Runner to construct controllers.
@@ -724,8 +727,8 @@ func (r *Runner) SetupControllers(
 	))
 
 	// Use entity mode controllers
-	diskController := disk.NewDiskController(log, eas, r.Id)
-	diskLeaseController := disk.NewDiskLeaseController(log, eas, r.Id)
+	diskController := disk.NewDiskController(log, eas, r.Id, r.DiskMode)
+	diskLeaseController := disk.NewDiskLeaseController(log, eas, r.Id, r.DiskMode)
 
 	// Add disk controller to closers list so it gets cleaned up on shutdown
 	r.closers = append(r.closers, diskController)

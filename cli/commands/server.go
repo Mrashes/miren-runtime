@@ -803,6 +803,7 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 	}
 
 	rc.DataPath = cfg.Server.GetDataPath()
+	rc.DiskMode = cfg.Server.GetDiskMode()
 
 	r, err := runner.NewRunner(ctx.Log, deps, rc)
 	if err != nil {

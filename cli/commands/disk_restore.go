@@ -19,6 +19,10 @@ func DiskRestore(ctx *Context, opts struct {
 	DataPath string `long:"data-path" description:"Path to miren data directory" default:"/var/lib/miren"`
 	Force    bool   `short:"f" long:"force" description:"Overwrite existing disk image without confirmation"`
 }) (retErr error) {
+	if _, err := os.Stat(opts.DataPath); err != nil {
+		return fmt.Errorf("data path %s not found — disk restore must be run on the server", opts.DataPath)
+	}
+
 	snapFile, err := os.Open(opts.Snapshot)
 	if err != nil {
 		return fmt.Errorf("opening snapshot file: %w", err)

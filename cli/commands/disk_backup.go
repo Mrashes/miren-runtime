@@ -16,6 +16,10 @@ func DiskBackup(ctx *Context, opts struct {
 	Output   string `short:"o" long:"output" description:"Output snapshot path (default: DISK-YYYYMMDD-HHMMSS.miren.zst)"`
 	DataPath string `long:"data-path" description:"Path to miren data directory" default:"/var/lib/miren"`
 }) (retErr error) {
+	if _, err := os.Stat(opts.DataPath); err != nil {
+		return fmt.Errorf("data path %s not found — disk backup must be run on the server", opts.DataPath)
+	}
+
 	client, err := ctx.RPCClient("entities")
 	if err != nil {
 		return err
