@@ -751,7 +751,8 @@ miren deploy --analyze
 			Body: "miren auth generate",
 		}),
 	))
-	d.Dispatch("auth ci", Infer("auth ci", "Add a CI authentication binding to an application", AuthCI))
+	d.Dispatch("auth ci", Section("auth ci", "CI authentication binding management", ""))
+	d.Dispatch("auth ci add", Infer("auth ci add", "Add a CI authentication binding to an application", AuthCIAdd))
 	d.Dispatch("auth ci list", Infer("auth ci list", "List CI authentication bindings for an application", AuthCIList))
 	d.Dispatch("auth ci remove", Infer("auth ci remove", "Remove a CI authentication binding", AuthCIRemove))
 

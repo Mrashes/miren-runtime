@@ -10,7 +10,7 @@ import (
 
 const gitHubActionsIssuer = "https://token.actions.githubusercontent.com"
 
-func AuthCI(ctx *Context, opts struct {
+func AuthCIAdd(ctx *Context, opts struct {
 	GitHub        string `long:"github" description:"GitHub owner/repo shorthand (sets issuer, subject, provider)"`
 	Issuer        string `long:"issuer" description:"OIDC issuer URL"`
 	Subject       string `long:"subject" description:"Glob pattern for the token subject"`
