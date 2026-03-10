@@ -227,7 +227,7 @@ func (c *SandboxController) ensureDisk(ctx context.Context, diskName string, siz
 	name := idgen.GenNS("disk")
 
 	putResp, err := c.EAC.Create(ctx, entity.New(
-		entity.DBId, "disk/"+name,
+		entity.DBId, entity.Id("disk/"+name),
 		disk.Encode,
 	).Attrs())
 	if err != nil {

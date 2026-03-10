@@ -587,6 +587,13 @@ func (e *Entity) ForceID() {
 		return
 	}
 
+	// Catch mistyped db/id attributes: if a db/id exists but Id() returned "",
+	// the value was stored with the wrong kind (e.g. string instead of entity.Id).
+	// This is always a bug — fail loudly rather than silently generating a new ID.
+	if a, ok := e.Get(DBId); ok {
+		panic(fmt.Sprintf("entity has db/id attribute with value %v (kind %s) but it is not recognized as an Id — use entity.Id() to wrap the value", a.Value.Any(), a.Value.Kind()))
+	}
+
 	// Try to use entity kind as prefix for auto-generated ID
 	prefix := "e"
 	if kind, ok := e.Get(EntityKind); ok {
