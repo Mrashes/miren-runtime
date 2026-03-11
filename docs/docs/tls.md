@@ -12,6 +12,8 @@ When a request arrives for a hostname with a configured route, Miren provisions 
 
 Hostnames without a configured route are served with a self-signed fallback certificate (browsers will show a warning).
 
+For wildcard routes (e.g., `*.myapp.example.com`), TLS certificates are provisioned for each matching subdomain as requests arrive. See [Wildcard Routes](/traffic-routing#wildcard-routes) for details.
+
 ## Challenge Types
 
 Let's Encrypt needs to verify that you control the domain before issuing a certificate. Miren supports two verification methods.

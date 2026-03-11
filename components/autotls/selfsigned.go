@@ -109,7 +109,7 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 // or generates a new one if it doesn't exist or is expiring soon.
 // This ensures users who accept the browser warning don't have to re-accept
 // on every server restart.
-func loadOrGenerateFallbackCert(certsDir string) (tls.Certificate, error) {
+func LoadOrGenerateFallbackCert(certsDir string) (tls.Certificate, error) {
 	certPath := filepath.Join(certsDir, fallbackCertFile)
 	keyPath := filepath.Join(certsDir, fallbackKeyFile)
 

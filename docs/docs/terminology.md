@@ -40,7 +40,7 @@ Persistent storage attached to your application. Miren disks survive restarts an
 
 ## Route
 
-Maps a hostname to an application. Routes determine how HTTP traffic reaches your apps. Your first app gets a default route automatically.
+Maps a hostname to an application. Routes determine how HTTP traffic reaches your apps. Your first app gets a default route automatically. Routes can use wildcard patterns (e.g., `*.example.com`) to match all subdomains of a domain.
 
 ## Sandbox
 

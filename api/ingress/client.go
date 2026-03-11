@@ -56,6 +56,53 @@ func (c *Client) Lookup(ctx context.Context, host string) (*ingress_v1alpha.Http
 	return &route, nil
 }
 
+// LookupWithWildcard finds an http_route by hostname with wildcard fallback.
+// It tries in order: exact match, then wildcard subdomain (*.rest).
+// A wildcard like *.example.com matches foo.example.com but not example.com itself.
+func (c *Client) LookupWithWildcard(ctx context.Context, host string) (*ingress_v1alpha.HttpRoute, error) {
+	host = strings.ToLower(host)
+
+	// Step 1: exact match
+	route, err := c.Lookup(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	if route != nil {
+		return route, nil
+	}
+
+	// Step 2: replace first label with wildcard (e.g., foo.example.com → *.example.com)
+	if idx := strings.Index(host, "."); idx > 0 {
+		wildcard := "*" + host[idx:]
+		route, err = c.Lookup(ctx, wildcard)
+		if err != nil {
+			return nil, err
+		}
+		if route != nil {
+			return route, nil
+		}
+	}
+
+	return nil, nil
+}
+
+// ValidateWildcardHost validates a wildcard host pattern.
+// Valid patterns: *.example.com, *.sub.example.com
+// Invalid: *.com, foo.*.com, **, *
+func ValidateWildcardHost(host string) error {
+	if !strings.HasPrefix(host, "*.") {
+		return nil
+	}
+	remainder := host[2:]
+	if remainder == "" || strings.Contains(remainder, "*") {
+		return fmt.Errorf("invalid wildcard pattern: %s (must be *.domain.tld)", host)
+	}
+	if !strings.Contains(remainder, ".") {
+		return fmt.Errorf("invalid wildcard pattern: %s (must have at least two domain labels after *)", host)
+	}
+	return nil
+}
+
 // LookupDefault finds the default http_route
 func (c *Client) LookupDefault(ctx context.Context) (*ingress_v1alpha.HttpRoute, error) {
 	var route ingress_v1alpha.HttpRoute

@@ -241,12 +241,13 @@ type Coordinator struct {
 	state *rpc.State
 	eac   *esv1.EntityAccessClient // Entity access client for querying entities
 
-	aa             activator.AppActivator
-	spm            *sandboxpool.Manager
-	cm             *controller.ControllerManager
-	certController *certctrl.Controller
-	artifactGC     *artifactctrl.GCController
-	hs             *httpingress.Server
+	aa            activator.AppActivator
+	spm           *sandboxpool.Manager
+	cm            *controller.ControllerManager
+	certProvider  autotls.CertificateProvider
+	autocertReady func() // nil when DNS-01 path is used
+	artifactGC    *artifactctrl.GCController
+	hs            *httpingress.Server
 
 	authority *caauth.Authority
 
@@ -854,26 +855,47 @@ func (c *Coordinator) Start(ctx context.Context) error {
 	)
 	c.cm.AddController(schedulerController)
 
-	// Add certificate controller if DNS provider is configured
+	// Add certificate controller — DNS-01 when a DNS provider is configured,
+	// otherwise HTTP-01 via autocert for eager cert provisioning on route set.
 	if c.AcmeDNSProvider != "" {
 		c.Log.Info("enabling ACME DNS challenge certificate controller", "provider", c.AcmeDNSProvider)
-		certController := certctrl.NewController(c.Log, c.DataPath, c.AcmeEmail, c.AcmeDNSProvider)
-		if err := certController.Init(ctx); err != nil {
+		dnsController := certctrl.NewController(c.Log, c.DataPath, c.AcmeEmail, c.AcmeDNSProvider)
+		if err := dnsController.Init(ctx); err != nil {
 			c.Log.Error("failed to initialize certificate controller", "error", err)
 			return err
 		}
-		c.certController = certController
+		c.certProvider = dnsController
 
-		certCtrl := controller.NewReconcileController(
+		certRC := controller.NewReconcileController(
 			"certificate",
 			c.Log,
 			entity.Ref(entity.EntityKind, ingress_v1alpha.KindHttpRoute),
 			eac,
-			controller.AdaptReconcileController[ingress_v1alpha.HttpRoute](certController),
+			controller.AdaptReconcileController[ingress_v1alpha.HttpRoute](dnsController),
 			time.Hour, // Resync hourly to handle dropped watches and check renewals
 			1,         // Single worker to avoid duplicate cert requests
 		)
-		c.cm.AddController(certCtrl)
+		c.cm.AddController(certRC)
+	} else {
+		c.Log.Info("enabling ACME HTTP-01 certificate controller (autocert)")
+		autocertController := certctrl.NewAutocertController(c.Log, eac, c.DataPath, c.AcmeEmail)
+		if err := autocertController.Init(ctx); err != nil {
+			c.Log.Error("failed to initialize autocert controller", "error", err)
+			return err
+		}
+		c.certProvider = autocertController
+		c.autocertReady = autocertController.SetReady
+
+		certRC := controller.NewReconcileController(
+			"certificate",
+			c.Log,
+			entity.Ref(entity.EntityKind, ingress_v1alpha.KindHttpRoute),
+			eac,
+			controller.AdaptReconcileController[ingress_v1alpha.HttpRoute](autocertController),
+			time.Hour, // Resync hourly to handle dropped watches and check renewals
+			1,         // Single worker to avoid duplicate cert requests
+		)
+		c.cm.AddController(certRC)
 	}
 
 	if labs.Addons() {
@@ -1127,13 +1149,16 @@ func (c *Coordinator) Server() *rpc.Server {
 	return c.state.Server()
 }
 
-// CertificateProvider returns the certificate controller for use by autotls.
-// Returns nil if DNS provider is not configured.
+// CertificateProvider returns the certificate provider for use by autotls.
 func (c *Coordinator) CertificateProvider() autotls.CertificateProvider {
-	if c.certController == nil {
-		return nil
-	}
-	return c.certController
+	return c.certProvider
+}
+
+// AutocertReadySignal returns a function that signals the autocert controller
+// that the port-80 ACME challenge server is ready. Returns nil when the DNS-01
+// path is used (which doesn't need port 80).
+func (c *Coordinator) AutocertReadySignal() func() {
+	return c.autocertReady
 }
 
 // checkAndReindex compares the current index hash against the stored hash in etcd.

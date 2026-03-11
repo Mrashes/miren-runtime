@@ -443,8 +443,8 @@ func (h *Server) serveHTTPWithMetrics(w http.ResponseWriter, req *http.Request, 
 	// So if you're doing critical work, don't use this context! Use a separate context and ping
 	// this one to figure out if you should continue with your critical work or clean up.
 
-	// Use ingress client to lookup route
-	route, err := h.ingressClient.Lookup(ctx, onlyHost)
+	// Use ingress client to lookup route (with wildcard fallback)
+	route, err := h.ingressClient.LookupWithWildcard(ctx, onlyHost)
 	if err != nil {
 		h.Log.Error("error looking up http route", "error", err, "host", onlyHost)
 		http.Error(w, fmt.Sprintf("error looking up http route: %s", onlyHost), http.StatusInternalServerError)
