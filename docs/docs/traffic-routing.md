@@ -28,9 +28,7 @@ Route all subdomains of a domain to a single app using a wildcard:
 miren route set *.myapp.example.com --app myapp
 ```
 
-A wildcard route `*.myapp.example.com` matches:
-- Any subdomain: `foo.myapp.example.com`, `bar.myapp.example.com`
-- The bare domain itself: `myapp.example.com`
+A wildcard route `*.myapp.example.com` matches any subdomain like `foo.myapp.example.com` or `bar.myapp.example.com`. It does **not** match the bare domain `myapp.example.com` — add a separate route for that if needed.
 
 If an exact route also exists for a specific subdomain, the exact route takes priority. For example, if you have both `*.myapp.example.com` and `api.myapp.example.com`, requests to `api.myapp.example.com` use the exact route while all other subdomains use the wildcard.
 

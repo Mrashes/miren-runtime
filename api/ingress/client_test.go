@@ -181,11 +181,10 @@ func TestClientLookupWithWildcard(t *testing.T) {
 		require.Equal(t, wildcardAppID, route.App)
 	})
 
-	t.Run("WildcardMatchesBareDomain", func(t *testing.T) {
+	t.Run("WildcardDoesNotMatchBareDomain", func(t *testing.T) {
 		route, err := client.LookupWithWildcard(ctx, "example.com")
 		require.NoError(t, err)
-		require.NotNil(t, route)
-		require.Equal(t, wildcardAppID, route.App)
+		require.Nil(t, route, "*.example.com should not match example.com")
 	})
 
 	t.Run("ExactMatchTakesPriority", func(t *testing.T) {

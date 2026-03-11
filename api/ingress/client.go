@@ -57,7 +57,8 @@ func (c *Client) Lookup(ctx context.Context, host string) (*ingress_v1alpha.Http
 }
 
 // LookupWithWildcard finds an http_route by hostname with wildcard fallback.
-// It tries in order: exact match, wildcard subdomain (*.rest), wildcard bare domain (*.host).
+// It tries in order: exact match, then wildcard subdomain (*.rest).
+// A wildcard like *.example.com matches foo.example.com but not example.com itself.
 func (c *Client) LookupWithWildcard(ctx context.Context, host string) (*ingress_v1alpha.HttpRoute, error) {
 	host = strings.ToLower(host)
 
@@ -80,15 +81,6 @@ func (c *Client) LookupWithWildcard(ctx context.Context, host string) (*ingress_
 		if route != nil {
 			return route, nil
 		}
-	}
-
-	// Step 3: prepend wildcard for bare domain matching (e.g., example.com → *.example.com)
-	route, err = c.Lookup(ctx, "*."+host)
-	if err != nil {
-		return nil, err
-	}
-	if route != nil {
-		return route, nil
 	}
 
 	return nil, nil
