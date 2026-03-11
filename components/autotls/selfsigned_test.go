@@ -13,7 +13,7 @@ func TestLoadOrGenerateFallbackCert(t *testing.T) {
 	t.Run("generates new cert when none exists", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		cert, err := loadOrGenerateFallbackCert(tmpDir)
+		cert, err := LoadOrGenerateFallbackCert(tmpDir)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -39,7 +39,7 @@ func TestLoadOrGenerateFallbackCert(t *testing.T) {
 		tmpDir := t.TempDir()
 
 		// Generate initial cert
-		cert1, err := loadOrGenerateFallbackCert(tmpDir)
+		cert1, err := LoadOrGenerateFallbackCert(tmpDir)
 		if err != nil {
 			t.Fatalf("unexpected error generating cert: %v", err)
 		}
@@ -51,7 +51,7 @@ func TestLoadOrGenerateFallbackCert(t *testing.T) {
 		}
 
 		// Load again - should return same cert
-		cert2, err := loadOrGenerateFallbackCert(tmpDir)
+		cert2, err := LoadOrGenerateFallbackCert(tmpDir)
 		if err != nil {
 			t.Fatalf("unexpected error loading cert: %v", err)
 		}
@@ -71,7 +71,7 @@ func TestLoadOrGenerateFallbackCert(t *testing.T) {
 		tmpDir := t.TempDir()
 		nestedDir := filepath.Join(tmpDir, "nested", "certs", "dir")
 
-		_, err := loadOrGenerateFallbackCert(nestedDir)
+		_, err := LoadOrGenerateFallbackCert(nestedDir)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
