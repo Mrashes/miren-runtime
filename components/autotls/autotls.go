@@ -33,9 +33,10 @@ func ServeTLSWithController(ctx context.Context, log *slog.Logger, certProvider 
 	}
 
 	server := &http.Server{
-		Addr:      ":443",
-		Handler:   h,
-		TLSConfig: tlsConfig,
+		Addr:              ":443",
+		Handler:           h,
+		TLSConfig:         tlsConfig,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	go func() {
