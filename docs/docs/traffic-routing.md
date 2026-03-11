@@ -20,6 +20,22 @@ miren route add myapp.example.com --app myapp
 
 Requests to that hostname are forwarded to your `web` service. TLS certificates are provisioned automatically (see [TLS Certificates](/tls)).
 
+### Wildcard Routes
+
+Route all subdomains of a domain to a single app using a wildcard:
+
+```bash
+miren route set *.myapp.example.com --app myapp
+```
+
+A wildcard route `*.myapp.example.com` matches:
+- Any subdomain: `foo.myapp.example.com`, `bar.myapp.example.com`
+- The bare domain itself: `myapp.example.com`
+
+If an exact route also exists for a specific subdomain, the exact route takes priority. For example, if you have both `*.myapp.example.com` and `api.myapp.example.com`, requests to `api.myapp.example.com` use the exact route while all other subdomains use the wildcard.
+
+The wildcard `*` must be the first label — patterns like `foo.*.example.com` are not supported. The domain must have at least two labels after the wildcard (e.g., `*.example.com` is valid, `*.com` is not).
+
 ### Choosing a Port
 
 Miren sets the `PORT` environment variable to tell your app which port to listen on. Your app should bind to `PORT`:

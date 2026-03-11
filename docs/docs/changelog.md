@@ -5,6 +5,9 @@ All notable changes to Miren Runtime will be documented in this file.
 ## Unreleased
 *main*
 
+**Features**
+- **Wildcard routes** - Route all subdomains of a domain to a single app with `miren route set *.example.com myapp`. Wildcard routes match any subdomain and the bare domain, with exact routes taking priority. TLS certificates are provisioned automatically for each matching subdomain. ([#659](https://github.com/mirendev/runtime/pull/659))
+
 ---
 
 ## v0.5.0
