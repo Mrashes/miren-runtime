@@ -9,6 +9,7 @@ import (
 
 	"miren.dev/runtime/api/ingress/ingress_v1alpha"
 	"miren.dev/runtime/pkg/entity"
+	"miren.dev/runtime/pkg/entity/testutils"
 )
 
 func newTestAutocertController(t *testing.T) *AutocertController {
@@ -181,6 +182,48 @@ func TestAutocertController_HostPolicy_WildcardMatching(t *testing.T) {
 	// Unrelated domain should be rejected
 	if err := c.mgr.HostPolicy(context.Background(), "other.com"); err == nil {
 		t.Error("expected host policy to reject other.com")
+	}
+}
+
+func TestAutocertController_Init_PrePopulatesAllowedHosts(t *testing.T) {
+	ctx := context.Background()
+
+	server, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	// Create http_route entities before Init
+	routes := []struct {
+		id   string
+		host string
+	}{
+		{"route-1", "example.com"},
+		{"route-2", "api.example.com"},
+		{"route-3", "*.staging.example.com"},
+	}
+	for _, r := range routes {
+		route := &ingress_v1alpha.HttpRoute{Host: r.host}
+		if _, err := server.Client.Create(ctx, r.id, route); err != nil {
+			t.Fatalf("failed to create route %s: %v", r.id, err)
+		}
+	}
+
+	// Create controller with real EAC and init
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	c := NewAutocertController(log, server.EAC, t.TempDir(), "test@example.com")
+	if err := c.Init(ctx); err != nil {
+		t.Fatalf("failed to init: %v", err)
+	}
+
+	// Verify all hosts were pre-populated
+	for _, r := range routes {
+		if _, ok := c.allowedHosts.Load(r.host); !ok {
+			t.Errorf("expected %q to be in allowed hosts after Init", r.host)
+		}
+	}
+
+	// Verify unknown hosts are NOT in allowedHosts
+	if _, ok := c.allowedHosts.Load("unknown.com"); ok {
+		t.Error("unexpected host in allowed hosts")
 	}
 }
 
