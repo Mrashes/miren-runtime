@@ -146,3 +146,94 @@ func TestClientLookupCaseInsensitive(t *testing.T) {
 		}
 	})
 }
+
+func TestClientLookupWithWildcard(t *testing.T) {
+	ctx := context.Background()
+
+	inmem, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	ec := entityserver.NewClient(slog.Default(), inmem.EAC)
+	client := &Client{
+		log: slog.Default(),
+		ec:  ec,
+		eac: inmem.EAC,
+	}
+
+	wildcardAppID := entity.Id("wildcard-app")
+	exactAppID := entity.Id("exact-app")
+
+	// Set up a wildcard route
+	_, err := client.SetRoute(ctx, "*.example.com", wildcardAppID)
+	require.NoError(t, err)
+
+	t.Run("WildcardMatchesSubdomain", func(t *testing.T) {
+		route, err := client.LookupWithWildcard(ctx, "foo.example.com")
+		require.NoError(t, err)
+		require.NotNil(t, route)
+		require.Equal(t, wildcardAppID, route.App)
+	})
+
+	t.Run("WildcardMatchesAnySubdomain", func(t *testing.T) {
+		route, err := client.LookupWithWildcard(ctx, "bar.example.com")
+		require.NoError(t, err)
+		require.NotNil(t, route)
+		require.Equal(t, wildcardAppID, route.App)
+	})
+
+	t.Run("WildcardMatchesBareDomain", func(t *testing.T) {
+		route, err := client.LookupWithWildcard(ctx, "example.com")
+		require.NoError(t, err)
+		require.NotNil(t, route)
+		require.Equal(t, wildcardAppID, route.App)
+	})
+
+	t.Run("ExactMatchTakesPriority", func(t *testing.T) {
+		_, err := client.SetRoute(ctx, "specific.example.com", exactAppID)
+		require.NoError(t, err)
+
+		route, err := client.LookupWithWildcard(ctx, "specific.example.com")
+		require.NoError(t, err)
+		require.NotNil(t, route)
+		require.Equal(t, exactAppID, route.App)
+	})
+
+	t.Run("WildcardCaseInsensitive", func(t *testing.T) {
+		route, err := client.LookupWithWildcard(ctx, "FOO.EXAMPLE.COM")
+		require.NoError(t, err)
+		require.NotNil(t, route)
+		require.Equal(t, wildcardAppID, route.App)
+	})
+
+	t.Run("NoMatchReturnsNil", func(t *testing.T) {
+		route, err := client.LookupWithWildcard(ctx, "foo.other.com")
+		require.NoError(t, err)
+		require.Nil(t, route)
+	})
+}
+
+func TestValidateWildcardHost(t *testing.T) {
+	tests := []struct {
+		host    string
+		wantErr bool
+	}{
+		{"example.com", false},
+		{"*.example.com", false},
+		{"*.sub.example.com", false},
+		{"*.com", true},
+		{"*.", true},
+		{"*.example.*", true},
+		{"foo.*.com", false}, // not a wildcard pattern (doesn't start with *.), treated as literal
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.host, func(t *testing.T) {
+			err := ValidateWildcardHost(tt.host)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}

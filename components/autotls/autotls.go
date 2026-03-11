@@ -37,11 +37,29 @@ func NewRouteSet() *RouteSet {
 }
 
 // HasRoute returns true if the host has a configured route.
+// It checks for exact match first, then wildcard subdomain, then wildcard bare domain.
 func (rs *RouteSet) HasRoute(host string) bool {
 	rs.mu.RLock()
 	defer rs.mu.RUnlock()
-	_, ok := rs.hosts[host]
-	return ok
+
+	// Exact match
+	if _, ok := rs.hosts[host]; ok {
+		return true
+	}
+
+	// Wildcard subdomain: foo.example.com → *.example.com
+	if idx := strings.Index(host, "."); idx > 0 {
+		if _, ok := rs.hosts["*"+host[idx:]]; ok {
+			return true
+		}
+	}
+
+	// Wildcard bare domain: example.com → *.example.com
+	if _, ok := rs.hosts["*."+host]; ok {
+		return true
+	}
+
+	return false
 }
 
 // Add adds a host to the route set.
