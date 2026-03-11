@@ -157,8 +157,8 @@ func (c *AutocertController) HTTPHandler(fallback http.Handler) http.Handler {
 }
 
 // isAllowedHost checks whether host is covered by the allowed set, including
-// wildcard entries. For example, if "*.example.com" is in the set, both
-// "foo.example.com" and "example.com" are considered allowed.
+// wildcard entries. For example, if "*.example.com" is in the set,
+// "foo.example.com" is allowed but "example.com" is not (matching DNS semantics).
 func (c *AutocertController) isAllowedHost(host string) bool {
 	if _, ok := c.allowedHosts.Load(host); ok {
 		return true
