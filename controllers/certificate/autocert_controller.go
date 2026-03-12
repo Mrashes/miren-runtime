@@ -65,7 +65,41 @@ func (c *AutocertController) Init(ctx context.Context) error {
 		},
 	}
 
+	// Pre-populate allowedHosts from existing http_route entities so the
+	// isAllowedHost guard in GetCertificate works immediately — before the
+	// controller manager starts reconciling routes one by one.
+	if err := c.loadExistingRoutes(ctx); err != nil {
+		c.log.Warn("failed to pre-populate allowed hosts from existing routes", "error", err)
+	}
+
 	c.log.Info("autocert controller initialized")
+	return nil
+}
+
+// loadExistingRoutes queries all http_route entities and adds their hosts to allowedHosts.
+func (c *AutocertController) loadExistingRoutes(ctx context.Context) error {
+	if c.eac == nil {
+		return nil
+	}
+	res, err := c.eac.List(ctx, entity.Ref(entity.EntityKind, ingress_v1alpha.KindHttpRoute))
+	if err != nil {
+		return fmt.Errorf("failed to list http_route entities: %w", err)
+	}
+
+	count := 0
+	for _, ent := range res.Values() {
+		var route ingress_v1alpha.HttpRoute
+		route.Decode(ent.Entity())
+		domain := strings.ToLower(strings.TrimSpace(route.Host))
+		if domain != "" {
+			c.allowedHosts.Store(domain, struct{}{})
+			count++
+		}
+	}
+
+	if count > 0 {
+		c.log.Info("pre-populated allowed hosts from existing routes", "count", count)
+	}
 	return nil
 }
 
