@@ -407,20 +407,26 @@ func (m Model) View() string {
 
 	for _, ps := range m.status.Pools() {
 		instanceCount := len(ps.Windows())
-		instanceInfo := fmt.Sprintf("instances=%d (auto)", instanceCount)
+
+		isFixed := false
 		if m.cfg != nil {
-			if m.cfg.HasConcurrency() {
-				// Fixed mode
-				if instanceCount == 0 {
-					instanceInfo = "instances=0 (fixed)"
-				} else {
-					instanceInfo = fmt.Sprintf("instances=%d (fixed)", instanceCount)
+			for _, svc := range m.cfg.Services() {
+				if svc.Service() == ps.Name() && svc.ConcurrencyMode() == "fixed" {
+					isFixed = true
+					break
 				}
-			} else if instanceCount == 0 {
-				// Auto mode with 0 instances
-				instanceInfo = "instances=0 (idle, will scale on traffic)"
 			}
 		}
+
+		var instanceInfo string
+		if isFixed {
+			instanceInfo = fmt.Sprintf("instances=%d (fixed)", instanceCount)
+		} else if instanceCount == 0 {
+			instanceInfo = "instances=0 (idle, will scale on traffic)"
+		} else {
+			instanceInfo = fmt.Sprintf("instances=%d (auto)", instanceCount)
+		}
+
 		hdr += fmt.Sprintf("       pool: %s %s\n", bold.Render(ps.Name()), instanceInfo)
 	}
 

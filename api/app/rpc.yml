@@ -47,6 +47,12 @@ types:
         type: list
         element: NamedValue
         index: 1
+      - name: concurrency_mode
+        type: string
+        index: 2
+      - name: num_instances
+        type: int32
+        index: 3
 
   - type: Configuration
     fields:

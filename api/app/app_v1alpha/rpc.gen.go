@@ -178,8 +178,10 @@ func (v *ServiceCommand) UnmarshalJSON(data []byte) error {
 }
 
 type serviceConfigData struct {
-	Service    *string        `cbor:"0,keyasint,omitempty" json:"service,omitempty"`
-	ServiceEnv *[]*NamedValue `cbor:"1,keyasint,omitempty" json:"service_env,omitempty"`
+	Service         *string        `cbor:"0,keyasint,omitempty" json:"service,omitempty"`
+	ServiceEnv      *[]*NamedValue `cbor:"1,keyasint,omitempty" json:"service_env,omitempty"`
+	ConcurrencyMode *string        `cbor:"2,keyasint,omitempty" json:"concurrency_mode,omitempty"`
+	NumInstances    *int32         `cbor:"3,keyasint,omitempty" json:"num_instances,omitempty"`
 }
 
 type ServiceConfig struct {
@@ -215,6 +217,36 @@ func (v *ServiceConfig) ServiceEnv() []*NamedValue {
 func (v *ServiceConfig) SetServiceEnv(service_env []*NamedValue) {
 	x := slices.Clone(service_env)
 	v.data.ServiceEnv = &x
+}
+
+func (v *ServiceConfig) HasConcurrencyMode() bool {
+	return v.data.ConcurrencyMode != nil
+}
+
+func (v *ServiceConfig) ConcurrencyMode() string {
+	if v.data.ConcurrencyMode == nil {
+		return ""
+	}
+	return *v.data.ConcurrencyMode
+}
+
+func (v *ServiceConfig) SetConcurrencyMode(concurrency_mode string) {
+	v.data.ConcurrencyMode = &concurrency_mode
+}
+
+func (v *ServiceConfig) HasNumInstances() bool {
+	return v.data.NumInstances != nil
+}
+
+func (v *ServiceConfig) NumInstances() int32 {
+	if v.data.NumInstances == nil {
+		return 0
+	}
+	return *v.data.NumInstances
+}
+
+func (v *ServiceConfig) SetNumInstances(num_instances int32) {
+	v.data.NumInstances = &num_instances
 }
 
 func (v *ServiceConfig) MarshalCBOR() ([]byte, error) {
