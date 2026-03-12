@@ -656,10 +656,11 @@ func (c *Coordinator) Start(ctx context.Context) error {
 		rpcOpts = append(rpcOpts, rpc.WithAuthenticator(&rpc.NoOpAuthenticator{}))
 		c.Log.Warn("authentication disabled (NoOpAuthenticator)")
 	} else {
-		// Use LocalOnlyAuthenticator when cloud auth is not enabled
-		// This requires valid client certificates for all requests
-		rpcOpts = append(rpcOpts, rpc.WithAuthenticator(&rpc.LocalOnlyAuthenticator{}))
-		c.Log.Info("local-only authentication enabled (client certificates required)")
+		c.oidcAuthenticator = oidcauth.NewOIDCAuthenticator(c.Log)
+		compositeAuth := oidcauth.NewCompositeAuthenticator(&rpc.LocalOnlyAuthenticator{}, c.oidcAuthenticator)
+		compositeAuthz := oidcauth.NewCompositeAuthorizer(nil)
+		rpcOpts = append(rpcOpts, rpc.WithAuthenticator(compositeAuth), rpc.WithAuthorizer(compositeAuthz))
+		c.Log.Info("local-only authentication enabled with OIDC support")
 	}
 
 	rs, err := rpc.NewState(ctx, rpcOpts...)
