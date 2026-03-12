@@ -332,10 +332,11 @@ func oidcProviderMatches(cached *oidcHandler, current *ingress_v1alpha.OidcProvi
 // a cached handler exists, the cached handler is returned to avoid failing
 // open (serving requests without authentication).
 func (s *Server) getOrCreateOIDCHandler(ctx context.Context, route *ingress_v1alpha.HttpRoute, baseURL string) (*oidcHandler, error) {
-	// Key by route host; default routes use a sentinel.
-	key := route.Host
+	// Key by route host + baseURL so that handlers with different redirect
+	// URIs (different scheme or host for default routes) are cached separately.
+	key := route.Host + "|" + baseURL
 	if route.Default {
-		key = "__default__"
+		key = "__default__|" + baseURL
 	}
 
 	// Try to resolve the current provider config from the entity store.
@@ -347,7 +348,7 @@ func (s *Server) getOrCreateOIDCHandler(ctx context.Context, route *ingress_v1al
 		h, ok := s.oidcHandlers[key]
 		s.oidcMu.RUnlock()
 		if ok {
-			s.Log.Warn("entity store unavailable, using cached OIDC handler", "error", err, "host", key)
+			s.Log.Warn("entity store unavailable, using cached OIDC handler", "error", err, "host", route.Host)
 			return h, nil
 		}
 		return nil, fmt.Errorf("failed to get OIDC provider: %w", err)
