@@ -236,11 +236,6 @@ func (m *deployInfo) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.message = msg.msg
 		m.lastActivity = time.Now() // Reset activity timer
 
-		// Any update during buildkit phase counts as activity
-		if m.currentPhase == "buildkit" && !m.buildkitStarted {
-			m.buildkitStarted = true
-		}
-
 		// Track phase transitions
 		if prevMessage != msg.msg {
 			// Complete the upload phase
@@ -268,6 +263,7 @@ func (m *deployInfo) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Start tracking buildkit phase
 				m.phaseStart = time.Now()
 				m.currentPhase = "buildkit"
+				m.buildkitStarted = true
 			}
 
 		}
@@ -292,11 +288,6 @@ func (m *deployInfo) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case buildProgress:
 		m.lastActivity = time.Now() // Reset activity timer
-
-		// Mark buildkit as started once we receive build progress
-		if m.currentPhase == "buildkit" && !m.buildkitStarted {
-			m.buildkitStarted = true
-		}
 
 		// Build progress means upload is complete (fallback if no "Launching builder" message)
 		if m.isUploading {
@@ -332,6 +323,7 @@ func (m *deployInfo) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.phaseStart = time.Now()
 			m.currentPhase = "buildkit"
 		}
+		m.buildkitStarted = true
 
 		m.buildSteps = msg.total
 
