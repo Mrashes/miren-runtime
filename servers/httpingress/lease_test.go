@@ -45,6 +45,10 @@ func (m *mockActivator) RenewLease(ctx context.Context, lease *activator.Lease) 
 	return lease, nil
 }
 
+func (m *mockActivator) Invalidations() <-chan activator.SandboxInvalidation {
+	return make(chan activator.SandboxInvalidation)
+}
+
 func newTestServer(aa *mockActivator) *Server {
 	return &Server{
 		Log:  slog.Default(),
