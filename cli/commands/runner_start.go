@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	containerd "github.com/containerd/containerd/v2/client"
@@ -126,11 +127,29 @@ func RunnerStart(ctx *Context, opts struct {
 		EtcdEndpoints:  cfg.EtcdEndpoints,
 		EtcdPrefix:     cfg.EtcdPrefix,
 		NetworkBackend: cfg.NetworkBackend,
+	}
 
-		// etcd TLS - use the same certs as RPC auth
-		EtcdTLSCert:   []byte(cfg.ClientCert),
-		EtcdTLSKey:    []byte(cfg.ClientKey),
-		EtcdTLSCACert: []byte(cfg.CACert),
+	// Write etcd TLS certs to disk for flannel (which requires file paths)
+	if cfg.ClientCert != "" && cfg.ClientKey != "" && cfg.CACert != "" {
+		etcdCertsDir := filepath.Join(opts.DataPath, "etcd-certs")
+		if err := os.MkdirAll(etcdCertsDir, 0700); err != nil {
+			return fmt.Errorf("failed to create etcd certs directory: %w", err)
+		}
+		certFile := filepath.Join(etcdCertsDir, "client.crt")
+		keyFile := filepath.Join(etcdCertsDir, "client.key")
+		caFile := filepath.Join(etcdCertsDir, "ca.crt")
+		if err := os.WriteFile(certFile, []byte(cfg.ClientCert), 0644); err != nil {
+			return fmt.Errorf("failed to write etcd client cert: %w", err)
+		}
+		if err := os.WriteFile(keyFile, []byte(cfg.ClientKey), 0600); err != nil {
+			return fmt.Errorf("failed to write etcd client key: %w", err)
+		}
+		if err := os.WriteFile(caFile, []byte(cfg.CACert), 0644); err != nil {
+			return fmt.Errorf("failed to write etcd CA cert: %w", err)
+		}
+		deps.EtcdTLSCertFile = certFile
+		deps.EtcdTLSKeyFile = keyFile
+		deps.EtcdTLSCAFile = caFile
 	}
 
 	// Initialize sandbox metrics

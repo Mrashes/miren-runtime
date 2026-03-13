@@ -101,10 +101,10 @@ type RunnerDeps struct {
 	EtcdPrefix     string
 	NetworkBackend string
 
-	// TLS configuration for etcd mTLS (for distributed runners)
-	EtcdTLSCert   []byte // Client certificate PEM
-	EtcdTLSKey    []byte // Client private key PEM
-	EtcdTLSCACert []byte // CA certificate PEM
+	// TLS configuration for etcd mTLS (for distributed runners, file paths)
+	EtcdTLSCertFile string // Client certificate file path
+	EtcdTLSKeyFile  string // Client private key file path
+	EtcdTLSCAFile   string // CA certificate file path
 }
 
 const (
@@ -459,10 +459,10 @@ func (r *Runner) initializeNetwork(ctx context.Context, eg ...*errgroup.Group) e
 	}
 
 	// Add TLS config if provided
-	if r.deps.EtcdTLSCert != nil && r.deps.EtcdTLSKey != nil && r.deps.EtcdTLSCACert != nil {
-		grungeOpts.TLSCert = r.deps.EtcdTLSCert
-		grungeOpts.TLSKey = r.deps.EtcdTLSKey
-		grungeOpts.TLSCACert = r.deps.EtcdTLSCACert
+	if r.deps.EtcdTLSCertFile != "" && r.deps.EtcdTLSKeyFile != "" && r.deps.EtcdTLSCAFile != "" {
+		grungeOpts.TLSCertFile = r.deps.EtcdTLSCertFile
+		grungeOpts.TLSKeyFile = r.deps.EtcdTLSKeyFile
+		grungeOpts.TLSCAFile = r.deps.EtcdTLSCAFile
 	}
 
 	gn, err := grunge.NewNetwork(r.Log, grungeOpts)

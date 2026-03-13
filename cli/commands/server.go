@@ -674,9 +674,9 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 
 	// Add TLS config when distributed runners is enabled
 	if etcdTLSSetup != nil {
-		grungeOpts.TLSCert = etcdTLSSetup.ClientTLS.CertPEM
-		grungeOpts.TLSKey = etcdTLSSetup.ClientTLS.KeyPEM
-		grungeOpts.TLSCACert = etcdTLSSetup.ClientTLS.CACert
+		grungeOpts.TLSCertFile = etcdTLSSetup.ClientCertFile
+		grungeOpts.TLSKeyFile = etcdTLSSetup.ClientKeyFile
+		grungeOpts.TLSCAFile = etcdTLSSetup.CAFile
 	}
 
 	gn, err := grunge.NewNetwork(ctx.Log, grungeOpts)

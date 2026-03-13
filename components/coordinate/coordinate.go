@@ -139,6 +139,12 @@ type EtcdTLSSetupResult struct {
 	CertsDir string
 	// ClientTLS is the TLS config for clients connecting to etcd
 	ClientTLS *EtcdTLSConfig
+	// ClientCertFile is the path to the client certificate on disk
+	ClientCertFile string
+	// ClientKeyFile is the path to the client private key on disk
+	ClientKeyFile string
+	// CAFile is the path to the CA certificate on disk
+	CAFile string
 }
 
 // SetupEtcdTLS loads the existing CA and issues certificates for etcd mTLS.
@@ -214,6 +220,18 @@ func SetupEtcdTLS(log *slog.Logger, dataPath string, extraDNSNames []string, ext
 		return nil, fmt.Errorf("failed to issue etcd client certificate: %w", err)
 	}
 
+	// Write client certs to disk alongside server certs
+	clientCertFile := filepath.Join(certsDir, "client.crt")
+	clientKeyFile := filepath.Join(certsDir, "client.key")
+	caFile := filepath.Join(certsDir, "ca.crt")
+
+	if err := os.WriteFile(clientCertFile, clientCert.CertPEM, 0644); err != nil {
+		return nil, fmt.Errorf("failed to write etcd client cert: %w", err)
+	}
+	if err := os.WriteFile(clientKeyFile, clientCert.KeyPEM, 0600); err != nil {
+		return nil, fmt.Errorf("failed to write etcd client key: %w", err)
+	}
+
 	log.Info("etcd TLS certificates ready", "certs_dir", certsDir)
 
 	return &EtcdTLSSetupResult{
@@ -223,6 +241,9 @@ func SetupEtcdTLS(log *slog.Logger, dataPath string, extraDNSNames []string, ext
 			KeyPEM:  clientCert.KeyPEM,
 			CACert:  ca.GetCACertificate(),
 		},
+		ClientCertFile: clientCertFile,
+		ClientKeyFile:  clientKeyFile,
+		CAFile:         caFile,
 	}, nil
 }
 

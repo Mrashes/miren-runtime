@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"os"
 	"path"
 	"strings"
 	"sync"
@@ -54,10 +55,10 @@ type NetworkOptions struct {
 	PrevIPv4 netip.Prefix
 	PrevIPv6 netip.Prefix
 
-	// TLS configuration for etcd mTLS (optional)
-	TLSCert   []byte // Client certificate PEM
-	TLSKey    []byte // Client private key PEM
-	TLSCACert []byte // CA certificate PEM
+	// TLS configuration for etcd mTLS (optional, file paths)
+	TLSCertFile string // Client certificate file path
+	TLSKeyFile  string // Client private key file path
+	TLSCAFile   string // CA certificate file path
 }
 
 func NewNetwork(log *slog.Logger, opts NetworkOptions) (*Network, error) {
@@ -65,9 +66,9 @@ func NewNetwork(log *slog.Logger, opts NetworkOptions) (*Network, error) {
 		Endpoints: opts.EtcdEndpoints,
 	}
 
-	// Configure TLS if certificates are provided
-	if opts.TLSCert != nil && opts.TLSKey != nil && opts.TLSCACert != nil {
-		tlsConfig, err := buildTLSConfig(opts.TLSCert, opts.TLSKey, opts.TLSCACert)
+	// Configure TLS if certificate files are provided
+	if opts.TLSCertFile != "" && opts.TLSKeyFile != "" && opts.TLSCAFile != "" {
+		tlsConfig, err := buildTLSConfigFromFiles(opts.TLSCertFile, opts.TLSKeyFile, opts.TLSCAFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build etcd TLS config: %w", err)
 		}
@@ -87,15 +88,20 @@ func NewNetwork(log *slog.Logger, opts NetworkOptions) (*Network, error) {
 	}, nil
 }
 
-// buildTLSConfig creates a tls.Config from PEM-encoded certificates.
-func buildTLSConfig(certPEM, keyPEM, caCertPEM []byte) (*tls.Config, error) {
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+// buildTLSConfigFromFiles creates a tls.Config by reading PEM files from disk.
+func buildTLSConfigFromFiles(certFile, keyFile, caFile string) (*tls.Config, error) {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load client certificate: %w", err)
 	}
 
+	caCert, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read CA certificate: %w", err)
+	}
+
 	caCertPool := x509.NewCertPool()
-	if !caCertPool.AppendCertsFromPEM(caCertPEM) {
+	if !caCertPool.AppendCertsFromPEM(caCert) {
 		return nil, fmt.Errorf("failed to parse CA certificate")
 	}
 
@@ -243,6 +249,13 @@ func (n *Network) Start(ctx context.Context, eg *errgroup.Group) error {
 	cfg := &fetcd.EtcdConfig{
 		Endpoints: n.EtcdEndpoints,
 		Prefix:    n.EtcdPrefix,
+	}
+
+	if n.TLSCertFile != "" && n.TLSKeyFile != "" && n.TLSCAFile != "" {
+		cfg.Certfile = n.TLSCertFile
+		cfg.Keyfile = n.TLSKeyFile
+		cfg.CAFile = n.TLSCAFile
+		n.log.Info("flannel subnet manager using mTLS for etcd connection")
 	}
 
 	var (
