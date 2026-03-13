@@ -8,15 +8,48 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"miren.dev/runtime/api/build/build_v1alpha"
 )
 
 type sourceCache struct {
 	dataPath string
+	log      *slog.Logger
+	locks    *appLocks
+}
+
+// appLocks provides per-app mutexes so concurrent builds for the same app
+// serialize their cache reads and writes.
+type appLocks struct {
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex
+}
+
+func newAppLocks() *appLocks {
+	return &appLocks{locks: make(map[string]*sync.Mutex)}
+}
+
+func (al *appLocks) lock(app string) {
+	al.mu.Lock()
+	l, ok := al.locks[app]
+	if !ok {
+		l = &sync.Mutex{}
+		al.locks[app] = l
+	}
+	al.mu.Unlock()
+	l.Lock()
+}
+
+func (al *appLocks) unlock(app string) {
+	al.mu.Lock()
+	l := al.locks[app]
+	al.mu.Unlock()
+	l.Unlock()
 }
 
 type cachedFileInfo struct {
@@ -47,6 +80,7 @@ func (sc *sourceCache) loadManifest(app string) (map[string]cachedFileInfo, erro
 
 	var manifest map[string]cachedFileInfo
 	if err := json.Unmarshal(data, &manifest); err != nil {
+		sc.log.Debug("corrupt manifest.json in source cache, ignoring", "app", app, "error", err)
 		return map[string]cachedFileInfo{}, nil
 	}
 	return manifest, nil
@@ -56,6 +90,9 @@ func (sc *sourceCache) loadManifest(app string) (map[string]cachedFileInfo, erro
 // and extracts matching files from the cache into buildDir. Returns the count of
 // matched files and the list of paths that still need to be uploaded.
 func (sc *sourceCache) stageMatchingFiles(app string, buildDir string, clientManifest []*build_v1alpha.FileManifestEntry) (matched int, needed []string, err error) {
+	sc.locks.lock(app)
+	defer sc.locks.unlock(app)
+
 	cached, err := sc.loadManifest(app)
 	if err != nil {
 		return 0, nil, err
@@ -167,6 +204,9 @@ func extractFilesFromLayer(layerPath, buildDir string, paths []string) error {
 // saveSourceImage creates a cached source code layer from the build directory.
 // This should be called after all files are resolved but before the build starts.
 func (sc *sourceCache) saveSourceImage(app string, buildDir string) error {
+	sc.locks.lock(app)
+	defer sc.locks.unlock(app)
+
 	dir, err := sc.cacheDir(app)
 	if err != nil {
 		return err
@@ -218,13 +258,14 @@ func (sc *sourceCache) saveSourceImage(app string, buildDir string) error {
 			if fErr != nil {
 				return fErr
 			}
-			defer f.Close()
 
 			h := sha256.New()
 			w := io.MultiWriter(tw, h)
 
-			if _, err := io.Copy(w, f); err != nil {
-				return err
+			_, copyErr := io.Copy(w, f)
+			f.Close()
+			if copyErr != nil {
+				return copyErr
 			}
 
 			manifest[rp] = cachedFileInfo{
@@ -257,11 +298,13 @@ func (sc *sourceCache) saveSourceImage(app string, buildDir string) error {
 		return err
 	}
 
-	// Atomic rename: both files are complete before becoming visible.
-	layerPath := filepath.Join(dir, "layer.tar.gz")
-	if err := os.Rename(tmpLayerPath, layerPath); err != nil {
-		os.Remove(tmpManifestPath)
+	// Rename manifest first: if we crash between renames, the new manifest
+	// won't match the old layer's contents, causing cache misses (safe)
+	// rather than hash/content mismatch (corrupt).
+	if err := os.Rename(tmpManifestPath, filepath.Join(dir, "manifest.json")); err != nil {
+		os.Remove(tmpLayerPath)
 		return err
 	}
-	return os.Rename(tmpManifestPath, filepath.Join(dir, "manifest.json"))
+	layerPath := filepath.Join(dir, "layer.tar.gz")
+	return os.Rename(tmpLayerPath, layerPath)
 }

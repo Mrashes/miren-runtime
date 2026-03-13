@@ -96,7 +96,8 @@ type Builder struct {
 	// When set, uses the shared daemon instead of launching ephemeral sandboxes.
 	BuildKit *buildkit.Component
 
-	sessions sync.Map // sessionID → *buildSession
+	sessions   sync.Map // sessionID → *buildSession
+	cacheLocks *appLocks
 }
 
 func NewBuilder(log *slog.Logger, eas *entityserver_v1alpha.EntityAccessClient, appClient *app.Client, addonsClient *app_v1alpha.AddonsClient, res netresolve.Resolver, tmpdir string, logWriter observability.LogWriter, dnsHostname string, bk *buildkit.Component, dataPath string) *Builder {
@@ -113,6 +114,7 @@ func NewBuilder(log *slog.Logger, eas *entityserver_v1alpha.EntityAccessClient, 
 		DNSHostname:   dnsHostname,
 		BuildKit:      bk,
 		DataPath:      dataPath,
+		cacheLocks:    newAppLocks(),
 	}
 }
 
@@ -846,7 +848,7 @@ func (b *Builder) BuildFromTar(ctx context.Context, state *build_v1alpha.Builder
 
 	// Save source code cache for future delta uploads
 	if b.DataPath != "" {
-		cache := &sourceCache{dataPath: b.DataPath}
+		cache := &sourceCache{dataPath: b.DataPath, log: b.Log, locks: b.cacheLocks}
 		if err := cache.saveSourceImage(name, path); err != nil {
 			b.Log.Warn("failed to save source code cache", "error", err, "app", name)
 		}
@@ -888,7 +890,7 @@ func (b *Builder) PrepareUpload(ctx context.Context, state *build_v1alpha.Builde
 		return err
 	}
 
-	cache := &sourceCache{dataPath: b.DataPath}
+	cache := &sourceCache{dataPath: b.DataPath, log: b.Log, locks: b.cacheLocks}
 
 	matched, needed, err := cache.stageMatchingFiles(name, tempDir, manifest)
 	if err != nil {
@@ -953,6 +955,11 @@ func (b *Builder) BuildFromPrepared(ctx context.Context, state *build_v1alpha.Bu
 	defer os.RemoveAll(sess.dir)
 
 	name := sess.appName
+
+	if !rpc.AllowApp(ctx, name) {
+		return rpc.AppAccessError(ctx, name)
+	}
+
 	status := args.Status()
 
 	// Extract partial tar into the session directory if provided
@@ -974,7 +981,7 @@ func (b *Builder) BuildFromPrepared(ctx context.Context, state *build_v1alpha.Bu
 
 	// Save source code cache before building
 	if b.DataPath != "" {
-		cache := &sourceCache{dataPath: b.DataPath}
+		cache := &sourceCache{dataPath: b.DataPath, log: b.Log, locks: b.cacheLocks}
 		if err := cache.saveSourceImage(name, sess.dir); err != nil {
 			b.Log.Warn("failed to save source code cache", "error", err, "app", name)
 		}

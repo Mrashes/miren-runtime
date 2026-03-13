@@ -1,6 +1,7 @@
 package build
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,7 +12,7 @@ import (
 
 func TestSourceCacheRoundtrip(t *testing.T) {
 	dataPath := t.TempDir()
-	cache := &sourceCache{dataPath: dataPath}
+	cache := &sourceCache{dataPath: dataPath, log: slog.Default(), locks: newAppLocks()}
 
 	// Create a build directory with some files
 	buildDir := t.TempDir()
@@ -38,7 +39,7 @@ func TestSourceCacheRoundtrip(t *testing.T) {
 
 func TestSourceCacheStageMatchingFiles(t *testing.T) {
 	dataPath := t.TempDir()
-	cache := &sourceCache{dataPath: dataPath}
+	cache := &sourceCache{dataPath: dataPath, log: slog.Default(), locks: newAppLocks()}
 
 	// Create and save an initial source image
 	buildDir := t.TempDir()
@@ -83,7 +84,7 @@ func TestSourceCacheStageMatchingFiles(t *testing.T) {
 
 func TestSourceCacheNoExistingCache(t *testing.T) {
 	dataPath := t.TempDir()
-	cache := &sourceCache{dataPath: dataPath}
+	cache := &sourceCache{dataPath: dataPath, log: slog.Default(), locks: newAppLocks()}
 
 	clientManifest := []*build_v1alpha.FileManifestEntry{
 		makeManifestEntry("main.go", "some-hash", 12, 0644),
@@ -99,7 +100,7 @@ func TestSourceCacheNoExistingCache(t *testing.T) {
 
 func TestSourceCacheOverwrite(t *testing.T) {
 	dataPath := t.TempDir()
-	cache := &sourceCache{dataPath: dataPath}
+	cache := &sourceCache{dataPath: dataPath, log: slog.Default(), locks: newAppLocks()}
 
 	// Save first version
 	buildDir1 := t.TempDir()
