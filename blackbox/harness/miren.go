@@ -87,6 +87,10 @@ func (m *Miren) MustRun(args ...string) *Result {
 // In local mode it runs the command directly on the host.
 func (m *Miren) RunCmd(args ...string) *Result {
 	m.t.Helper()
+	if len(args) == 0 {
+		m.t.Fatalf("RunCmd requires at least one argument")
+		return nil
+	}
 
 	var cmd *exec.Cmd
 

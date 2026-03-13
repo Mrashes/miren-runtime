@@ -1303,8 +1303,16 @@ func TestManagerPoolReuse_NoOrphanedSandboxes(t *testing.T) {
 		entityserver.WithLabels(types.LabelSet("service", "web", "pool", poolID.String(), "instance", "0")))
 	require.NoError(t, err)
 
-	// Simulate pool reuse: update SandboxSpec.Version to ver-2
+	// Simulate pool reuse: update SandboxSpec.Version to ver-2 in the store,
+	// matching what the deployment launcher does during pool reuse.
 	pool.SandboxSpec.Version = entity.Id("ver-2")
+	_, err = server.EAC.Patch(ctx, entity.New(
+		entity.DBId, poolID,
+		(&compute_v1alpha.SandboxPool{
+			SandboxSpec: pool.SandboxSpec,
+		}).Encode,
+	).Attrs(), 0)
+	require.NoError(t, err)
 
 	// Reconcile — pool should still see the ver-1 sandbox via pool label
 	manager := NewManager(log, server.EAC)
