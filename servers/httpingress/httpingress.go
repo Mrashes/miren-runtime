@@ -176,7 +176,10 @@ func (h *Server) watchInvalidations(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case inv := <-ch:
+		case inv, ok := <-ch:
+			if !ok {
+				return
+			}
 			h.invalidateSandboxLeases(ctx, inv.SandboxID)
 		}
 	}

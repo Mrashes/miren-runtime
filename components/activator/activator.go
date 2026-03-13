@@ -1099,7 +1099,7 @@ func (a *localActivator) watchSandboxes(ctx context.Context) {
 
 				// Signal httpingress to invalidate cached leases for this sandbox
 				// when it transitions away from RUNNING
-				if oldStatus == compute_v1alpha.RUNNING && oldStatus != sb.Status {
+				if oldStatus == compute_v1alpha.RUNNING && sb.Status != compute_v1alpha.RUNNING {
 					select {
 					case a.invalidationCh <- SandboxInvalidation{SandboxID: sb.ID}:
 					default:

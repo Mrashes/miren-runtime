@@ -950,7 +950,12 @@ func (l *Launcher) waitForPoolReady(ctx context.Context, poolID entity.Id, timeo
 
 		// Check sandbox entities directly — they're updated immediately when
 		// the sandbox boots, without waiting for the pool controller to reconcile.
-		if l.hasRunningSandboxForPool(ctx, poolID, pool.Service) {
+		running, runErr := l.hasRunningSandboxForPool(ctx, poolID, pool.Service)
+		if runErr != nil {
+			l.Log.Warn("failed to query sandboxes while waiting for pool readiness",
+				"pool", poolID,
+				"error", runErr)
+		} else if running {
 			l.Log.Info("new pool has ready instances",
 				"pool", poolID,
 				"ready_instances", 1)
@@ -977,10 +982,10 @@ func (l *Launcher) waitForPoolReady(ctx context.Context, poolID entity.Id, timeo
 
 // hasRunningSandboxForPool checks if there is at least one RUNNING sandbox
 // with the given pool label, by querying sandbox entities directly.
-func (l *Launcher) hasRunningSandboxForPool(ctx context.Context, poolID entity.Id, service string) bool {
+func (l *Launcher) hasRunningSandboxForPool(ctx context.Context, poolID entity.Id, service string) (bool, error) {
 	resp, err := l.EAC.List(ctx, entity.Ref(entity.EntityKind, compute_v1alpha.KindSandbox))
 	if err != nil {
-		return false
+		return false, fmt.Errorf("list sandboxes: %w", err)
 	}
 
 	for _, ent := range resp.Values() {
@@ -1004,10 +1009,10 @@ func (l *Launcher) hasRunningSandboxForPool(ctx context.Context, poolID entity.I
 			continue
 		}
 
-		return true
+		return true, nil
 	}
 
-	return false
+	return false, nil
 }
 
 // cleanupOldVersionPools removes old version references from pools and scales down unreferenced pools

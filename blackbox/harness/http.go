@@ -8,12 +8,14 @@ import (
 
 // HTTPGet makes an HTTP GET request from inside the dev container via curl.
 // The host header is set to the given hostname so ingress routing works,
-// while the actual request goes to localhost:80.
+// while the actual request goes to localhost:443 over HTTPS (with -k to
+// skip certificate verification). Port 80 redirects to HTTPS, so we
+// connect directly to avoid redirect resolution issues.
 func HTTPGet(m *Miren, hostname, path string) (statusCode int, body string, err error) {
-	r := m.RunCmd("curl", "-s", "-o", "/dev/stdout", "-w", "\n%{http_code}",
+	r := m.RunCmd("curl", "-sk", "-w", "\n%{http_code}",
 		"-H", fmt.Sprintf("Host: %s", hostname),
 		"--max-time", "10",
-		fmt.Sprintf("http://localhost:80%s", path))
+		fmt.Sprintf("https://localhost:443%s", path))
 
 	if !r.Success() {
 		return 0, "", fmt.Errorf("curl failed (exit %d): %s", r.ExitCode, strings.TrimSpace(r.Stderr))

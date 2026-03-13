@@ -58,7 +58,9 @@ Running commands:
 - Examples:
   - `./hack/dev-exec go test ./pkg/entity/...` - Run tests
   - `./hack/dev-exec m app list` - Use miren CLI
-  - `make bin/miren` - Rebuild binary (then `make dev-server-restart`)
+  - `./hack/dev-exec make bin/miren` - Rebuild binary inside dev container (then `make dev-server-restart`)
+
+**Important**: The miren binary must be built **inside** the dev container (not on the host) so it has the correct architecture. Use `./hack/dev-exec make bin/miren` instead of `make bin/miren`.
 
 **Managing the dev environment:**
 - `make dev-stop` - Stop and remove the persistent dev container
@@ -75,7 +77,7 @@ m app list                    # Works immediately!
 
 # Development iteration
 vim path/to/code.go           # Edit code
-make bin/miren                # Rebuild
+./hack/dev-exec make bin/miren # Rebuild inside container
 make dev-server-restart       # Bounce server with new code
 
 # Debugging
