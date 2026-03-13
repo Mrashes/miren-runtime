@@ -205,8 +205,10 @@ func TestManagerServiceIsolation(t *testing.T) {
 	}
 }
 
-// TestManagerVersionFiltering tests that only sandboxes with matching
-// version are counted
+// TestManagerVersionFiltering tests that sandboxes with the correct pool label
+// are counted regardless of their spec version. This reflects pool-based membership:
+// when a pool's SandboxSpec.Version is updated during reuse, existing sandboxes
+// (with the old version) must still be visible to the pool.
 func TestManagerVersionFiltering(t *testing.T) {
 	ctx := context.Background()
 	log := testutils.TestLogger(t)
@@ -229,7 +231,8 @@ func TestManagerVersionFiltering(t *testing.T) {
 	require.NoError(t, err)
 	pool.ID = poolID
 
-	// Create 2 sandboxes with old version (should be ignored)
+	// Create 2 sandboxes with old version but correct pool label.
+	// These should be counted as pool members (pool label is authoritative).
 	for i := 0; i < 2; i++ {
 		sb := &compute_v1alpha.Sandbox{
 			Status: compute_v1alpha.RUNNING,
@@ -240,7 +243,7 @@ func TestManagerVersionFiltering(t *testing.T) {
 				},
 			},
 		}
-		_, err := server.Client.Create(ctx, "old-sb", sb,
+		_, err := server.Client.Create(ctx, fmt.Sprintf("old-sb-%d", i), sb,
 			entityserver.WithLabels(types.LabelSet("service", "web", "pool", poolID.String())))
 		require.NoError(t, err)
 	}
@@ -249,20 +252,22 @@ func TestManagerVersionFiltering(t *testing.T) {
 	manager := NewManager(log, server.EAC)
 	reconcilePool(t, ctx, server, manager, pool)
 
-	// Should create 3 new sandboxes (old version doesn't count)
+	// Pool sees 2 existing RUNNING sandboxes (old version, correct pool label).
+	// It needs 3 total, so it creates 1 more.
 	sandboxes := listSandboxesForPool(t, ctx, server, pool)
+	assert.Equal(t, 3, len(sandboxes), "should have 3 total sandboxes (2 old + 1 new)")
+
 	ver2Count := 0
 	for _, sb := range sandboxes {
 		if sb.Spec.Version.String() == "ver-2" {
 			ver2Count++
 		}
 	}
+	assert.Equal(t, 1, ver2Count, "should create 1 new sandbox with new version")
 
-	assert.Equal(t, 3, ver2Count, "should create 3 sandboxes with new version")
-
-	// Verify pool status counts only ver-2 sandboxes
+	// Pool status should reflect all 3 sandboxes
 	updatedPool := getPool(t, ctx, server, poolID)
-	assert.Equal(t, int64(3), updatedPool.CurrentInstances, "should count only matching version")
+	assert.Equal(t, int64(3), updatedPool.CurrentInstances, "should count all pool-labeled sandboxes")
 }
 
 // TestManagerStatusOnlyUpdate tests that reconciliation doesn't create
@@ -665,22 +670,17 @@ func listSandboxesForPool(t *testing.T, ctx context.Context, server *testutils.I
 		var sb compute_v1alpha.Sandbox
 		sb.Decode(ent.Entity())
 
-		// Filter by version and service
-		if sb.Spec.Version.String() != pool.SandboxSpec.Version.String() {
-			continue
-		}
-
 		var md core_v1alpha.Metadata
 		md.Decode(ent.Entity())
 
-		serviceLabel := getLabel(md.Labels, "service")
-		if serviceLabel != pool.Service {
+		// Filter by pool label (authoritative for pool membership)
+		poolLabel := getLabel(md.Labels, "pool")
+		if poolLabel != pool.ID.String() {
 			continue
 		}
 
-		// Filter by pool ID to prevent cross-pool contamination
-		poolLabel := getLabel(md.Labels, "pool")
-		if poolLabel != pool.ID.String() {
+		serviceLabel := getLabel(md.Labels, "service")
+		if serviceLabel != pool.Service {
 			continue
 		}
 
@@ -1261,4 +1261,134 @@ func TestCleanupEmptyPoolsNotReferencedByActiveVersion(t *testing.T) {
 	// Test the helper function directly - should NOT be referenced by active
 	isReferenced := manager.isPoolReferencedByCurrentVersion(ctx, pool)
 	require.False(t, isReferenced, "Pool should NOT be recognized as referenced by active version")
+}
+
+// TestManagerPoolReuse_NoOrphanedSandboxes verifies that after a pool's
+// SandboxSpec.Version is updated (pool reuse during deploy), existing sandboxes
+// with the old version are still found by listSandboxes via pool label.
+func TestManagerPoolReuse_NoOrphanedSandboxes(t *testing.T) {
+	ctx := context.Background()
+	log := testutils.TestLogger(t)
+
+	server, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	// Create pool with version 1
+	pool := &compute_v1alpha.SandboxPool{
+		Service:          "web",
+		DesiredInstances: 1,
+		SandboxSpec: compute_v1alpha.SandboxSpec{
+			Version: entity.Id("ver-1"),
+			Container: []compute_v1alpha.SandboxSpecContainer{
+				{Image: "test:v1"},
+			},
+		},
+	}
+
+	poolID, err := server.Client.Create(ctx, "test-pool", pool)
+	require.NoError(t, err)
+	pool.ID = poolID
+
+	// Create a RUNNING sandbox with ver-1 and the correct pool label
+	sb := &compute_v1alpha.Sandbox{
+		Status: compute_v1alpha.RUNNING,
+		Spec: compute_v1alpha.SandboxSpec{
+			Version: entity.Id("ver-1"),
+			Container: []compute_v1alpha.SandboxSpecContainer{
+				{Image: "test:v1"},
+			},
+		},
+	}
+	_, err = server.Client.Create(ctx, "sb-v1", sb,
+		entityserver.WithLabels(types.LabelSet("service", "web", "pool", poolID.String(), "instance", "0")))
+	require.NoError(t, err)
+
+	// Simulate pool reuse: update SandboxSpec.Version to ver-2 in the store,
+	// matching what the deployment launcher does during pool reuse.
+	pool.SandboxSpec.Version = entity.Id("ver-2")
+	_, err = server.EAC.Patch(ctx, entity.New(
+		entity.DBId, poolID,
+		(&compute_v1alpha.SandboxPool{
+			SandboxSpec: pool.SandboxSpec,
+		}).Encode,
+	).Attrs(), 0)
+	require.NoError(t, err)
+
+	// Reconcile — pool should still see the ver-1 sandbox via pool label
+	manager := NewManager(log, server.EAC)
+	reconcilePool(t, ctx, server, manager, pool)
+
+	// Pool has desired=1, and the old sandbox counts as actual=1, so no new sandbox created
+	sandboxes := listSandboxesForPool(t, ctx, server, pool)
+	assert.Equal(t, 1, len(sandboxes), "existing sandbox should still be visible after version update")
+	assert.Equal(t, entity.Id("ver-1"), sandboxes[0].Spec.Version, "original sandbox should be the one found")
+
+	// Verify pool status reflects the existing sandbox
+	updatedPool := getPool(t, ctx, server, poolID)
+	assert.Equal(t, int64(1), updatedPool.CurrentInstances, "pool should count old-version sandbox")
+	assert.Equal(t, int64(1), updatedPool.ReadyInstances, "old-version sandbox is RUNNING and ready")
+}
+
+// TestManagerDecommissionedPool_NoCrashDetection verifies that DEAD sandboxes
+// in a decommissioned pool (desired=0, no references) don't trigger crash detection.
+func TestManagerDecommissionedPool_NoCrashDetection(t *testing.T) {
+	ctx := context.Background()
+	log := testutils.TestLogger(t)
+
+	server, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	// Create a decommissioned pool (desired=0, no references)
+	pool := &compute_v1alpha.SandboxPool{
+		Service:              "web",
+		DesiredInstances:     0,
+		ReferencedByVersions: nil, // No references — fully decommissioned
+		SandboxSpec: compute_v1alpha.SandboxSpec{
+			Version: entity.Id("ver-1"),
+			Container: []compute_v1alpha.SandboxSpecContainer{
+				{Image: "test:latest"},
+			},
+		},
+	}
+
+	poolID, err := server.Client.Create(ctx, "test-pool", pool)
+	require.NoError(t, err)
+	pool.ID = poolID
+
+	// Create a DEAD sandbox that lived only 20 seconds (would normally trigger crash detection)
+	shortLivedTime := time.Now().Add(-30 * time.Second)
+	server.Store.NowFunc = func() time.Time { return shortLivedTime }
+
+	deadSb := &compute_v1alpha.Sandbox{
+		Status: compute_v1alpha.DEAD,
+		Spec:   pool.SandboxSpec,
+	}
+	deadSbID, err := server.Client.Create(ctx, "dead-sb", deadSb,
+		entityserver.WithLabels(types.LabelSet("service", "web", "pool", poolID.String())))
+	require.NoError(t, err)
+
+	// Patch to update updatedAt, simulating the sandbox dying 20s after creation
+	diedTime := shortLivedTime.Add(20 * time.Second)
+	server.Store.NowFunc = func() time.Time { return diedTime }
+
+	_, err = server.EAC.Patch(ctx, entity.New(
+		entity.DBId, deadSbID,
+		(&compute_v1alpha.Sandbox{
+			Status: compute_v1alpha.DEAD,
+		}).Encode,
+	).Attrs(), 0)
+	require.NoError(t, err)
+
+	server.Store.NowFunc = nil
+
+	// Reconcile the decommissioned pool
+	manager := NewManager(log, server.EAC)
+	reconcilePool(t, ctx, server, manager, pool)
+
+	// Pool should NOT have entered crash cooldown
+	updatedPool := getPool(t, ctx, server, poolID)
+	assert.Equal(t, int64(0), updatedPool.ConsecutiveCrashCount,
+		"decommissioned pool should not detect crashes")
+	assert.True(t, updatedPool.CooldownUntil.IsZero(),
+		"decommissioned pool should not enter cooldown")
 }

@@ -923,17 +923,16 @@ func (l *Launcher) updatePool(ctx context.Context, poolWithEntity *PoolWithEntit
 	return nil
 }
 
-// waitForPoolReady polls the pool entity until ReadyInstances > 0 or the timeout expires.
-// On timeout it returns an error, but the caller should proceed with cleanup anyway —
-// the httpingress retry logic handles any remaining gap.
+// waitForPoolReady polls until at least one sandbox in the pool is RUNNING, or the timeout expires.
+// It checks both the pool's ReadyInstances field (updated by the pool controller on its
+// ~10s resync cycle) and sandbox entities directly (updated immediately when sandboxes boot).
+// This avoids a ~10s delay waiting for the pool controller to reconcile.
 func (l *Launcher) waitForPoolReady(ctx context.Context, poolID entity.Id, timeout time.Duration) error {
-	pollInterval := 2 * time.Second
-	if timeout < pollInterval {
-		pollInterval = timeout / 2
-	}
+	pollInterval := 500 * time.Millisecond
 	deadline := time.Now().Add(timeout)
 
 	for {
+		// Check pool's ReadyInstances first (fast path if pool controller already reconciled)
 		resp, err := l.EAC.Get(ctx, poolID.String())
 		if err != nil {
 			return fmt.Errorf("failed to get pool %s: %w", poolID, err)
@@ -946,6 +945,20 @@ func (l *Launcher) waitForPoolReady(ctx context.Context, poolID entity.Id, timeo
 			l.Log.Info("new pool has ready instances",
 				"pool", poolID,
 				"ready_instances", pool.ReadyInstances)
+			return nil
+		}
+
+		// Check sandbox entities directly — they're updated immediately when
+		// the sandbox boots, without waiting for the pool controller to reconcile.
+		running, runErr := l.hasRunningSandboxForPool(ctx, poolID, pool.Service)
+		if runErr != nil {
+			l.Log.Warn("failed to query sandboxes while waiting for pool readiness",
+				"pool", poolID,
+				"error", runErr)
+		} else if running {
+			l.Log.Info("new pool has ready instances",
+				"pool", poolID,
+				"ready_instances", 1)
 			return nil
 		}
 
@@ -965,6 +978,41 @@ func (l *Launcher) waitForPoolReady(ctx context.Context, poolID entity.Id, timeo
 		case <-time.After(pollInterval):
 		}
 	}
+}
+
+// hasRunningSandboxForPool checks if there is at least one RUNNING sandbox
+// with the given pool label, by querying sandbox entities directly.
+func (l *Launcher) hasRunningSandboxForPool(ctx context.Context, poolID entity.Id, service string) (bool, error) {
+	resp, err := l.EAC.List(ctx, entity.Ref(entity.EntityKind, compute_v1alpha.KindSandbox))
+	if err != nil {
+		return false, fmt.Errorf("list sandboxes: %w", err)
+	}
+
+	for _, ent := range resp.Values() {
+		var sb compute_v1alpha.Sandbox
+		sb.Decode(ent.Entity())
+
+		if sb.Status != compute_v1alpha.RUNNING {
+			continue
+		}
+
+		var md core_v1alpha.Metadata
+		md.Decode(ent.Entity())
+
+		poolLabel, _ := md.Labels.Get("pool")
+		if poolLabel != poolID.String() {
+			continue
+		}
+
+		serviceLabel, _ := md.Labels.Get("service")
+		if serviceLabel != service {
+			continue
+		}
+
+		return true, nil
+	}
+
+	return false, nil
 }
 
 // cleanupOldVersionPools removes old version references from pools and scales down unreferenced pools

@@ -103,10 +103,21 @@ func (l *Lease) Pool() string {
 	return l.pool
 }
 
+// SandboxInvalidation is sent when a sandbox transitions away from RUNNING,
+// signaling that any cached leases pointing to it should be invalidated.
+type SandboxInvalidation struct {
+	SandboxID entity.Id
+}
+
 type AppActivator interface {
 	AcquireLease(ctx context.Context, ver *core_v1alpha.AppVersion, service string) (*Lease, error)
 	ReleaseLease(ctx context.Context, lease *Lease) error
 	RenewLease(ctx context.Context, lease *Lease) (*Lease, error)
+
+	// Invalidations returns a channel that receives notifications when
+	// sandboxes become non-RUNNING. Consumers should invalidate any cached
+	// leases referencing the invalidated sandbox.
+	Invalidations() <-chan SandboxInvalidation
 }
 
 type sandbox struct {
@@ -156,6 +167,9 @@ type localActivator struct {
 	// Map key is verKey (version + service), value is list of channels to notify
 	newSandboxChans map[verKey][]chan struct{}
 
+	// invalidationCh signals httpingress when a sandbox becomes non-RUNNING
+	invalidationCh chan SandboxInvalidation
+
 	log *slog.Logger
 	eac *entityserver_v1alpha.EntityAccessClient
 }
@@ -170,6 +184,7 @@ func NewLocalActivator(ctx context.Context, log *slog.Logger, eac *entityserver_
 		poolSandboxes:   make(map[entity.Id]*poolSandboxes),
 		pools:           make(map[verKey]*poolState),
 		newSandboxChans: make(map[verKey][]chan struct{}),
+		invalidationCh:  make(chan SandboxInvalidation, 64),
 	}
 
 	// Recover existing pools first (sandboxes need pools to exist)
@@ -963,12 +978,22 @@ func (a *localActivator) RenewLease(ctx context.Context, lease *Lease) (*Lease, 
 
 	for _, s := range ps.sandboxes {
 		if s.sandbox == lease.sandbox {
+			// Reject renewal if sandbox is no longer running.
+			// This ensures httpingress invalidates cached leases for
+			// stopped/dead sandboxes on the next renewal cycle.
+			if s.sandbox.Status != compute_v1alpha.RUNNING {
+				return nil, fmt.Errorf("sandbox %s is %s", s.sandbox.ID, s.sandbox.Status)
+			}
 			s.lastRenewal = time.Now()
 			return lease, nil
 		}
 	}
 
 	return nil, fmt.Errorf("sandbox not found")
+}
+
+func (a *localActivator) Invalidations() <-chan SandboxInvalidation {
+	return a.invalidationCh
 }
 
 func (a *localActivator) watchSandboxes(ctx context.Context) {
@@ -1069,6 +1094,16 @@ func (a *localActivator) watchSandboxes(ctx context.Context) {
 								}
 							}
 						}
+					}
+				}
+
+				// Signal httpingress to invalidate cached leases for this sandbox
+				// when it transitions away from RUNNING
+				if oldStatus == compute_v1alpha.RUNNING && sb.Status != compute_v1alpha.RUNNING {
+					select {
+					case a.invalidationCh <- SandboxInvalidation{SandboxID: sb.ID}:
+					default:
+						a.log.Warn("invalidation channel full, dropping notification", "sandbox", sb.ID)
 					}
 				}
 

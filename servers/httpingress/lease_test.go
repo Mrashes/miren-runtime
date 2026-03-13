@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"miren.dev/runtime/api/compute/compute_v1alpha"
 	"miren.dev/runtime/api/core/core_v1alpha"
 	"miren.dev/runtime/components/activator"
+	"miren.dev/runtime/pkg/entity"
 )
 
 // mockActivator implements activator.AppActivator for testing lease behavior.
@@ -43,6 +45,10 @@ func (m *mockActivator) RenewLease(ctx context.Context, lease *activator.Lease) 
 	m.renewCount++
 	m.renewedURLs = append(m.renewedURLs, lease.URL)
 	return lease, nil
+}
+
+func (m *mockActivator) Invalidations() <-chan activator.SandboxInvalidation {
+	return make(chan activator.SandboxInvalidation)
 }
 
 func newTestServer(aa *mockActivator) *Server {
@@ -368,4 +374,155 @@ func TestInvalidateAndReacquire(t *testing.T) {
 
 	srv.releaseLease(ctx, freshLL)
 	srv.releaseLease(ctx, got2)
+}
+
+func TestSandboxDeathInvalidatesCachedLease(t *testing.T) {
+	aa := &mockActivator{}
+	srv := newTestServer(aa)
+	ctx := context.Background()
+
+	sandboxID := entity.Id("sandbox/sb-1234")
+
+	// Cache a lease whose underlying sandbox is sb-1234
+	actLease := activator.NewTestLease(
+		&compute_v1alpha.Sandbox{ID: sandboxID, Status: compute_v1alpha.RUNNING},
+		10, "http://10.0.0.1:3000",
+	)
+	srv.retainLease(ctx, "app/myapp", actLease)
+
+	// Verify the lease is cached
+	got, err := srv.useLease(ctx, "app/myapp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected cached lease before sandbox death")
+	}
+	srv.releaseLease(ctx, got)
+
+	// Simulate sandbox going STOPPED — invalidate its leases
+	srv.invalidateSandboxLeases(ctx, sandboxID)
+
+	// Lease should be evicted
+	got, err = srv.useLease(ctx, "app/myapp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != nil {
+		t.Error("expected lease to be evicted after sandbox death, but got non-nil")
+	}
+
+	// ReleaseLease should have been called on the activator
+	aa.mu.Lock()
+	defer aa.mu.Unlock()
+	if aa.releaseCount != 1 {
+		t.Errorf("expected 1 ReleaseLease call, got %d", aa.releaseCount)
+	}
+}
+
+func TestSandboxDeathOnlyInvalidatesMatchingLeases(t *testing.T) {
+	aa := &mockActivator{}
+	srv := newTestServer(aa)
+	ctx := context.Background()
+
+	sandbox1 := entity.Id("sandbox/sb-1111")
+	sandbox2 := entity.Id("sandbox/sb-2222")
+
+	// Cache leases for two different sandboxes under the same app
+	lease1 := activator.NewTestLease(
+		&compute_v1alpha.Sandbox{ID: sandbox1, Status: compute_v1alpha.RUNNING},
+		10, "http://10.0.0.1:3000",
+	)
+	srv.retainLease(ctx, "app/myapp", lease1)
+
+	lease2 := activator.NewTestLease(
+		&compute_v1alpha.Sandbox{ID: sandbox2, Status: compute_v1alpha.RUNNING},
+		10, "http://10.0.0.2:3000",
+	)
+	srv.retainLease(ctx, "app/myapp", lease2)
+
+	// Kill sandbox1 only
+	srv.invalidateSandboxLeases(ctx, sandbox1)
+
+	// sandbox2's lease should still be usable
+	got, err := srv.useLease(ctx, "app/myapp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected sandbox2 lease to survive")
+	}
+	if got.Lease.URL != "http://10.0.0.2:3000" {
+		t.Errorf("expected sandbox2 URL, got %s", got.Lease.URL)
+	}
+	srv.releaseLease(ctx, got)
+
+	// Only 1 release call (for sandbox1)
+	aa.mu.Lock()
+	defer aa.mu.Unlock()
+	if aa.releaseCount != 1 {
+		t.Errorf("expected 1 ReleaseLease call, got %d", aa.releaseCount)
+	}
+}
+
+func TestSandboxDeathAcrossMultipleApps(t *testing.T) {
+	aa := &mockActivator{}
+	srv := newTestServer(aa)
+	ctx := context.Background()
+
+	sharedSandbox := entity.Id("sandbox/sb-shared")
+	otherSandbox := entity.Id("sandbox/sb-other")
+
+	// Two apps happen to have leases pointing at the same sandbox
+	lease1 := activator.NewTestLease(
+		&compute_v1alpha.Sandbox{ID: sharedSandbox, Status: compute_v1alpha.RUNNING},
+		10, "http://10.0.0.1:3000",
+	)
+	srv.retainLease(ctx, "app/alpha", lease1)
+
+	lease2 := activator.NewTestLease(
+		&compute_v1alpha.Sandbox{ID: sharedSandbox, Status: compute_v1alpha.RUNNING},
+		10, "http://10.0.0.1:3000",
+	)
+	srv.retainLease(ctx, "app/beta", lease2)
+
+	// A third app has a lease for a different sandbox
+	lease3 := activator.NewTestLease(
+		&compute_v1alpha.Sandbox{ID: otherSandbox, Status: compute_v1alpha.RUNNING},
+		10, "http://10.0.0.2:3000",
+	)
+	srv.retainLease(ctx, "app/gamma", lease3)
+
+	// Kill the shared sandbox
+	srv.invalidateSandboxLeases(ctx, sharedSandbox)
+
+	// alpha and beta should be evicted
+	for _, appKey := range []string{"app/alpha", "app/beta"} {
+		got, err := srv.useLease(ctx, appKey)
+		if err != nil {
+			t.Fatalf("unexpected error for %s: %v", appKey, err)
+		}
+		if got != nil {
+			t.Errorf("expected %s lease to be evicted, but got %s", appKey, got.Lease.URL)
+		}
+	}
+
+	// gamma should survive
+	got, err := srv.useLease(ctx, "app/gamma")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected app/gamma lease to survive")
+	}
+	if got.Lease.URL != "http://10.0.0.2:3000" {
+		t.Errorf("expected gamma URL, got %s", got.Lease.URL)
+	}
+	srv.releaseLease(ctx, got)
+
+	aa.mu.Lock()
+	defer aa.mu.Unlock()
+	if aa.releaseCount != 2 {
+		t.Errorf("expected 2 ReleaseLease calls, got %d", aa.releaseCount)
+	}
 }

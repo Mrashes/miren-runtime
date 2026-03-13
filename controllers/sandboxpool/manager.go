@@ -88,20 +88,23 @@ func (m *Manager) Reconcile(ctx context.Context, pool *compute_v1alpha.SandboxPo
 		}
 	}
 
-	// Detect recent crashes (sandboxes that died within 60s of creation)
-	newCrashes := m.countQuickCrashes(sandboxes, pool.LastCrashTime)
-	if newCrashes > 0 {
-		pool.ConsecutiveCrashCount += int64(newCrashes)
-		pool.LastCrashTime = time.Now()
-		pool.CooldownUntil = m.calculateBackoff(pool.ConsecutiveCrashCount)
+	// Skip crash detection for decommissioned pools (desired=0, no references).
+	// Sandbox deaths during intentional scale-down are expected, not crashes.
+	if pool.DesiredInstances > 0 || len(pool.ReferencedByVersions) > 0 {
+		newCrashes := m.countQuickCrashes(sandboxes, pool.LastCrashTime)
+		if newCrashes > 0 {
+			pool.ConsecutiveCrashCount += int64(newCrashes)
+			pool.LastCrashTime = time.Now()
+			pool.CooldownUntil = m.calculateBackoff(pool.ConsecutiveCrashCount)
 
-		m.log.Warn("crash detected, entering cooldown",
-			"pool", pool.ID,
-			"new_crashes", newCrashes,
-			"consecutive_crashes", pool.ConsecutiveCrashCount,
-			"cooldown_until", pool.CooldownUntil)
+			m.log.Warn("crash detected, entering cooldown",
+				"pool", pool.ID,
+				"new_crashes", newCrashes,
+				"consecutive_crashes", pool.ConsecutiveCrashCount,
+				"cooldown_until", pool.CooldownUntil)
 
-		// Pool crash state fields are already updated, framework will apply via entity.Diff
+			// Pool crash state fields are already updated, framework will apply via entity.Diff
+		}
 	}
 
 	// Check if pool is in cooldown
@@ -318,14 +321,11 @@ type sandboxWithMeta struct {
 
 // listSandboxes returns all sandboxes for a pool with their metadata
 func (m *Manager) listSandboxes(ctx context.Context, pool *compute_v1alpha.SandboxPool) ([]*sandboxWithMeta, error) {
-	var indexAttr entity.Attr
-	if pool.SandboxSpec.Version != "" {
-		// Query by version index for app pools (reduces O(N) to O(N_version))
-		indexAttr = entity.Ref(compute_v1alpha.SandboxSpecVersionId, pool.SandboxSpec.Version)
-	} else {
-		// Addon pools have no version; fall back to listing all sandboxes by kind
-		indexAttr = entity.Ref(entity.EntityKind, compute_v1alpha.KindSandbox)
-	}
+	// Always query all sandboxes by kind and filter by pool label.
+	// We used to query by pool.SandboxSpec.Version, but that field changes
+	// during pool reuse (when a new deploy has identical specs), causing the
+	// pool to lose visibility of its existing sandboxes.
+	indexAttr := entity.Ref(entity.EntityKind, compute_v1alpha.KindSandbox)
 
 	resp, err := m.eac.List(ctx, indexAttr)
 	if err != nil {

@@ -162,8 +162,51 @@ func NewServer(
 	}
 
 	go serv.checkLeases(ctx)
+	go serv.watchInvalidations(ctx)
 
 	return serv
+}
+
+// watchInvalidations listens for sandbox invalidation signals from the
+// activator and immediately drops any cached leases pointing to dead sandboxes.
+// This prevents requests from being routed to sandboxes that are shutting down.
+func (h *Server) watchInvalidations(ctx context.Context) {
+	ch := h.aa.Invalidations()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case inv, ok := <-ch:
+			if !ok {
+				return
+			}
+			h.invalidateSandboxLeases(ctx, inv.SandboxID)
+		}
+	}
+}
+
+// invalidateSandboxLeases removes all cached leases that point to the given sandbox.
+func (h *Server) invalidateSandboxLeases(ctx context.Context, sandboxID entity.Id) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for app, ar := range h.apps {
+		var kept []*lease
+		for _, l := range ar.leases {
+			if l.Lease.Sandbox().ID == sandboxID {
+				h.Log.Info("invalidating cached lease for stopped sandbox",
+					"app", app, "sandbox", sandboxID, "url", l.Lease.URL)
+				h.aa.ReleaseLease(ctx, l.Lease)
+			} else {
+				kept = append(kept, l)
+			}
+		}
+		if len(kept) == 0 {
+			delete(h.apps, app)
+		} else {
+			ar.leases = kept
+		}
+	}
 }
 
 func (h *Server) checkLeases(ctx context.Context) {
