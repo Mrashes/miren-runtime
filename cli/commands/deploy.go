@@ -609,7 +609,10 @@ func Deploy(ctx *Context, opts struct {
 					upload.FormatSpeed(avgSpeed))
 				if useOptimized && cachedFiles > 0 {
 					summary += fmt.Sprintf(", reused %d/%d files", cachedFiles, totalFiles)
-					if cachedBytes > 0 {
+					if cachedBytes > 0 && avgSpeed > 0 {
+						savedSec := float64(cachedBytes) / avgSpeed
+						summary += fmt.Sprintf(" (saved %s, ~%s)", upload.FormatBytes(cachedBytes), upload.FormatDuration(time.Duration(savedSec*float64(time.Second))))
+					} else if cachedBytes > 0 {
 						summary += fmt.Sprintf(" (saved %s)", upload.FormatBytes(cachedBytes))
 					}
 				}

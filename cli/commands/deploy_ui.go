@@ -173,7 +173,10 @@ func (m *deployInfo) uploadDetails() string {
 	}
 	if m.cachedFiles > 0 {
 		detail := fmt.Sprintf("reused %d/%d files", m.cachedFiles, m.totalFiles)
-		if m.cachedBytes > 0 {
+		if m.cachedBytes > 0 && m.finalUploadSpeed > 0 {
+			savedSec := float64(m.cachedBytes) / m.finalUploadSpeed
+			detail += fmt.Sprintf(" (saved %s, ~%s)", upload.FormatBytes(m.cachedBytes), upload.FormatDuration(time.Duration(savedSec*float64(time.Second))))
+		} else if m.cachedBytes > 0 {
 			detail += fmt.Sprintf(" (saved %s)", upload.FormatBytes(m.cachedBytes))
 		}
 		parts = append(parts, detail)
