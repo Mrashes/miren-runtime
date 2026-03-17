@@ -83,8 +83,7 @@ Runs TypeScript type checking without emitting files.
 docs/
 ├── docs/                  # Documentation markdown files
 │   ├── intro.md          # Home page
-│   ├── getting-started/  # Getting started guides
-│   └── cli/              # CLI reference documentation
+│   └── ...               # Feature, reference, and resource pages
 ├── src/
 │   ├── css/              # Custom CSS and theming
 │   ├── components/       # Custom React components
@@ -108,14 +107,9 @@ docs/
 
 ### Adding New Pages
 
-1. Create a new `.md` or `.mdx` file in the appropriate directory under `docs/`
-2. Add frontmatter at the top:
-   ```md
-   ---
-   sidebar_position: 1
-   ---
-   ```
-3. The sidebar will auto-generate based on the file structure
+1. Create a new `.md` or `.mdx` file in `docs/`
+2. Add the page's doc ID to the appropriate section in `sidebars.ts`
+3. Run `make docs-lint` to verify the sidebar and doc files are in sync
 
 ### Styling
 
