@@ -4,54 +4,15 @@ This directory contains the Miren documentation site built with [Docusaurus](htt
 
 ## Development Setup
 
-### For Nix Users (Recommended)
-
-If you have Nix installed, the development environment is automatically configured with bun:
+You'll need [bun](https://bun.sh) installed. If you use Nix, `nix develop` from the repo root will set that up for you.
 
 ```bash
-# Enter the Nix development shell (from repo root)
-nix develop
-
-# Navigate to docs directory
 cd docs
-
-# Install dependencies
 bun install
-
-# Start development server
 bun start
 ```
 
 The development server will be available at http://localhost:3333.
-
-### For Non-Nix Users
-
-If you don't use Nix, you'll need to install bun manually:
-
-**Requirements:**
-- Bun 1.0 or later
-
-**Installation:**
-
-1. Install bun from [bun.sh](https://bun.sh):
-   ```bash
-   # Linux/macOS
-   curl -fsSL https://bun.sh/install | bash
-
-   # Windows
-   powershell -c "irm bun.sh/install.ps1 | iex"
-   ```
-
-2. Install dependencies:
-   ```bash
-   cd docs
-   bun install
-   ```
-
-3. Start development server:
-   ```bash
-   bun start
-   ```
 
 ## Available Commands
 
