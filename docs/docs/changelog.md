@@ -5,6 +5,11 @@ All notable changes to Miren Runtime will be documented in this file.
 ## Unreleased
 *main*
 
+---
+
+## v0.6.0
+*2026-03-17*
+
 **Features**
 - **Disk storage system overhaul** - The disk subsystem has been rewritten with a new Universal mode backed by loop devices, replacing the previous LSVD/NBD architecture. Existing LSVD volumes are migrated automatically on first boot. Includes disk backup/restore support and a new cloud accelerator mode for segment upload/replay. ([#639](https://github.com/mirendev/runtime/pull/639))
 - **System logs accessible from the CLI** - `miren logs system` queries server logs directly from the CLI — same interface as app logs, with `--follow`, `--last`, and `--format json` all working. Under the hood, server logs are ingested into VictoriaLogs through a structured handler, so all attributes (module, level, error fields) are preserved and queryable. `miren logs` is also restructured into proper subcommands (`app`, `sandbox`, `build`, `system`) — bare `miren logs` still works as shorthand for `miren logs app`. ([#645](https://github.com/mirendev/runtime/pull/645), [#662](https://github.com/mirendev/runtime/pull/662), [#679](https://github.com/mirendev/runtime/pull/679))
