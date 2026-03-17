@@ -127,7 +127,10 @@ require (
 	miren.dev/mflags v0.0.0-20260313175018-d9ee90a8bb13
 )
 
-require github.com/aws/aws-sdk-go-v2/service/signin v1.0.5 // indirect
+require (
+	github.com/aws/aws-sdk-go-v2/service/signin v1.0.5 // indirect
+	github.com/coder/websocket v1.8.14 // indirect
+)
 
 require (
 	cel.dev/expr v0.24.0 // indirect

@@ -53,6 +53,7 @@ import (
 	"miren.dev/runtime/pkg/controller"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/entity/schema"
+	"miren.dev/runtime/pkg/globalrouter"
 	"miren.dev/runtime/pkg/labs"
 	"miren.dev/runtime/pkg/oidcauth"
 	"miren.dev/runtime/pkg/rpc"
@@ -1028,6 +1029,28 @@ func (c *Coordinator) Start(ctx context.Context) error {
 		}
 
 		go c.reportStatusPeriodically(ctx)
+	}
+
+	// Start global router for NAT traversal when enabled
+	if labs.GlobalRouter() && c.CloudAuth.Enabled && c.authClient != nil {
+		cloudURL := c.CloudAuth.CloudURL
+		if cloudURL == "" {
+			cloudURL = DefaultCloudURL
+		}
+
+		gr := globalrouter.New(globalrouter.Config{
+			CloudURL:   cloudURL,
+			ClusterXID: c.CloudAuth.ClusterID,
+			AuthClient: c.authClient,
+			Ingress:    c.hs,
+			Log:        c.Log.With("component", "globalrouter"),
+		})
+
+		go func() {
+			if err := gr.Run(ctx); err != nil && ctx.Err() == nil {
+				c.Log.Error("global router exited with error", "error", err)
+			}
+		}()
 	}
 
 	return nil
