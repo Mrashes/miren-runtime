@@ -111,8 +111,13 @@ func (m *POPManager) servePOP(ctx context.Context, pc *popConnection, cr Connect
 	}
 
 	resolvedAddr := net.JoinHostPort(ips[0], port)
+
+	// Skip TLS verification for non-global IPs (e.g. private POPs in dev/test).
+	resolvedIP := net.ParseIP(ips[0])
+	skipVerify := isNonPublicIP(resolvedIP)
+
 	m.log.Info("resolved POP address",
-		"original", addr, "resolved", resolvedAddr)
+		"original", addr, "resolved", resolvedAddr, "skip_tls_verify", skipVerify)
 
 	// Create a single UDP socket and QUIC transport for both connections.
 	udpConn, err := net.ListenUDP("udp", nil)
@@ -135,7 +140,7 @@ func (m *POPManager) servePOP(ctx context.Context, pc *popConnection, cr Connect
 	// --- Connection 1: Control plane (ALPN "h3") ---
 	controlTLS := &tls.Config{
 		NextProtos:         []string{http3.NextProtoH3},
-		InsecureSkipVerify: true,
+		InsecureSkipVerify: skipVerify,
 		ServerName:         host,
 	}
 
@@ -186,7 +191,7 @@ func (m *POPManager) servePOP(ctx context.Context, pc *popConnection, cr Connect
 	// --- Connection 2: Data plane (ALPN "pop-data") ---
 	dataTLS := &tls.Config{
 		NextProtos:         []string{popDataALPN},
-		InsecureSkipVerify: true,
+		InsecureSkipVerify: skipVerify,
 		ServerName:         host,
 	}
 
@@ -529,6 +534,13 @@ func (m *POPManager) ConnectedPOPs() []string {
 		xids = append(xids, xid)
 	}
 	return xids
+}
+
+// isNonPublicIP reports whether ip is nil or not a public address
+// (private, loopback, or link-local). Used to decide whether TLS
+// certificate verification can be skipped for dev/test POPs.
+func isNonPublicIP(ip net.IP) bool {
+	return ip == nil || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
 }
 
 // normalizeAddr ensures the address has a port and no scheme prefix.

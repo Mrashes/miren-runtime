@@ -1085,6 +1085,7 @@ func (c *Coordinator) runNetcheck(ctx context.Context) {
 			c.Log.Warn("netcheck: failed to check public reachability", "error", err)
 		}
 		c.netcheckMu.Lock()
+		c.netcheckResult = nil
 		c.netcheckCheckedAt = time.Now()
 		c.netcheckMu.Unlock()
 		return
@@ -1096,8 +1097,8 @@ func (c *Coordinator) runNetcheck(ctx context.Context) {
 	if sourceIP == nil || !sourceIP.IsGlobalUnicast() || sourceIP.IsPrivate() {
 		c.Log.Warn("netcheck: source address is not a public IP, ignoring result",
 			"source_address", result.SourceAddress)
-		// Cache the timestamp so we don't re-run constantly
 		c.netcheckMu.Lock()
+		c.netcheckResult = nil
 		c.netcheckCheckedAt = time.Now()
 		c.netcheckMu.Unlock()
 		return
@@ -1132,17 +1133,22 @@ func (c *Coordinator) publicAddresses() []string {
 		return nil
 	}
 
+	if net.ParseIP(result.SourceAddress) == nil {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
 	var addrs []string
 	for _, r := range result.Results {
-		if r.Reachable {
-			ip := net.ParseIP(result.SourceAddress)
-			if ip == nil {
-				continue
-			}
-
-			addrs = append(addrs,
-				net.JoinHostPort(result.SourceAddress, strconv.Itoa(r.Port)))
+		if !r.Reachable {
+			continue
 		}
+		hp := net.JoinHostPort(result.SourceAddress, strconv.Itoa(r.Port))
+		if _, ok := seen[hp]; ok {
+			continue
+		}
+		seen[hp] = struct{}{}
+		addrs = append(addrs, hp)
 	}
 
 	return addrs
@@ -1163,7 +1169,7 @@ func (c *Coordinator) apiAddresses() []string {
 	addrs = append(addrs, "127.0.0.1:8443", "[::1]:8443")
 
 	c.netcheckMu.RLock()
-	hasNetcheck := !c.netcheckCheckedAt.IsZero()
+	hasNetcheck := c.netcheckResult != nil
 	c.netcheckMu.RUnlock()
 
 	for _, ip := range c.AdditionalIPs {
