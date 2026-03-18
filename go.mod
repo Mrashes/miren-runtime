@@ -14,6 +14,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.2.4
 	github.com/charmbracelet/lipgloss v1.0.0
 	github.com/cilium/ebpf v0.16.0
+	github.com/coder/websocket v1.8.14
 	github.com/containerd/cgroups/v3 v3.0.5
 	github.com/containerd/console v1.0.4
 	github.com/containerd/containerd v1.7.23
@@ -127,10 +128,7 @@ require (
 	miren.dev/mflags v0.0.0-20260313175018-d9ee90a8bb13
 )
 
-require (
-	github.com/aws/aws-sdk-go-v2/service/signin v1.0.5 // indirect
-	github.com/coder/websocket v1.8.14 // indirect
-)
+require github.com/aws/aws-sdk-go-v2/service/signin v1.0.5 // indirect
 
 require (
 	cel.dev/expr v0.24.0 // indirect
