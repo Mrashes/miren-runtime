@@ -6,8 +6,21 @@ import (
 	"miren.dev/runtime/pkg/entity"
 )
 
+// LocalityMode describes where an addon's backing resources run.
+type LocalityMode string
+
+const (
+	// OnCluster means the addon runs within the Miren cluster.
+	OnCluster LocalityMode = "on_cluster"
+	// Remote means the addon connects to an external service.
+	Remote LocalityMode = "remote"
+)
+
 // AddonProvider defines the interface that addon implementations must satisfy.
 type AddonProvider interface {
+	// LocalityMode returns where this addon's backing resources run.
+	LocalityMode() LocalityMode
+
 	// Provision creates the backing resources for an addon and returns the
 	// environment variables and entity attributes to store.
 	Provision(ctx context.Context, app App, variant Variant) (*ProvisionResult, error)

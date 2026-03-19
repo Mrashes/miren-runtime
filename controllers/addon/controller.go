@@ -87,10 +87,11 @@ func (c *Controller) provision(ctx context.Context, assoc *addon_v1alpha.AddonAs
 	}
 
 	// Step 2: Call provider.Provision
-	result, err := provider.Provision(ctx, addon.App{
+	app := addon.App{
 		ID:   assoc.App,
 		Name: appName,
-	}, addon.Variant{
+	}
+	result, err := provider.Provision(ctx, app, addon.Variant{
 		Name:   assoc.Variant,
 		Config: variantConfig,
 	})
@@ -98,17 +99,48 @@ func (c *Controller) provision(ctx context.Context, assoc *addon_v1alpha.AddonAs
 		return c.setError(meta, fmt.Errorf("provisioning: %w", err))
 	}
 
+	// Steps 3-6: Complete provisioning. If any post-provision step fails,
+	// compensate by calling Deprovision to clean up the resources that were
+	// just created.
+	if err := c.completeProvision(ctx, assoc, meta, provider, result); err != nil {
+		depErr := provider.Deprovision(ctx, addon.AddonAssociation{
+			ID:      assoc.ID,
+			App:     assoc.App,
+			Addon:   assoc.Addon,
+			Variant: assoc.Variant,
+			Entity:  meta.Entity,
+		})
+		if depErr != nil {
+			c.log.Error("compensation deprovision failed", "error", depErr)
+		}
+		return c.setError(meta, err)
+	}
+
+	c.log.Info("addon provisioned", "association", assoc.ID)
+	return nil
+}
+
+// completeProvision performs the post-provision steps (attrs, env vars, version
+// creation, status update). It is separated so that the caller can compensate
+// by deprovisioning if any step fails.
+func (c *Controller) completeProvision(
+	ctx context.Context,
+	assoc *addon_v1alpha.AddonAssociation,
+	meta *entity.Meta,
+	provider addon.AddonProvider,
+	result *addon.ProvisionResult,
+) error {
 	// Step 3: Append provider attrs to association entity
 	if len(result.Attrs) > 0 {
 		if err := meta.Update(result.Attrs); err != nil {
-			return c.setError(meta, fmt.Errorf("appending provider attrs: %w", err))
+			return fmt.Errorf("appending provider attrs: %w", err)
 		}
 	}
 
 	// Step 4: Check for env var collisions and adjust if needed
 	existingVars, err := c.getAppVariables(ctx, assoc.App)
 	if err != nil {
-		return c.setError(meta, fmt.Errorf("getting existing app variables: %w", err))
+		return fmt.Errorf("getting existing app variables: %w", err)
 	}
 
 	envVars := result.EnvVars
@@ -122,15 +154,14 @@ func (c *Controller) provision(ctx context.Context, assoc *addon_v1alpha.AddonAs
 			Entity:  meta.Entity,
 		}, collisions)
 		if err != nil {
-			return c.setError(meta, fmt.Errorf("adjusting env vars: %w", err))
+			return fmt.Errorf("adjusting env vars: %w", err)
 		}
 		envVars = adjusted
 	}
 
 	// Step 5: Create a new AppVersion with addon env vars merged in and activate it.
-	// This ensures the launcher always reads a version that has all vars baked in.
 	if err := c.createVersionWithAddonVars(ctx, assoc.App, envVars); err != nil {
-		return c.setError(meta, fmt.Errorf("creating version with addon vars: %w", err))
+		return fmt.Errorf("creating version with addon vars: %w", err)
 	}
 
 	// Store variables on the association for later removal
@@ -151,7 +182,6 @@ func (c *Controller) provision(ctx context.Context, assoc *addon_v1alpha.AddonAs
 		return fmt.Errorf("setting status to active: %w", err)
 	}
 
-	c.log.Info("addon provisioned", "association", assoc.ID)
 	return nil
 }
 
@@ -186,7 +216,7 @@ func (c *Controller) deprovision(ctx context.Context, assoc *addon_v1alpha.Addon
 
 	// Step 2: Remove addon env vars from app ConfigVersion
 	if err := c.removeEnvVars(ctx, assoc.App, assoc.Variables); err != nil {
-		c.log.Warn("failed to remove addon env vars", "error", err)
+		return fmt.Errorf("removing addon env vars: %w", err)
 	}
 
 	// Step 3: Delete the association entity
