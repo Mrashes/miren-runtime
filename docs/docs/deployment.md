@@ -81,7 +81,7 @@ Skip the build entirely and redeploy a previously built version:
 miren deploy --version myapp-vCVkjR6u7744AsMebwMjGU
 ```
 
-Useful for rolling forward to a known-good version or redeploying after changing environment variables.
+Useful for rolling forward to a known-good version without waiting for a new build.
 
 Find version IDs with `miren app history` (see [Deployment History](#deployment-history) below).
 
