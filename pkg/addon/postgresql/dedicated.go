@@ -358,9 +358,9 @@ type LookupDedicatedServerIn struct {
 }
 
 type LookupDedicatedServerOut struct {
-	DedicatedServiceID   entity.Id
-	DedicatedPoolID      entity.Id
-	DedicatedServerName  string
+	DedicatedServiceID  entity.Id
+	DedicatedPoolID     entity.Id
+	DedicatedServerName string
 }
 
 func LookupDedicatedServer(ctx context.Context, in LookupDedicatedServerIn) (LookupDedicatedServerOut, error) {

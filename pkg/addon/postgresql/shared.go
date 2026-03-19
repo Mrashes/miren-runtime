@@ -788,11 +788,11 @@ func UndoDecrementAssociationCount(ctx context.Context, in DecrementAssociationC
 }
 
 type CleanupSharedServerIn struct {
-	SharedServerRef        entity.Id
-	SharedServiceRef       entity.Id
-	SharedPoolRef          entity.Id
+	SharedServerRef         entity.Id
+	SharedServiceRef        entity.Id
+	SharedPoolRef           entity.Id
 	SharedSuperuserPassword string
-	RemainingCount         int64
+	RemainingCount          int64
 }
 
 type CleanupSharedServerOut struct {
