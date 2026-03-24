@@ -2,6 +2,10 @@
 
 Updates to Miren Cloud, the hosted management service for Miren clusters.
 
+## March 2026
+
+- **App Subdomains** - Claim custom subdomains (e.g. `mycluster.run.garden`, `mycluster.miren.app`) and assign them to your clusters with automatic DNS provisioning. See [Subdomains](/miren-cloud/subdomains).
+
 ## January 2026
 
 - Fixed registration expiration display showing incorrect dates
