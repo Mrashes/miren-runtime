@@ -31,13 +31,13 @@ Once you've claimed a subdomain, click on it and choose **Assign to Cluster**. P
 With the subdomain assigned to your cluster, the last step is telling Miren which app should handle the traffic:
 
 ```bash
-miren route set mycluster.run.garden --app myapp
+miren route set mycluster.run.garden myapp
 ```
 
 You can also route wildcard subdomains to an app:
 
 ```bash
-miren route set '*.mycluster.run.garden' --app myapp
+miren route set '*.mycluster.run.garden' myapp
 ```
 
 See [Traffic Routing](/traffic-routing) for more on how routes work.
