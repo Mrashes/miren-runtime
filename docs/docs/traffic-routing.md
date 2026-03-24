@@ -22,7 +22,7 @@ Requests to that hostname are forwarded to your `web` service. TLS certificates 
 Route all subdomains of a domain to a single app using a wildcard:
 
 ```bash
-miren route set *.myapp.example.com myapp
+miren route set '*.myapp.example.com' myapp
 ```
 
 A wildcard route `*.myapp.example.com` matches any subdomain like `foo.myapp.example.com` or `bar.myapp.example.com`. It does **not** match the bare domain `myapp.example.com` — add a separate route for that if needed.
