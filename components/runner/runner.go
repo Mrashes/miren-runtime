@@ -119,6 +119,10 @@ type waitCloser struct{ s interface{ Wait() } }
 
 func (c waitCloser) Close() error { c.s.Wait(); return nil }
 
+type stopCloser struct{ s interface{ Stop() } }
+
+func (c stopCloser) Close() error { c.s.Stop(); return nil }
+
 func NewRunner(log *slog.Logger, deps RunnerDeps, cfg RunnerConfig) (*Runner, error) {
 	if cfg.DataPath == "" {
 		return nil, fmt.Errorf("data_path is required")
@@ -158,8 +162,9 @@ type Runner struct {
 	sbController sandbox.SandboxLifecycle
 
 	// Disk controllers, stored for SetRestartMode propagation
-	dvc *diskio.DiskVolumeController
-	dmc *diskio.DiskMountController
+	dvc    *diskio.DiskVolumeController
+	dmc    *diskio.DiskMountController
+	diskGC *diskio.DeletedVolumeGC
 }
 
 func (r *Runner) Close() error {
@@ -678,6 +683,15 @@ func (r *Runner) SetupControllers(
 	if err := r.dmc.ReconcileWithEntities(ctx); err != nil {
 		log.Warn("failed to reconcile disk mounts on startup", "error", err)
 	}
+
+	// Start deleted volume GC to purge soft-deleted disk volumes after retention period
+	r.diskGC = &diskio.DeletedVolumeGC{
+		Log:      log.With("module", "deleted-volume-gc"),
+		DataPath: dataPath,
+		Config:   diskio.DefaultDeletedVolumeGCConfig(),
+	}
+	r.diskGC.Start(ctx)
+	r.closers = append(r.closers, stopCloser{r.diskGC})
 
 	// Register volume controller shutdown before mount controller so mounts
 	// owned by the volume controller are cleaned up first

@@ -124,9 +124,10 @@ func TestDiskVolumeControllerReconcileVolumeAbsent(t *testing.T) {
 	err := vc.ReconcileWithEntities(ctx)
 	require.NoError(t, err)
 
-	// Verify volume directory was removed
-	assert.Len(t, ops.removedDirs, 1)
-	assert.Equal(t, "/data/volumes/vol-456", ops.removedDirs[0])
+	// Verify volume directory was soft-deleted (moved, not removed)
+	assert.Len(t, ops.movedDirs, 1)
+	assert.Equal(t, "/data/volumes/vol-456", ops.movedDirs[0].src)
+	assert.Contains(t, ops.movedDirs[0].dst, "deleted-volumes")
 
 	// Verify state was cleaned up
 	assert.Nil(t, state.GetVolume("disk_volume/vol-456"))
@@ -1369,8 +1370,10 @@ func TestDiskVolumeControllerUniversalUnmountOnDelete(t *testing.T) {
 	assert.Contains(t, mntOps.unmounts, mountPath)
 	// Verify loop detach was called
 	assert.Contains(t, mntOps.detachedLoops, "/dev/loop3")
-	// Verify volume directory was removed
-	assert.Contains(t, volOps.removedDirs, "/data/volumes/vol-del")
+	// Verify volume directory was soft-deleted (moved, not removed)
+	require.Len(t, volOps.movedDirs, 1)
+	assert.Equal(t, "/data/volumes/vol-del", volOps.movedDirs[0].src)
+	assert.Contains(t, volOps.movedDirs[0].dst, "deleted-volumes")
 }
 
 func TestDiskVolumeControllerShutdown(t *testing.T) {
