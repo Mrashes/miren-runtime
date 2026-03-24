@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	toml "github.com/pelletier/go-toml/v2"
 )
+
+var aliasWordRegexp = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
 type AppEnvVar struct {
 	Key         string `json:"key" toml:"key"`
@@ -80,6 +84,7 @@ type AppConfig struct {
 	Build       *BuildConfig              `toml:"build"`
 	Include     []string                  `toml:"include"`
 	Addons      map[string]*AddonConfig   `toml:"addons"`
+	Aliases     map[string]string         `toml:"aliases"`
 }
 
 const AppConfigPath = ".miren/app.toml"
@@ -300,6 +305,21 @@ func (ac *AppConfig) Validate() error {
 					}
 				}
 			}
+		}
+	}
+
+	for name, target := range ac.Aliases {
+		words := strings.Fields(name)
+		if len(words) == 0 {
+			return fmt.Errorf("alias %q: name must not be empty", name)
+		}
+		for _, word := range words {
+			if !aliasWordRegexp.MatchString(word) {
+				return fmt.Errorf("alias %q: each word must start with a lowercase letter and contain only lowercase letters, numbers, dashes, and underscores", name)
+			}
+		}
+		if strings.TrimSpace(target) == "" {
+			return fmt.Errorf("alias %q: command must not be empty", name)
 		}
 	}
 

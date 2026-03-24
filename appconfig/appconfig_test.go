@@ -156,6 +156,68 @@ num_instances = 1
 `,
 			wantErr: "",
 		},
+		{
+			name: "valid aliases",
+			config: `
+name = "test-app"
+
+[aliases]
+console = "app exec -i bin/rails console"
+logs = "app logs -f"
+`,
+			wantErr: "",
+		},
+		{
+			name: "valid multi-word alias",
+			config: `
+name = "test-app"
+
+[aliases]
+"x logs" = "app logs -f"
+"x console" = "app exec -i bin/rails console"
+`,
+			wantErr: "",
+		},
+		{
+			name: "invalid alias name with uppercase",
+			config: `
+name = "test-app"
+
+[aliases]
+Console = "app exec"
+`,
+			wantErr: "each word must start with a lowercase letter",
+		},
+		{
+			name: "invalid alias name starting with number",
+			config: `
+name = "test-app"
+
+[aliases]
+"1console" = "app exec"
+`,
+			wantErr: "each word must start with a lowercase letter",
+		},
+		{
+			name: "empty alias target",
+			config: `
+name = "test-app"
+
+[aliases]
+console = ""
+`,
+			wantErr: `alias "console": command must not be empty`,
+		},
+		{
+			name: "whitespace-only alias target",
+			config: `
+name = "test-app"
+
+[aliases]
+console = "   "
+`,
+			wantErr: `alias "console": command must not be empty`,
+		},
 	}
 
 	for _, tt := range tests {

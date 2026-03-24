@@ -844,6 +844,7 @@ Warning: These commands are intended for advanced users and developers. They may
 
 	// Help command (registered last so it can reference all other commands)
 	d.Dispatch("help", NewHelpCommand(d))
+	d.Dispatch("help alias", Infer("help alias", "Learn how to define and use CLI aliases", HelpAlias))
 
 	addCommands(d)
 }
