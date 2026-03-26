@@ -41,7 +41,13 @@ func Run(args []string) int {
 		return 0
 	}
 
-	err := d.Execute(args[1:])
+	execArgs, err := expandAlias(d, args[1:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %s\n", err)
+		return 1
+	}
+
+	err = d.Execute(execArgs)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return 0

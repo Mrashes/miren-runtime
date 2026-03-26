@@ -22,6 +22,7 @@ const sidebars: SidebarsConfig = {
       label: 'Features',
       collapsed: false,
       items: [
+        'deployment',
         'app-configuration',
         'languages',
         'services',
@@ -34,9 +35,26 @@ const sidebars: SidebarsConfig = {
         'route-oidc',
         'ci-deploy',
         'admin-interface',
-        'working-with-miren-cloud',
         'observability',
         'logs',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Miren Cloud',
+      collapsed: false,
+      items: [
+        {
+          type: 'doc',
+          id: 'miren-cloud/overview',
+          label: 'Overview',
+        },
+        'miren-cloud/subdomains',
+        {
+          type: 'doc',
+          id: 'miren-cloud/cloud-updates',
+          label: 'Updates',
+        },
       ],
     },
     {
@@ -68,7 +86,6 @@ const sidebars: SidebarsConfig = {
         'terminology',
         'labs',
         'changelog',
-        'cloud-updates',
         'conduct',
         {
           type: 'link',

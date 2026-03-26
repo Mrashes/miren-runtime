@@ -1,6 +1,8 @@
 package appconfig
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -155,6 +157,68 @@ mode = "fixed"
 num_instances = 1
 `,
 			wantErr: "",
+		},
+		{
+			name: "valid aliases",
+			config: `
+name = "test-app"
+
+[aliases]
+console = "app exec -i bin/rails console"
+logs = "app logs -f"
+`,
+			wantErr: "",
+		},
+		{
+			name: "valid multi-word alias",
+			config: `
+name = "test-app"
+
+[aliases]
+"x logs" = "app logs -f"
+"x console" = "app exec -i bin/rails console"
+`,
+			wantErr: "",
+		},
+		{
+			name: "invalid alias name with uppercase",
+			config: `
+name = "test-app"
+
+[aliases]
+Console = "app exec"
+`,
+			wantErr: "each word must start with a lowercase letter",
+		},
+		{
+			name: "invalid alias name starting with number",
+			config: `
+name = "test-app"
+
+[aliases]
+"1console" = "app exec"
+`,
+			wantErr: "each word must start with a lowercase letter",
+		},
+		{
+			name: "empty alias target",
+			config: `
+name = "test-app"
+
+[aliases]
+console = ""
+`,
+			wantErr: `alias "console": command must not be empty`,
+		},
+		{
+			name: "whitespace-only alias target",
+			config: `
+name = "test-app"
+
+[aliases]
+console = "   "
+`,
+			wantErr: `alias "console": command must not be empty`,
 		},
 	}
 
@@ -1197,4 +1261,24 @@ size_gb = 20
 		require.NotNil(t, ac)
 		assert.Equal(t, 20, ac.Services["database"].Disks[0].SizeGB)
 	})
+}
+
+func TestAliasLineNumbers(t *testing.T) {
+	config := `name = "test-app"
+
+[aliases]
+console = "app run bin/rails console"
+tail = "logs app -f"
+"x console" = "app exec -i bin/rails console"
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.toml")
+	require.NoError(t, os.WriteFile(path, []byte(config), 0644))
+
+	lines := AliasLineNumbers(path)
+	require.NotNil(t, lines)
+
+	assert.Equal(t, 4, lines["console"])
+	assert.Equal(t, 5, lines["tail"])
+	assert.Equal(t, 6, lines["x console"])
 }

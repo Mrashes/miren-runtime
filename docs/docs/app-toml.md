@@ -1,5 +1,4 @@
 ---
-sidebar_position: 20
 sidebar_label: app.toml
 ---
 
@@ -57,6 +56,11 @@ size_gb = 20
 # Addons
 [addons.storage]
 variant = "minio"
+
+# CLI Aliases
+[aliases]
+console = "app run bin/rails console"
+tail = "logs app -f"
 ```
 
 ## Top-Level Fields
@@ -265,6 +269,40 @@ variant = "small"
 Run `miren addon variants <addon-name>` to see available variants.
 
 Addons removed from app.toml are automatically deprovisioned on the next deploy.
+
+## `[aliases]` — CLI Aliases {#aliases}
+
+Defines custom shortcuts for frequently-used CLI commands. When you run `miren <alias>`, it expands to the full command before execution.
+
+```toml
+[aliases]
+console = "app run bin/rails console"
+tail = "logs app -f"
+```
+
+With the above configuration:
+
+- `miren console` expands to `miren app run bin/rails console`
+- `miren tail` expands to `miren logs app -f`
+
+Alias names can contain multiple words, which lets you create command namespaces:
+
+```toml
+[aliases]
+"x tail" = "logs app -f"
+"x console" = "app run bin/rails console"
+```
+
+Then `miren x tail` and `miren x console` work as shortcuts.
+
+Any extra arguments you pass after the alias name are appended to the expanded command.
+
+:::note Validation
+- Each word in the alias name must start with a lowercase letter and contain only lowercase letters, numbers, dashes, and underscores.
+- The command string must not be empty.
+- Alias names must not shadow built-in commands (e.g. you cannot define an alias named `version` or `app list`).
+- Aliases are expanded only once — an alias cannot reference another alias.
+:::
 
 ## Duration Format
 

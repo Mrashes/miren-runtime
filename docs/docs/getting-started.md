@@ -1,6 +1,3 @@
----
-sidebar_position: 2
----
 
 # Getting Started
 
@@ -49,7 +46,7 @@ sudo miren server install
 
 This will:
 - Download required components
-- Register your cluster with [miren.cloud](/working-with-miren-cloud) (follow the prompts)
+- Register your cluster with [miren.cloud](/miren-cloud/overview) (follow the prompts)
 - Install and start the Miren systemd service
 - Configure your CLI to use the local cluster
 
