@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"miren.dev/runtime/api/compute/compute_v1alpha"
+	"miren.dev/runtime/api/entityserver"
 	"miren.dev/runtime/pkg/controller"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/entity/testutils"
@@ -46,6 +47,28 @@ func reconcileSandbox(t *testing.T, ctx context.Context, server *testutils.InMem
 	require.NoError(t, err)
 }
 
+// createReadyNode creates a node entity with Status: READY using a session,
+// matching the production pattern where the runner sets its own status via a
+// session-scoped attribute.
+func createReadyNode(t *testing.T, ctx context.Context, client *entityserver.Client, name string, node *compute_v1alpha.Node) entity.Id {
+	t.Helper()
+
+	// Create the node without the session-scoped status attribute
+	status := node.Status
+	node.Status = ""
+	nodeID, err := client.Create(ctx, name, node)
+	require.NoError(t, err)
+
+	// Set status via a session-enabled client (status is session-scoped)
+	_, sc, err := client.NewSession(ctx, "test node health")
+	require.NoError(t, err)
+
+	err = sc.UpdateAttrs(ctx, nodeID, (&compute_v1alpha.Node{Status: status}).Encode)
+	require.NoError(t, err)
+
+	return nodeID
+}
+
 // TestSchedulerAssignsUnscheduledSandbox tests that the scheduler assigns
 // a node to a sandbox that doesn't have a ScheduleKey
 func TestSchedulerAssignsUnscheduledSandbox(t *testing.T) {
@@ -55,16 +78,14 @@ func TestSchedulerAssignsUnscheduledSandbox(t *testing.T) {
 	server, cleanup := testutils.NewInMemEntityServer(t)
 	defer cleanup()
 
-	// Create a ready node
-	node := &compute_v1alpha.Node{
+	// Create a ready node (status is session-scoped, so use the helper)
+	nodeID := createReadyNode(t, ctx, server.Client, "test-node", &compute_v1alpha.Node{
 		Status: compute_v1alpha.READY,
-	}
-	nodeID, err := server.Client.Create(ctx, "test-node", node)
-	require.NoError(t, err)
+	})
 
 	// Create scheduler and initialize (gathers nodes)
 	scheduler := NewController(log, server.EAC)
-	err = scheduler.Init(ctx)
+	err := scheduler.Init(ctx)
 	require.NoError(t, err)
 
 	// Create an unscheduled sandbox
@@ -103,17 +124,16 @@ func TestSchedulerSkipsAlreadyScheduledSandbox(t *testing.T) {
 	defer cleanup()
 
 	// Create two ready nodes
-	node1 := &compute_v1alpha.Node{Status: compute_v1alpha.READY}
-	node1ID, err := server.Client.Create(ctx, "node-1", node1)
-	require.NoError(t, err)
-
-	node2 := &compute_v1alpha.Node{Status: compute_v1alpha.READY}
-	_, err = server.Client.Create(ctx, "node-2", node2)
-	require.NoError(t, err)
+	node1ID := createReadyNode(t, ctx, server.Client, "node-1", &compute_v1alpha.Node{
+		Status: compute_v1alpha.READY,
+	})
+	createReadyNode(t, ctx, server.Client, "node-2", &compute_v1alpha.Node{
+		Status: compute_v1alpha.READY,
+	})
 
 	// Create scheduler and initialize
 	scheduler := NewController(log, server.EAC)
-	err = scheduler.Init(ctx)
+	err := scheduler.Init(ctx)
 	require.NoError(t, err)
 
 	// Create a sandbox that's already scheduled to node1
@@ -167,15 +187,13 @@ func TestSchedulerNoAvailableNodes(t *testing.T) {
 	defer cleanup()
 
 	// Create a node that's not ready
-	node := &compute_v1alpha.Node{
+	createReadyNode(t, ctx, server.Client, "disabled-node", &compute_v1alpha.Node{
 		Status: compute_v1alpha.DISABLED,
-	}
-	_, err := server.Client.Create(ctx, "disabled-node", node)
-	require.NoError(t, err)
+	})
 
 	// Create scheduler and initialize
 	scheduler := NewController(log, server.EAC)
-	err = scheduler.Init(ctx)
+	err := scheduler.Init(ctx)
 	require.NoError(t, err)
 
 	// Create an unscheduled sandbox
@@ -208,9 +226,9 @@ func TestSchedulerMultipleNodes(t *testing.T) {
 	// Create multiple ready nodes
 	nodeIDs := make(map[entity.Id]bool)
 	for i := 0; i < 3; i++ {
-		node := &compute_v1alpha.Node{Status: compute_v1alpha.READY}
-		nodeID, err := server.Client.Create(ctx, "", node)
-		require.NoError(t, err)
+		nodeID := createReadyNode(t, ctx, server.Client, "", &compute_v1alpha.Node{
+			Status: compute_v1alpha.READY,
+		})
 		nodeIDs[nodeID] = true
 	}
 
@@ -249,24 +267,20 @@ func TestSchedulerStatefulSandboxGoesToCoordinator(t *testing.T) {
 	defer cleanup()
 
 	// Create a coordinator node (role=coordinator constraint)
-	coordNode := &compute_v1alpha.Node{
+	coordNodeID := createReadyNode(t, ctx, server.Client, "coordinator", &compute_v1alpha.Node{
 		Status:      compute_v1alpha.READY,
 		Constraints: types.LabelSet("role", "coordinator"),
-	}
-	coordNodeID, err := server.Client.Create(ctx, "coordinator", coordNode)
-	require.NoError(t, err)
+	})
 
 	// Create a runner node
-	runnerNode := &compute_v1alpha.Node{
+	createReadyNode(t, ctx, server.Client, "runner", &compute_v1alpha.Node{
 		Status:   compute_v1alpha.READY,
 		RunnerId: "550e8400-e29b-41d4-a716-446655440000",
-	}
-	_, err = server.Client.Create(ctx, "runner", runnerNode)
-	require.NoError(t, err)
+	})
 
 	// Create scheduler and initialize
 	scheduler := NewController(log, server.EAC)
-	err = scheduler.Init(ctx)
+	err := scheduler.Init(ctx)
 	require.NoError(t, err)
 
 	// Create a stateful sandbox (has miren disk volume)
@@ -310,28 +324,24 @@ func TestSchedulerStatelessSandboxPrefersRunners(t *testing.T) {
 	defer cleanup()
 
 	// Create a coordinator node (role=coordinator constraint)
-	coordNode := &compute_v1alpha.Node{
+	coordNodeID := createReadyNode(t, ctx, server.Client, "coordinator", &compute_v1alpha.Node{
 		Status:      compute_v1alpha.READY,
 		Constraints: types.LabelSet("role", "coordinator"),
-	}
-	coordNodeID, err := server.Client.Create(ctx, "coordinator", coordNode)
-	require.NoError(t, err)
+	})
 
 	// Create multiple runner nodes
 	runnerIDs := make(map[entity.Id]bool)
 	for i := 0; i < 3; i++ {
-		runnerNode := &compute_v1alpha.Node{
+		runnerID := createReadyNode(t, ctx, server.Client, "", &compute_v1alpha.Node{
 			Status:   compute_v1alpha.READY,
 			RunnerId: "550e8400-e29b-41d4-a716-44665544000" + string(rune('0'+i)),
-		}
-		runnerID, err := server.Client.Create(ctx, "", runnerNode)
-		require.NoError(t, err)
+		})
 		runnerIDs[runnerID] = true
 	}
 
 	// Create scheduler and initialize
 	scheduler := NewController(log, server.EAC)
-	err = scheduler.Init(ctx)
+	err := scheduler.Init(ctx)
 	require.NoError(t, err)
 
 	// Create and schedule multiple stateless sandboxes
@@ -370,16 +380,14 @@ func TestSchedulerStatelessFallsBackToCoordinator(t *testing.T) {
 	defer cleanup()
 
 	// Create only a coordinator node (no runners)
-	coordNode := &compute_v1alpha.Node{
+	coordNodeID := createReadyNode(t, ctx, server.Client, "coordinator", &compute_v1alpha.Node{
 		Status:      compute_v1alpha.READY,
 		Constraints: types.LabelSet("role", "coordinator"),
-	}
-	coordNodeID, err := server.Client.Create(ctx, "coordinator", coordNode)
-	require.NoError(t, err)
+	})
 
 	// Create scheduler and initialize
 	scheduler := NewController(log, server.EAC)
-	err = scheduler.Init(ctx)
+	err := scheduler.Init(ctx)
 	require.NoError(t, err)
 
 	// Create a stateless sandbox
