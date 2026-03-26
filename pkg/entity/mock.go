@@ -2,6 +2,7 @@ package entity
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -101,7 +102,34 @@ func (m *MockStore) GetEntities(ctx context.Context, ids []Id) ([]*Entity, error
 	return entities, nil
 }
 
+// validateSessionAttrs checks that if any attributes are session-scoped,
+// a session ID was provided via EntityOption. This matches EtcdStore behavior.
+func (m *MockStore) validateSessionAttrs(ctx context.Context, attrs []Attr, opts []EntityOption) error {
+	var o entityOpts
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	for _, attr := range attrs {
+		schema, err := m.GetAttributeSchema(ctx, attr.ID)
+		if err != nil {
+			continue
+		}
+		if schema.Session {
+			if len(o.session) == 0 {
+				return fmt.Errorf("session ID is required for session attributes")
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
 func (m *MockStore) CreateEntity(ctx context.Context, entity *Entity, opts ...EntityOption) (*Entity, error) {
+	if err := m.validateSessionAttrs(ctx, entity.attrs, opts); err != nil {
+		return nil, err
+	}
+
 	// Set CreatedAt if not already set (store manages this timestamp)
 	if entity.GetCreatedAt().IsZero() {
 		entity.SetCreatedAt(m.Now())
@@ -120,6 +148,10 @@ func (m *MockStore) CreateEntity(ctx context.Context, entity *Entity, opts ...En
 }
 
 func (m *MockStore) UpdateEntity(ctx context.Context, id Id, entity *Entity, opts ...EntityOption) (*Entity, error) {
+	if err := m.validateSessionAttrs(ctx, entity.attrs, opts); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	e, ok := m.Entities[id]
 	if !ok {
@@ -482,8 +514,18 @@ func (m *MockStore) RevokeSession(ctx context.Context, id []byte) error {
 }
 
 func (m *MockStore) GetAttributeSchema(ctx context.Context, id Id) (*AttributeSchema, error) {
-	// For simplicity, return a mock schema
-	return &AttributeSchema{
-		ID: id,
-	}, nil
+	// Look up the schema entity from the store, just like EtcdStore does.
+	// Schema entities are created by schema.Apply during test setup.
+	m.mu.RLock()
+	entity, ok := m.Entities[id]
+	m.mu.RUnlock()
+
+	if ok {
+		schema, err := convertEntityToSchema(ctx, m, entity)
+		if err == nil {
+			return schema, nil
+		}
+	}
+
+	return &AttributeSchema{ID: id}, nil
 }
