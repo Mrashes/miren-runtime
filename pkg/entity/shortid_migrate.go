@@ -20,7 +20,7 @@ type MigrateShortIdOptions struct {
 // This is idempotent — entities that already have a short-id are skipped.
 func MigrateShortIds(ctx context.Context, log *slog.Logger, client *clientv3.Client, opts MigrateShortIdOptions) (migrated int, skipped int, err error) {
 	prefix := path.Join(opts.Prefix, "entity")
-	refsPrefix := path.Join(opts.Prefix, "refs") + "/"
+	uniquePrefix := path.Join(opts.Prefix, "unique") + "/"
 
 	log.Info("starting short-id migration", "prefix", prefix, "dry_run", opts.DryRun)
 
@@ -31,16 +31,17 @@ func MigrateShortIds(ctx context.Context, log *slog.Logger, client *clientv3.Cli
 
 	log.Info("found entities to scan for short-id migration", "count", len(resp.Kvs))
 
-	// Build a set of existing refs for collision checking
-	refsResp, err := client.Get(ctx, refsPrefix, clientv3.WithPrefix(), clientv3.WithKeysOnly())
+	// Build a set of existing unique keys for collision checking.
+	// We use the full unique key (attrCAS-based) to avoid collisions
+	// between different unique attributes.
+	uniqueResp, err := client.Get(ctx, uniquePrefix, clientv3.WithPrefix(), clientv3.WithKeysOnly())
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to list existing refs: %w", err)
+		return 0, 0, fmt.Errorf("failed to list existing unique keys: %w", err)
 	}
 
-	existingRefs := make(map[string]struct{})
-	for _, kv := range refsResp.Kvs {
-		ref := strings.TrimPrefix(string(kv.Key), refsPrefix)
-		existingRefs[ref] = struct{}{}
+	existingUnique := make(map[string]struct{})
+	for _, kv := range uniqueResp.Kvs {
+		existingUnique[string(kv.Key)] = struct{}{}
 	}
 
 	var errorCount int
@@ -78,9 +79,13 @@ func MigrateShortIds(ctx context.Context, log *slog.Logger, client *clientv3.Cli
 			continue
 		}
 
-		// Allocate short-id using in-memory set for collision checking
+		// Allocate short-id using in-memory set for collision checking.
+		// We build the full unique key for each candidate to check against
+		// the in-memory set.
 		shortId, allocErr := AllocateShortId(entityId, func(candidate string) (bool, error) {
-			_, exists := existingRefs[candidate]
+			candidateAttr := String(DBShortId, candidate)
+			candidateKey := fmt.Sprintf("%s%s", uniquePrefix, candidateAttr.CAS())
+			_, exists := existingUnique[candidateKey]
 			return exists, nil
 		})
 		if allocErr != nil {
@@ -92,7 +97,8 @@ func MigrateShortIds(ctx context.Context, log *slog.Logger, client *clientv3.Cli
 		if opts.DryRun {
 			log.Info("dry-run: would assign short-id", "entity", entityId, "short_id", shortId)
 			migrated++
-			existingRefs[shortId] = struct{}{}
+			shortIdAttr := String(DBShortId, shortId)
+			existingUnique[fmt.Sprintf("%s%s", uniquePrefix, shortIdAttr.CAS())] = struct{}{}
 			continue
 		}
 
@@ -106,13 +112,18 @@ func MigrateShortIds(ctx context.Context, log *slog.Logger, client *clientv3.Cli
 			continue
 		}
 
-		// Write the updated entity and ref index entry atomically
-		refKey := refsPrefix + shortId
+		// Write the updated entity and unique key atomically.
+		// Guard with ModRevision to avoid clobbering concurrent updates.
+		shortIdAttr := String(DBShortId, shortId)
+		uniqueKey := fmt.Sprintf("%s%s", uniquePrefix, shortIdAttr.CAS())
 		txnResp, txnErr := client.Txn(ctx).
-			If(clientv3.Compare(clientv3.CreateRevision(refKey), "=", 0)).
+			If(
+				clientv3.Compare(clientv3.ModRevision(key), "=", kv.ModRevision),
+				clientv3.Compare(clientv3.CreateRevision(uniqueKey), "=", 0),
+			).
 			Then(
 				clientv3.OpPut(key, string(newData)),
-				clientv3.OpPut(refKey, entityId),
+				clientv3.OpPut(uniqueKey, entityId),
 			).
 			Commit()
 
@@ -123,13 +134,13 @@ func MigrateShortIds(ctx context.Context, log *slog.Logger, client *clientv3.Cli
 		}
 
 		if !txnResp.Succeeded {
-			// Ref was claimed by a concurrent operation; try again with a new id
-			log.Warn("short-id collision during migration, skipping", "entity", entityId, "short_id", shortId)
+			log.Warn("short-id migration skipped entity (concurrent modification or collision)",
+				"entity", entityId, "short_id", shortId)
 			errorCount++
 			continue
 		}
 
-		existingRefs[shortId] = struct{}{}
+		existingUnique[uniqueKey] = struct{}{}
 		migrated++
 
 		if migrated%100 == 0 {

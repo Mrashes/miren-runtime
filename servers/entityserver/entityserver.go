@@ -61,9 +61,9 @@ func (e *EntityServer) Get(ctx context.Context, req *entityserver_v1alpha.Entity
 
 	ent, err := e.Store.GetEntity(ctx, entity.Id(args.Id()))
 	if err != nil {
-		// Try resolving as a ref (short-id, name, etc.)
+		// Try resolving as a short-id via the db/short-id index
 		if etcdStore, ok := e.Store.(*entity.EtcdStore); ok {
-			if resolvedId, refErr := etcdStore.ResolveRef(ctx, args.Id()); refErr == nil {
+			if resolvedId, idxErr := etcdStore.GetOneIndex(ctx, entity.String(entity.DBShortId, args.Id())); idxErr == nil {
 				ent, err = e.Store.GetEntity(ctx, resolvedId)
 			}
 		}

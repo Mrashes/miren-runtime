@@ -2152,10 +2152,10 @@ func TestExtractEntityId(t *testing.T) {
 	})
 }
 
-func TestCreateEntity_ShortIdRefCollisionRetry(t *testing.T) {
+func TestCreateEntity_UniqueValueCollisionRetry(t *testing.T) {
 	client := setupTestEtcd(t)
 
-	prefix := "/test-shortid-retry"
+	prefix := "/test-unique-retry"
 	_, err := client.Delete(t.Context(), prefix, clientv3.WithPrefix())
 	require.NoError(t, err)
 
@@ -2168,14 +2168,14 @@ func TestCreateEntity_ShortIdRefCollisionRetry(t *testing.T) {
 	))
 	require.NoError(t, err)
 
-	// Pre-populate a ref to simulate a concurrent create having claimed "DgY".
-	// Then pass db/short-id = "DgY" on the entity, which bypasses
-	// AllocateShortId (it skips when short-id is already set). This forces
-	// the collision to happen at the transaction level, exercising the retry
-	// path that detects the ref condition failure and re-allocates.
+	// Pre-populate the unique key for short-id "DgY" to simulate a concurrent
+	// create having claimed it. Then pass db/short-id = "DgY" on the entity,
+	// which bypasses AllocateShortId. This forces the collision to happen at
+	// the transaction level, exercising the retry path.
 	entityId := "mykind-vCZ1eUgSgNd28ed6vt2DgY"
-	refKey := prefix + "/refs/DgY"
-	_, err = client.Put(t.Context(), refKey, "some-other-entity")
+	claimedAttr := String(DBShortId, "DgY")
+	uniqueKey := store.BuildUniqueKeyForTest(claimedAttr)
+	_, err = client.Put(t.Context(), uniqueKey, "some-other-entity")
 	require.NoError(t, err)
 
 	e, err := store.CreateEntity(t.Context(), New(
@@ -2189,15 +2189,16 @@ func TestCreateEntity_ShortIdRefCollisionRetry(t *testing.T) {
 	require.NotEmpty(t, shortId, "entity should have a short-id")
 	require.NotEqual(t, "DgY", shortId, "should have picked a different short-id after collision")
 
-	// Verify the original ref is still intact (wasn't overwritten)
-	resp, err := client.Get(t.Context(), refKey)
+	// Verify the original unique key is still intact (wasn't overwritten)
+	resp, err := client.Get(t.Context(), uniqueKey)
 	require.NoError(t, err)
 	require.Len(t, resp.Kvs, 1)
 	assert.Equal(t, "some-other-entity", string(resp.Kvs[0].Value))
 
-	// Verify the new ref points to our entity
-	newRefKey := prefix + "/refs/" + shortId
-	resp, err = client.Get(t.Context(), newRefKey)
+	// Verify the new unique key points to our entity
+	newAttr := String(DBShortId, shortId)
+	newUniqueKey := store.BuildUniqueKeyForTest(newAttr)
+	resp, err = client.Get(t.Context(), newUniqueKey)
 	require.NoError(t, err)
 	require.Len(t, resp.Kvs, 1)
 	assert.Equal(t, entityId, string(resp.Kvs[0].Value))

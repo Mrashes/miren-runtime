@@ -122,6 +122,10 @@ func allocateRandomShortId(exists ExistsCheck) (string, error) {
 	return "", ErrShortIdExhausted
 }
 
+// randomBase58 generates a random string of the given length using base58
+// characters. Note: this is NOT a base58 encoding of the random bytes — the
+// result cannot be decoded back to the original bytes. We're just using the
+// base58 alphabet as a convenient source of human-friendly characters.
 func randomBase58(length int) (string, error) {
 	b := make([]byte, length)
 	if _, err := rand.Read(b); err != nil {

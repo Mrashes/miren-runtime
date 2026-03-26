@@ -47,9 +47,6 @@ func TestMigrateShortIds(t *testing.T) {
 	r.NoError(err)
 	_, err = client.Put(ctx, prefix+"entity/sandbox-blog-web-CZAtBvhsMNbG38MceikkB", string(data2))
 	r.NoError(err)
-	// Pre-populate its ref entry
-	_, err = client.Put(ctx, prefix+"refs/kkB", "sandbox/blog-web-CZAtBvhsMNbG38MceikkB")
-	r.NoError(err)
 
 	// Create a system entity with no entity/kind (should be skipped)
 	ent3 := New(
@@ -84,11 +81,13 @@ func TestMigrateShortIds(t *testing.T) {
 	// Should be derived from the base58 suffix "CZ1eUgSgNd28ed6vt2DgY" → last 3 chars "DgY"
 	r.Equal("DgY", shortId)
 
-	// Verify the ref index entry was created
-	refResp, err := client.Get(ctx, prefix+"refs/"+shortId)
+	// Verify the unique key was created
+	shortIdAttr := String(DBShortId, shortId)
+	uniqueKey := prefix + "unique/" + shortIdAttr.CAS()
+	uniqueResp, err := client.Get(ctx, uniqueKey)
 	r.NoError(err)
-	r.Len(refResp.Kvs, 1)
-	r.Equal("deployment-CZ1eUgSgNd28ed6vt2DgY", string(refResp.Kvs[0].Value))
+	r.Len(uniqueResp.Kvs, 1)
+	r.Equal("deployment-CZ1eUgSgNd28ed6vt2DgY", string(uniqueResp.Kvs[0].Value))
 
 	// Run migration again — should be idempotent
 	migrated2, skipped2, err := MigrateShortIds(ctx, log, client, MigrateShortIdOptions{
@@ -144,8 +143,8 @@ func TestMigrateShortIdsDryRun(t *testing.T) {
 	r.NoError(err)
 	r.Empty(unchangedEnt.ShortId(), "dry run should not write short-id")
 
-	// Verify no ref was created
-	refResp, err := client.Get(ctx, prefix+"refs/", clientv3.WithPrefix(), clientv3.WithCountOnly())
+	// Verify no unique keys were created
+	uniqueResp, err := client.Get(ctx, prefix+"unique/", clientv3.WithPrefix(), clientv3.WithCountOnly())
 	r.NoError(err)
-	r.Equal(int64(0), refResp.Count, "dry run should not create ref entries")
+	r.Equal(int64(0), uniqueResp.Count, "dry run should not create unique entries")
 }
