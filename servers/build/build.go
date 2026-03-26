@@ -1474,6 +1474,32 @@ func (b *Builder) provisionAddons(ctx context.Context, appName string, ac *appco
 		}
 		b.Log.Info("addon provisioned from app.toml", "addon", addonName, "variant", variant, "app", appName)
 	}
+
+	// Reconcile removals: if the addons section is explicitly present (even if
+	// empty), remove any existing associations not declared in app.toml. A nil
+	// Addons map means the section was absent, so we skip removal to avoid
+	// accidentally deleting all addons.
+	if ac.Addons != nil {
+		existing, err := b.addonsClient.ListInstances(ctx, appName)
+		if err != nil {
+			return fmt.Errorf("listing addon instances for app %q: %w", appName, err)
+		}
+
+		declared := make(map[string]bool, len(ac.Addons))
+		for name := range ac.Addons {
+			declared[name] = true
+		}
+
+		for _, inst := range existing.Addons() {
+			if !declared[inst.Name()] {
+				if _, err := b.addonsClient.DeleteInstance(ctx, appName, inst.Name()); err != nil {
+					return fmt.Errorf("removing addon %q from app %q: %w", inst.Name(), appName, err)
+				}
+				b.Log.Info("addon removed per app.toml", "addon", inst.Name(), "app", appName)
+			}
+		}
+	}
+
 	return nil
 }
 

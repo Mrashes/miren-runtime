@@ -20,6 +20,10 @@ import (
 
 type mockProvider struct{}
 
+func (m *mockProvider) LocalityMode() addon.LocalityMode {
+	return addon.OnCluster
+}
+
 func (m *mockProvider) Provision(ctx context.Context, app addon.App, variant addon.Variant) (*addon.ProvisionResult, error) {
 	return &addon.ProvisionResult{}, nil
 }

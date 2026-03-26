@@ -11,6 +11,8 @@ kinds:
       type: string
     default_variant:
       type: string
+    locality_mode:
+      type: string
     variants:
       type: component
       many: true

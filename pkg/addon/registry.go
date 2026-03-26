@@ -79,6 +79,7 @@ func (r *Registry) EnsureEntities(ctx context.Context, ec *entityserver.Client) 
 			DisplayName:    def.DisplayName,
 			Description:    def.Description,
 			DefaultVariant: def.DefaultVariant,
+			LocalityMode:   string(ra.provider.LocalityMode()),
 			Variants:       variants,
 		}
 

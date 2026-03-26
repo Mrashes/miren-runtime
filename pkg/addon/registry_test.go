@@ -33,6 +33,9 @@ func testDefinition() AddonDefinition {
 
 type mockProvider struct{}
 
+func (m *mockProvider) LocalityMode() LocalityMode {
+	return OnCluster
+}
 func (m *mockProvider) Provision(ctx context.Context, app App, variant Variant) (*ProvisionResult, error) {
 	return &ProvisionResult{}, nil
 }

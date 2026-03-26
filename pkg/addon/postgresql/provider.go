@@ -23,6 +23,10 @@ func NewProvider(fw *addon.ProviderFramework) *Provider {
 	}
 }
 
+func (p *Provider) LocalityMode() addon.LocalityMode {
+	return addon.OnCluster
+}
+
 func (p *Provider) Provision(ctx context.Context, app addon.App, variant addon.Variant) (*addon.ProvisionResult, error) {
 	if IsSharedVariant(variant.Name) {
 		return p.provisionShared(ctx, app, variant)
