@@ -2151,3 +2151,54 @@ func TestExtractEntityId(t *testing.T) {
 		assert.Contains(t, err.Error(), "invalid db/id attribute type")
 	})
 }
+
+func TestCreateEntity_ShortIdRefCollisionRetry(t *testing.T) {
+	client := setupTestEtcd(t)
+
+	prefix := "/test-shortid-retry"
+	_, err := client.Delete(t.Context(), prefix, clientv3.WithPrefix())
+	require.NoError(t, err)
+
+	store, err := NewEtcdStore(t.Context(), slog.Default(), client, prefix)
+	require.NoError(t, err)
+
+	// Create a kind entity so we can reference it
+	kind, err := store.CreateEntity(t.Context(), New(
+		Any(Ident, KeywordValue("test/mykind")),
+	))
+	require.NoError(t, err)
+
+	// Pre-populate a ref to simulate a concurrent create having claimed "DgY".
+	// Then pass db/short-id = "DgY" on the entity, which bypasses
+	// AllocateShortId (it skips when short-id is already set). This forces
+	// the collision to happen at the transaction level, exercising the retry
+	// path that detects the ref condition failure and re-allocates.
+	entityId := "mykind-vCZ1eUgSgNd28ed6vt2DgY"
+	refKey := prefix + "/refs/DgY"
+	_, err = client.Put(t.Context(), refKey, "some-other-entity")
+	require.NoError(t, err)
+
+	e, err := store.CreateEntity(t.Context(), New(
+		Ref(DBId, Id(entityId)),
+		Ref(EntityKind, kind.Id()),
+		String(DBShortId, "DgY"), // force the collision at txn level
+	))
+	require.NoError(t, err)
+
+	shortId := e.ShortId()
+	require.NotEmpty(t, shortId, "entity should have a short-id")
+	require.NotEqual(t, "DgY", shortId, "should have picked a different short-id after collision")
+
+	// Verify the original ref is still intact (wasn't overwritten)
+	resp, err := client.Get(t.Context(), refKey)
+	require.NoError(t, err)
+	require.Len(t, resp.Kvs, 1)
+	assert.Equal(t, "some-other-entity", string(resp.Kvs[0].Value))
+
+	// Verify the new ref points to our entity
+	newRefKey := prefix + "/refs/" + shortId
+	resp, err = client.Get(t.Context(), newRefKey)
+	require.NoError(t, err)
+	require.Len(t, resp.Kvs, 1)
+	assert.Equal(t, entityId, string(resp.Kvs[0].Value))
+}

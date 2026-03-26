@@ -167,6 +167,20 @@ func (s *EtcdStore) CreateEntity(
 
 	entity.ForceID()
 
+	// Allocate a short-id for entities that have an entity/kind attribute
+	// (skip system/schema entities which are saved via basicSave)
+	if _, hasKind := entity.Get(EntityKind); hasKind {
+		if _, hasShortId := entity.Get(DBShortId); !hasShortId {
+			shortId, err := AllocateShortId(string(entity.Id()), func(candidate string) (bool, error) {
+				return s.refExists(ctx, candidate)
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to allocate short-id: %w", err)
+			}
+			entity.Set(String(DBShortId, shortId))
+		}
+	}
+
 	// Revision is an attr maintained by the store itself, so we remove it
 	// and allow it to be repopulated later. This is mostly to avoid confusion
 	// when retrieving an entity, before stamping it with the current etcd revision.
@@ -211,65 +225,102 @@ func (s *EtcdStore) CreateEntity(
 	}
 
 	entity.attrs = primary
-
-	// Build entity save operations
 	key := s.buildKey(entity.Id())
-	txopt, err := s.buildEntitySaveOps(entity, key, primary, session, &o)
-	if err != nil {
-		return nil, err
-	}
 
-	txopt = append(txopt, coltxopt...)
+	// Retry loop: if the create transaction fails due to a short-id ref
+	// collision (TOCTOU race), allocate a new short-id and try again.
+	const maxRefRetries = 3
+	for attempt := 0; ; attempt++ {
+		// Build entity save operations (must rebuild each attempt since
+		// short-id changes affect the serialized entity data)
+		txopt, err := s.buildEntitySaveOps(entity, key, primary, session, &o)
+		if err != nil {
+			return nil, err
+		}
 
-	// Use Txn to check that the key doesn't exist yet
-	txnResp, err := s.client.Txn(ctx).
-		If(clientv3.Compare(clientv3.CreateRevision(key), "=", 0)).
-		Then(txopt...).
-		Else(clientv3.OpGet(key)).
-		Commit()
+		txopt = append(txopt, coltxopt...)
 
-	if err != nil {
-		return nil, fmt.Errorf("failed to create entity in etcd: %w", err)
-	}
+		// Build transaction conditions and include ref uniqueness check
+		var conditions []clientv3.Cmp
+		conditions = append(conditions, clientv3.Compare(clientv3.CreateRevision(key), "=", 0))
 
-	if !txnResp.Succeeded {
+		if shortId := entity.ShortId(); shortId != "" {
+			refKey := s.buildRefKey(shortId)
+			conditions = append(conditions, clientv3.Compare(clientv3.CreateRevision(refKey), "=", 0))
+			txopt = append(txopt, s.addRefOp(shortId, entity.Id()))
+		}
+
+		txnResp, err := s.client.Txn(ctx).
+			If(conditions...).
+			Then(txopt...).
+			Else(clientv3.OpGet(key)).
+			Commit()
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to create entity in etcd: %w", err)
+		}
+
+		if txnResp.Succeeded {
+			entity.SetRevision(txnResp.Header.Revision)
+			return entity, nil
+		}
+
+		// Transaction failed — figure out why.
+		// Check if the entity key already exists (genuine conflict) vs
+		// only the ref key was taken (short-id race, retryable).
 		if len(txnResp.Responses) == 1 {
-			// If the current value of the entity has the same attributes as
-			// the entity we were trying to store, then we're all done!
 			rng := txnResp.Responses[0].GetResponseRange()
+			if len(rng.Kvs) > 0 {
+				// Entity key exists — this is a genuine entity conflict.
+				var curr Entity
+				if decoder.Unmarshal(rng.Kvs[0].Value, &curr) == nil {
+					if slices.EqualFunc(curr.attrs, entity.attrs, func(a, b Attr) bool {
+						return a.Equal(b)
+					}) {
+						entity.SetRevision(rng.Header.Revision)
+						return entity, nil
+					}
+				}
 
-			var curr Entity
+				if o.overwrite {
+					txnResp, err = s.client.Txn(ctx).
+						Then(txopt...).
+						Else(clientv3.OpGet(key)).
+						Commit()
+					if err != nil {
+						return nil, fmt.Errorf("failed to create entity in etcd (on overwrite): %w", err)
+					}
 
-			if decoder.Unmarshal(rng.Kvs[0].Value, &curr) == nil {
-				if slices.EqualFunc(curr.attrs, entity.attrs, func(a, b Attr) bool {
-					return a.Equal(b)
-				}) {
-					entity.SetRevision(rng.Header.Revision)
+					entity.SetRevision(txnResp.Header.Revision)
 					return entity, nil
 				}
-			}
 
-			if o.overwrite {
-				txnResp, err = s.client.Txn(ctx).
-					Then(txopt...).
-					Else(clientv3.OpGet(key)).
-					Commit()
-				if err != nil {
-					return nil, fmt.Errorf("failed to create entity in etcd (on overwrite): %w", err)
-				}
-
-				entity.SetRevision(txnResp.Header.Revision)
-				return entity, nil
+				s.log.Error("failed to create entity in etcd", "id", entity.Id())
+				return nil, cond.Conflict("entity", entity.Id())
 			}
 		}
 
-		s.log.Error("failed to create entity in etcd", "id", entity.Id())
-		return nil, cond.Conflict("entity", entity.Id())
+		// Entity key didn't exist, so the ref condition must have failed.
+		// Allocate a new short-id and retry.
+		if attempt >= maxRefRetries {
+			s.log.Error("short-id ref collision persisted after retries", "id", entity.Id())
+			return nil, fmt.Errorf("failed to create entity: short-id collision after %d retries", maxRefRetries)
+		}
+
+		s.log.Info("short-id ref collision, retrying with new short-id",
+			"id", entity.Id(), "old_short_id", entity.ShortId(), "attempt", attempt+1)
+
+		newShortId, err := AllocateShortId(string(entity.Id()), func(candidate string) (bool, error) {
+			return s.refExists(ctx, candidate)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to reallocate short-id: %w", err)
+		}
+		entity.Set(String(DBShortId, newShortId))
+
+		// Rebuild primary attrs with the new short-id
+		primary = entity.Attrs()
 	}
-
-	entity.SetRevision(txnResp.Header.Revision)
-
-	return entity, nil
 }
 
 // GetEntity implements Store interface
@@ -1145,6 +1196,13 @@ func (s *EtcdStore) DeleteEntity(ctx context.Context, id Id) error {
 		}
 	}
 
+	// Clean up ref index entries
+	if shortId := entity.ShortId(); shortId != "" {
+		if _, err := s.client.Delete(ctx, s.buildRefKey(shortId)); err != nil {
+			s.log.Warn("failed to delete short-id ref", "short_id", shortId, "error", err)
+		}
+	}
+
 	key := s.buildKey(id)
 
 	// Use Txn to check that the key exists before deleting
@@ -1379,6 +1437,38 @@ func (s *EtcdStore) CollectionPrefix(ctx context.Context, collection string) (st
 	colKey := tr.Replace(collection)
 
 	return fmt.Sprintf("%s/collections/%s/", s.prefix, colKey), nil
+}
+
+// buildRefKey returns the etcd key for a ref index entry.
+func (s *EtcdStore) buildRefKey(ref string) string {
+	return fmt.Sprintf("%s/refs/%s", s.prefix, ref)
+}
+
+// addRefOp returns an etcd put operation that maps a ref value to an entity ID.
+func (s *EtcdStore) addRefOp(ref string, entityId Id) clientv3.Op {
+	return clientv3.OpPut(s.buildRefKey(ref), string(entityId))
+}
+
+// refExists checks whether a ref value is already in the ref index.
+func (s *EtcdStore) refExists(ctx context.Context, ref string) (bool, error) {
+	resp, err := s.client.Get(ctx, s.buildRefKey(ref), clientv3.WithCountOnly())
+	if err != nil {
+		return false, fmt.Errorf("failed to check ref existence: %w", err)
+	}
+	return resp.Count > 0, nil
+}
+
+// ResolveRef looks up a ref string (short-id, name, etc.) in the ref index
+// and returns the corresponding entity ID if found.
+func (s *EtcdStore) ResolveRef(ctx context.Context, ref string) (Id, error) {
+	resp, err := s.client.Get(ctx, s.buildRefKey(ref))
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve ref: %w", err)
+	}
+	if len(resp.Kvs) == 0 {
+		return "", cond.NotFound("ref", ref)
+	}
+	return Id(resp.Kvs[0].Value), nil
 }
 
 func (s *EtcdStore) CreateSession(ctx context.Context, ttl int64) ([]byte, error) {
