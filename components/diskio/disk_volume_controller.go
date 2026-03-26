@@ -523,7 +523,7 @@ func (c *DiskVolumeController) deleteVolume(ctx context.Context, volume *storage
 	}
 
 	if volState.DiskPath != "" {
-		if err := c.softDeleteVolume(ctx, volume, volState.DiskPath); err != nil {
+		if err := c.softDeleteVolume(ctx, volume, volState); err != nil {
 			c.log.Warn("soft-delete failed, falling back to hard delete",
 				"entity_id", entityId, "error", err)
 			if err := c.ops.RemoveVolumeDir(volState.DiskPath); err != nil {
@@ -549,8 +549,11 @@ func (c *DiskVolumeController) deleteVolume(ctx context.Context, volume *storage
 }
 
 // softDeleteVolume moves the volume directory to the deleted-volumes holding area
-// and writes metadata so it can be restored later.
-func (c *DiskVolumeController) softDeleteVolume(ctx context.Context, volume *storage_v1alpha.DiskVolume, diskPath string) error {
+// and writes metadata so it can be restored later. Metadata is written into the
+// source directory before the move so the rename carries both data and metadata
+// atomically.
+func (c *DiskVolumeController) softDeleteVolume(ctx context.Context, volume *storage_v1alpha.DiskVolume, volState *VolumeState) error {
+	diskPath := volState.DiskPath
 	dirName := filepath.Base(diskPath)
 	destPath := filepath.Join(c.dataPath, deletedVolumesDir, dirName)
 
@@ -564,7 +567,7 @@ func (c *DiskVolumeController) softDeleteVolume(ctx context.Context, volume *sto
 		DiskName:   volume.Name,
 		SizeGb:     volume.SizeGb,
 		Filesystem: volume.Filesystem,
-		VolumeID:   volume.VolumeId,
+		VolumeID:   volState.VolumeId,
 		VolumeMode: string(volume.VolumeMode),
 		NodeID:     string(volume.NodeId),
 		DeletedAt:  time.Now(),
