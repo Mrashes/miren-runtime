@@ -12,6 +12,7 @@ import (
 // DiskListDeleted lists disks that have been soft-deleted and are available
 // for recovery via disk undelete.
 func DiskListDeleted(ctx *Context, opts struct {
+	FormatOptions
 	ConfigCentric
 	DataPath string `long:"data-path" description:"Path to miren data directory" default:"/var/lib/miren"`
 }) error {
@@ -25,6 +26,37 @@ func DiskListDeleted(ctx *Context, opts struct {
 		return fmt.Errorf("listing deleted volumes: %w", err)
 	}
 
+	retentionDays := diskio.DefaultDeletedVolumeGCConfig().RetentionDays
+
+	if opts.IsJSON() {
+		type deletedDiskJSON struct {
+			DiskName      string `json:"disk_name"`
+			VolumeID      string `json:"volume_id"`
+			SizeGB        int64  `json:"size_gb"`
+			Filesystem    string `json:"filesystem"`
+			DeletedAt     string `json:"deleted_at"`
+			ExpiresAt     string `json:"expires_at"`
+			RetentionDays int    `json:"retention_days"`
+		}
+
+		var items []deletedDiskJSON
+		for _, e := range entries {
+			meta := e.Metadata
+			expiresAt := meta.DeletedAt.Add(time.Duration(retentionDays) * 24 * time.Hour)
+			items = append(items, deletedDiskJSON{
+				DiskName:      meta.DiskName,
+				VolumeID:      meta.VolumeID,
+				SizeGB:        meta.SizeGb,
+				Filesystem:    meta.Filesystem,
+				DeletedAt:     meta.DeletedAt.Format(time.RFC3339),
+				ExpiresAt:     expiresAt.Format(time.RFC3339),
+				RetentionDays: retentionDays,
+			})
+		}
+
+		return PrintJSON(items)
+	}
+
 	if len(entries) == 0 {
 		ctx.Info("No deleted disks found")
 		return nil
@@ -32,8 +64,6 @@ func DiskListDeleted(ctx *Context, opts struct {
 
 	ctx.Info("Deleted disks available for recovery:")
 	ctx.Info("")
-
-	retentionDays := diskio.DefaultDeletedVolumeGCConfig().RetentionDays
 
 	for _, e := range entries {
 		meta := e.Metadata

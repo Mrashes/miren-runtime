@@ -90,6 +90,7 @@ func TestDiskUndelete(t *testing.T) {
 
 	// Step 9: Verify it's no longer in list-deleted
 	r = m.RunCmd("sudo", "m", "disk", "list-deleted")
+	r.RequireSuccess(t)
 	if r.OutputContains(diskName) {
 		t.Error("disk should no longer appear in list-deleted after undelete")
 	}

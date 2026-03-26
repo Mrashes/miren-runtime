@@ -684,14 +684,12 @@ func (r *Runner) SetupControllers(
 		log.Warn("failed to reconcile disk mounts on startup", "error", err)
 	}
 
-	// Start deleted volume GC to purge soft-deleted disk volumes after retention period
+	// Prepare deleted volume GC (started after all controller init succeeds)
 	r.diskGC = &diskio.DeletedVolumeGC{
 		Log:      log.With("module", "deleted-volume-gc"),
 		DataPath: dataPath,
 		Config:   diskio.DefaultDeletedVolumeGCConfig(),
 	}
-	r.diskGC.Start(ctx)
-	r.closers = append(r.closers, stopCloser{r.diskGC})
 
 	// Register volume controller shutdown before mount controller so mounts
 	// owned by the volume controller are cleaned up first
@@ -785,6 +783,10 @@ func (r *Runner) SetupControllers(
 	if err != nil {
 		return nil, err
 	}
+
+	// All controllers initialized — safe to start the GC goroutine now
+	r.diskGC.Start(ctx)
+	r.closers = append(r.closers, stopCloser{r.diskGC})
 
 	r.cc = r.deps.CC
 	r.namespace = r.deps.Namespace

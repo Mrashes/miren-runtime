@@ -581,13 +581,17 @@ func (c *DiskVolumeController) softDeleteVolume(ctx context.Context, volume *sto
 		}
 	}
 
-	if err := c.ops.MoveVolumeDir(diskPath, destPath); err != nil {
-		return fmt.Errorf("moving volume to deleted-volumes: %w", err)
+	// Write metadata before the move so the rename carries both the volume
+	// data and the metadata atomically (same filesystem).  If the write
+	// fails we abort — moving without metadata would leave an invisible,
+	// un-restorable directory.
+	if err := SaveDeletedVolumeMetadata(diskPath, meta); err != nil {
+		return fmt.Errorf("writing deleted volume metadata: %w", err)
 	}
 
-	if err := SaveDeletedVolumeMetadata(destPath, meta); err != nil {
-		c.log.Warn("failed to write deleted volume metadata, volume is still preserved",
-			"path", destPath, "error", err)
+	if err := c.ops.MoveVolumeDir(diskPath, destPath); err != nil {
+		_ = os.Remove(filepath.Join(diskPath, metadataFilename))
+		return fmt.Errorf("moving volume to deleted-volumes: %w", err)
 	}
 
 	c.log.Info("volume soft-deleted",

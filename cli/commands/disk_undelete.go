@@ -123,9 +123,21 @@ func DiskUndelete(ctx *Context, opts struct {
 		return fmt.Errorf("moving volume back to %s: %w", destPath, err)
 	}
 
-	// Remove metadata.json from the restored volume directory
-	metadataPath := filepath.Join(destPath, "metadata.json")
-	os.Remove(metadataPath)
+	// Deferred rollback: if we don't reach the final commit, move the
+	// volume back to deleted-volumes (with its metadata intact) and clean
+	// up any entities we created.
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		if rerr := os.Rename(destPath, entry.Path); rerr != nil {
+			ctx.Warn("Failed to move volume back to deleted-volumes: %v", rerr)
+		}
+		if _, derr := eac.Delete(context.Background(), string(diskEntityId)); derr != nil {
+			ctx.Warn("Failed to clean up disk entity: %v", derr)
+		}
+	}()
 
 	// Find the node ID
 	nodeId, err := resolver.findNodeId(context.Background())
@@ -138,14 +150,6 @@ func DiskUndelete(ctx *Context, opts struct {
 
 	// Verify the disk image actually exists before creating entities
 	if _, err := os.Stat(imagePath); err != nil {
-		// Move the directory back to deleted-volumes so GC can handle it
-		if rerr := os.Rename(destPath, entry.Path); rerr != nil {
-			ctx.Warn("Failed to move volume back to deleted-volumes: %v", rerr)
-		}
-		// Clean up the disk entity
-		if _, derr := eac.Delete(context.Background(), string(diskEntityId)); derr != nil {
-			ctx.Warn("Failed to clean up disk entity: %v", derr)
-		}
 		return fmt.Errorf("disk image not found at %s — deleted volume may be corrupted", imagePath)
 	}
 
@@ -169,10 +173,6 @@ func DiskUndelete(ctx *Context, opts struct {
 		vol.Encode,
 	).Attrs())
 	if err != nil {
-		// Clean up the disk entity since we can't complete the restore
-		if _, derr := eac.Delete(context.Background(), string(diskEntityId)); derr != nil {
-			ctx.Warn("Failed to clean up disk entity: %v", derr)
-		}
 		return fmt.Errorf("creating disk_volume entity: %w", err)
 	}
 
@@ -183,15 +183,16 @@ func DiskUndelete(ctx *Context, opts struct {
 		entity.String(storage_v1alpha.DiskVolumeIdId, volId),
 	}, 0)
 	if err != nil {
-		// Clean up both entities since the disk is stuck in RESTORING
+		// Also clean up the volume entity
 		if _, derr := eac.Delete(context.Background(), string(volEntityId)); derr != nil {
 			ctx.Warn("Failed to clean up disk_volume entity: %v", derr)
 		}
-		if _, derr := eac.Delete(context.Background(), string(diskEntityId)); derr != nil {
-			ctx.Warn("Failed to clean up disk entity: %v", derr)
-		}
 		return fmt.Errorf("updating disk to provisioned: %w", err)
 	}
+
+	// All entities committed — remove leftover metadata and disarm rollback
+	os.Remove(filepath.Join(destPath, "metadata.json"))
+	committed = true
 
 	ctx.Info("Disk restored successfully")
 	ctx.Info("  Disk ID:   %s", diskEntityId)
