@@ -75,6 +75,7 @@ const config: Config = {
     {
       src: 'https://cdn.usefathom.com/script.js',
       'data-site': 'MEHJPZGQ',
+      'data-spa': 'auto',
       defer: true,
     },
   ],
