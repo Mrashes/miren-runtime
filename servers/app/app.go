@@ -159,8 +159,12 @@ func (r *AppInfo) List(ctx context.Context, state *app_v1alpha.CrudList) error {
 		ps.desired += int(pool.DesiredInstances)
 		if !pool.CooldownUntil.IsZero() && pool.CooldownUntil.After(now) {
 			ps.inCooldown = true
-			ps.crashCount = pool.ConsecutiveCrashCount
-			ps.cooldownLeft = pool.CooldownUntil.Sub(now)
+			if pool.ConsecutiveCrashCount > ps.crashCount {
+				ps.crashCount = pool.ConsecutiveCrashCount
+			}
+			if left := pool.CooldownUntil.Sub(now); left > ps.cooldownLeft {
+				ps.cooldownLeft = left
+			}
 		}
 
 		if spec, ok := specMap[pool.SandboxSpec.Version.String()]; ok {

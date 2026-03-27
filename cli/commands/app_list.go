@@ -69,6 +69,8 @@ func AppList(ctx *Context, opts struct {
 			Health           string   `json:"health"`
 			ScalingMode      string   `json:"scaling_mode,omitempty"`
 			Routes           []string `json:"routes,omitempty"`
+			CrashCount       int64    `json:"crash_count"`
+			CooldownSeconds  int32    `json:"cooldown_seconds"`
 		}
 
 		for _, a := range appList {
@@ -80,12 +82,16 @@ func AppList(ctx *Context, opts struct {
 				Health           string   `json:"health"`
 				ScalingMode      string   `json:"scaling_mode,omitempty"`
 				Routes           []string `json:"routes,omitempty"`
+				CrashCount       int64    `json:"crash_count"`
+				CooldownSeconds  int32    `json:"cooldown_seconds"`
 			}{
 				Name:             a.Name(),
 				Health:           a.Health(),
 				ReadyInstances:   a.ReadyInstances(),
 				DesiredInstances: a.DesiredInstances(),
 				ScalingMode:      a.ScalingMode(),
+				CrashCount:       a.CrashCount(),
+				CooldownSeconds:  a.CooldownSeconds(),
 			}
 
 			if a.HasCurrentVersion() {
