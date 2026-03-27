@@ -136,10 +136,19 @@ func RunnerStart(ctx *Context, opts struct {
 	// Create errgroup for background tasks
 	eg, egCtx := errgroup.WithContext(sigCtx)
 
-	// Determine listen address
+	// Determine listen address. If no explicit address is given, discover the
+	// machine's outbound IP (the one that would route to the coordinator) and
+	// advertise that so the coordinator knows how to reach this runner.
 	listenAddr := opts.ListenAddr
 	if listenAddr == "" {
-		listenAddr = ":8444" // Default runner listen port
+		port := "8444"
+		if ip, err := discoverOutboundIP(cfg.CoordinatorAddress); err == nil {
+			listenAddr = net.JoinHostPort(ip.String(), port)
+			ctx.Log.Info("discovered listen address", "addr", listenAddr)
+		} else {
+			listenAddr = ":" + port
+			ctx.Log.Warn("could not discover outbound IP, using bind-all address", "addr", listenAddr, "error", err)
+		}
 	}
 
 	// Build runner configuration
@@ -252,4 +261,20 @@ func RunnerStart(ctx *Context, opts struct {
 
 	ctx.Log.Info("runner stopped")
 	return nil
+}
+
+// discoverOutboundIP finds the local IP that would be used to reach the given
+// remote address. This gives us the machine's IP on the right interface without
+// actually connecting.
+func discoverOutboundIP(remoteAddr string) (netip.Addr, error) {
+	conn, err := net.Dial("udp4", remoteAddr)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	defer conn.Close()
+	addr, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		return netip.Addr{}, fmt.Errorf("unexpected local address type")
+	}
+	return netip.AddrFrom4([4]byte(addr.IP.To4())), nil
 }
