@@ -300,15 +300,27 @@ func (ac *AppConfig) Validate() error {
 			if disk.MountPath == "" {
 				return fmt.Errorf("service %s: disk[%d] (%s) must have a mount_path", serviceName, i, disk.Name)
 			}
-			if disk.Filesystem != "" && disk.Filesystem != "ext4" && disk.Filesystem != "xfs" && disk.Filesystem != "btrfs" {
-				return fmt.Errorf("service %s: disk[%d] (%s) has invalid filesystem %q, must be ext4, xfs, or btrfs", serviceName, i, disk.Name, disk.Filesystem)
-			}
-			if disk.SizeGB < 0 {
-				return fmt.Errorf("service %s: disk[%d] (%s) size_gb must be non-negative", serviceName, i, disk.Name)
-			}
-			if disk.LeaseTimeout != "" {
-				if _, err := time.ParseDuration(disk.LeaseTimeout); err != nil {
-					return fmt.Errorf("service %s: disk[%d] (%s) invalid lease_timeout %q: %v", serviceName, i, disk.Name, disk.LeaseTimeout, err)
+			if disk.Provider == "local" {
+				if disk.SizeGB != 0 {
+					return fmt.Errorf("service %s: disk[%d] (%s) size_gb is not supported for local disks", serviceName, i, disk.Name)
+				}
+				if disk.Filesystem != "" {
+					return fmt.Errorf("service %s: disk[%d] (%s) filesystem is not supported for local disks", serviceName, i, disk.Name)
+				}
+				if disk.LeaseTimeout != "" {
+					return fmt.Errorf("service %s: disk[%d] (%s) lease_timeout is not supported for local disks", serviceName, i, disk.Name)
+				}
+			} else {
+				if disk.Filesystem != "" && disk.Filesystem != "ext4" && disk.Filesystem != "xfs" && disk.Filesystem != "btrfs" {
+					return fmt.Errorf("service %s: disk[%d] (%s) has invalid filesystem %q, must be ext4, xfs, or btrfs", serviceName, i, disk.Name, disk.Filesystem)
+				}
+				if disk.SizeGB < 0 {
+					return fmt.Errorf("service %s: disk[%d] (%s) size_gb must be non-negative", serviceName, i, disk.Name)
+				}
+				if disk.LeaseTimeout != "" {
+					if _, err := time.ParseDuration(disk.LeaseTimeout); err != nil {
+						return fmt.Errorf("service %s: disk[%d] (%s) invalid lease_timeout %q: %v", serviceName, i, disk.Name, disk.LeaseTimeout, err)
+					}
 				}
 			}
 		}
