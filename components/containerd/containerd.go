@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -324,7 +325,9 @@ func (c *ContainerdComponent) Client() (*containerd.Client, error) {
 	return c.client, nil
 }
 
-// waitForSocket waits for the containerd socket to be available
+// waitForSocket waits for the containerd socket to be accepting connections.
+// Checking file existence alone is insufficient — containerd creates the
+// socket file before it starts listening, causing a race on fast machines.
 func (c *ContainerdComponent) waitForSocket(ctx context.Context, socketPath string) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -339,13 +342,11 @@ func (c *ContainerdComponent) waitForSocket(ctx context.Context, socketPath stri
 		case <-timeout:
 			return fmt.Errorf("timeout waiting for containerd socket at %s", socketPath)
 		case <-ticker.C:
-			if _, err := os.Stat(socketPath); err == nil {
-				// Socket exists, give it a moment to be ready
-				time.Sleep(100 * time.Millisecond)
-				c.log.Info("containerd socket found", "path", socketPath, "waited", time.Since(startTime))
+			conn, err := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
+			if err == nil {
+				conn.Close()
+				c.log.Info("containerd socket is accepting connections", "path", socketPath, "waited", time.Since(startTime))
 				return nil
-			} else if !os.IsNotExist(err) {
-				c.log.Warn("error checking socket", "path", socketPath, "error", err)
 			}
 		}
 	}

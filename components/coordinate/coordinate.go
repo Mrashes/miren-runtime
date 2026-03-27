@@ -151,8 +151,9 @@ type EtcdTLSSetupResult struct {
 	CAFile string
 }
 
-// SetupEtcdTLS loads the existing CA and issues certificates for etcd mTLS.
-// This must be called before starting the etcd component when TLS is desired.
+// SetupEtcdTLS loads the existing CA and ensures valid etcd mTLS certificates.
+// Existing certificates are reused if their SANs match and they aren't near
+// expiry; otherwise they are regenerated.
 // The dataPath should be the same path used for CoordinatorConfig.DataPath.
 // The CA must already exist (created by the coordinator's LoadCA).
 // Additional DNS names and IPs are included in the server certificate SANs
@@ -184,12 +185,53 @@ func SetupEtcdTLS(log *slog.Logger, dataPath string, extraDNSNames []string, ext
 		return nil, fmt.Errorf("failed to create etcd certs directory: %w", err)
 	}
 
-	// Build server cert SANs: always include localhost + loopback, plus any extras
+	// Build expected server cert SANs
 	dnsNames := []string{"localhost"}
 	dnsNames = append(dnsNames, extraDNSNames...)
 
 	ips := []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
 	ips = append(ips, extraIPs...)
+
+	serverCertFile := filepath.Join(certsDir, "server.crt")
+	serverKeyFile := filepath.Join(certsDir, "server.key")
+	clientCertFile := filepath.Join(certsDir, "client.crt")
+	clientKeyFile := filepath.Join(certsDir, "client.key")
+	caFile := filepath.Join(certsDir, "ca.crt")
+
+	// Check if existing certs are still valid
+	if existing, err := loadX509Cert(serverCertFile); err == nil {
+		if err := validateAPICertificate(existing, dnsNames, ips); err == nil {
+			// Also check client cert exists and isn't expired
+			if clientExisting, err := loadX509Cert(clientCertFile); err == nil {
+				horizon := time.Now().Add(48 * time.Hour)
+				if clientExisting.NotAfter.After(horizon) {
+					log.Info("etcd TLS certificates valid, reusing", "certs_dir", certsDir,
+						"server_expires", existing.NotAfter.Format(time.RFC3339),
+						"sans_ips", existing.IPAddresses)
+
+					clientPEM, _ := os.ReadFile(clientCertFile)
+					clientKey, _ := os.ReadFile(clientKeyFile)
+					caCert := ca.GetCACertificate()
+
+					return &EtcdTLSSetupResult{
+						CertsDir: certsDir,
+						ClientTLS: &EtcdTLSConfig{
+							CertPEM: clientPEM,
+							KeyPEM:  clientKey,
+							CACert:  caCert,
+						},
+						ClientCertFile: clientCertFile,
+						ClientKeyFile:  clientKeyFile,
+						CAFile:         caFile,
+					}, nil
+				}
+			}
+		} else {
+			log.Info("etcd server cert needs regeneration", "reason", err)
+		}
+	}
+
+	log.Info("generating etcd TLS certificates", "dns_names", dnsNames, "ips", ips)
 
 	// Issue etcd server certificate
 	serverCert, err := ca.IssueCertificate(caauth.Options{
@@ -204,13 +246,13 @@ func SetupEtcdTLS(log *slog.Logger, dataPath string, extraDNSNames []string, ext
 	}
 
 	// Write etcd server certs
-	if err := os.WriteFile(filepath.Join(certsDir, "ca.crt"), ca.GetCACertificate(), 0644); err != nil {
+	if err := os.WriteFile(caFile, ca.GetCACertificate(), 0644); err != nil {
 		return nil, fmt.Errorf("failed to write etcd CA cert: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(certsDir, "server.crt"), serverCert.CertPEM, 0644); err != nil {
+	if err := os.WriteFile(serverCertFile, serverCert.CertPEM, 0644); err != nil {
 		return nil, fmt.Errorf("failed to write etcd server cert: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(certsDir, "server.key"), serverCert.KeyPEM, 0600); err != nil {
+	if err := os.WriteFile(serverKeyFile, serverCert.KeyPEM, 0600); err != nil {
 		return nil, fmt.Errorf("failed to write etcd server key: %w", err)
 	}
 
@@ -224,11 +266,6 @@ func SetupEtcdTLS(log *slog.Logger, dataPath string, extraDNSNames []string, ext
 		return nil, fmt.Errorf("failed to issue etcd client certificate: %w", err)
 	}
 
-	// Write client certs to disk alongside server certs
-	clientCertFile := filepath.Join(certsDir, "client.crt")
-	clientKeyFile := filepath.Join(certsDir, "client.key")
-	caFile := filepath.Join(certsDir, "ca.crt")
-
 	if err := os.WriteFile(clientCertFile, clientCert.CertPEM, 0644); err != nil {
 		return nil, fmt.Errorf("failed to write etcd client cert: %w", err)
 	}
@@ -236,7 +273,7 @@ func SetupEtcdTLS(log *slog.Logger, dataPath string, extraDNSNames []string, ext
 		return nil, fmt.Errorf("failed to write etcd client key: %w", err)
 	}
 
-	log.Info("etcd TLS certificates ready", "certs_dir", certsDir)
+	log.Info("etcd TLS certificates generated", "certs_dir", certsDir)
 
 	return &EtcdTLSSetupResult{
 		CertsDir: certsDir,
@@ -249,6 +286,18 @@ func SetupEtcdTLS(log *slog.Logger, dataPath string, extraDNSNames []string, ext
 		ClientKeyFile:  clientKeyFile,
 		CAFile:         caFile,
 	}, nil
+}
+
+func loadX509Cert(path string) (*x509.Certificate, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, fmt.Errorf("no PEM block found in %s", path)
+	}
+	return x509.ParseCertificate(block.Bytes)
 }
 
 func NewCoordinator(log *slog.Logger, cfg CoordinatorConfig) *Coordinator {

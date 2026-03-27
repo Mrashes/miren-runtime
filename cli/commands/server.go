@@ -74,6 +74,23 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 	versionInfo := version.GetInfo()
 	ctx.UILog.Info("starting miren server", "version", versionInfo.Version, "commit", versionInfo.Commit)
 
+	// Discover local IPs early so they're available for etcd TLS SANs
+	discovery, err := ipdiscovery.DiscoverWithTimeout(5*time.Second, ctx.Log)
+	if err != nil {
+		ctx.Log.Warn("failed to discover local IPs", "error", err)
+	} else {
+		for _, addr := range discovery.Addresses {
+			ip := net.ParseIP(addr.IP)
+			if ip != nil && !ip.IsLinkLocalUnicast() {
+				cfg.TLS.AdditionalIPs = append(cfg.TLS.AdditionalIPs, addr.IP)
+			}
+		}
+		if discovery.PublicIP != "" {
+			cfg.TLS.AdditionalIPs = append(cfg.TLS.AdditionalIPs, discovery.PublicIP)
+		}
+		ctx.Log.Info("discovered IPs", "local-addresses", len(discovery.Addresses), "public", discovery.PublicIP)
+	}
+
 	switch cfg.GetMode() {
 	case "standalone":
 		// Mode defaults are already applied by serverconfig.Load
@@ -503,29 +520,6 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 	defer batchWriter.Close()
 	systemHandler := observability.NewSystemLogHandler(ctx.Log.Handler(), batchWriter)
 	ctx.Log = slog.New(systemHandler)
-
-	// Discover local IPs using ipdiscovery
-	discovery, err := ipdiscovery.DiscoverWithTimeout(5*time.Second, ctx.Log)
-	if err != nil {
-		ctx.Log.Warn("failed to discover local IPs", "error", err)
-		// Don't fail if IP discovery fails, just log it
-	} else {
-		// Add discovered IPs to the additional IPs list
-		for _, addr := range discovery.Addresses {
-			// Skip IPv6 link-local addresses
-			ip := net.ParseIP(addr.IP)
-			if ip != nil && !ip.IsLinkLocalUnicast() {
-				cfg.TLS.AdditionalIPs = append(cfg.TLS.AdditionalIPs, addr.IP)
-			}
-		}
-
-		// Add public IP if available
-		if discovery.PublicIP != "" {
-			cfg.TLS.AdditionalIPs = append(cfg.TLS.AdditionalIPs, discovery.PublicIP)
-		}
-
-		ctx.Log.Info("discovered IPs", "local-addresses", len(discovery.Addresses), "public", discovery.PublicIP)
-	}
 
 	var additionalIps []net.IP
 	seen := make(map[string]struct{})

@@ -65,19 +65,40 @@ func RunnerStart(ctx *Context, opts struct {
 		defer cc.Close()
 	} else {
 		// Start embedded containerd (same as server standalone mode)
-		containerdBinary, err := exec.LookPath("containerd")
-		if err != nil {
-			return fmt.Errorf("containerd binary not found in PATH: %w", err)
+		var (
+			containerdBinary string
+			binDir           string
+		)
+
+		if releasePath := FindReleasePath(); releasePath != "" {
+			binDir = releasePath
+			containerdBinary = filepath.Join(releasePath, "containerd")
+		} else {
+			var err error
+			containerdBinary, err = exec.LookPath("containerd")
+			if err != nil {
+				return fmt.Errorf("containerd binary not found in PATH or release directory: %w", err)
+			}
+		}
+
+		if _, err := os.Stat(containerdBinary); err != nil {
+			return fmt.Errorf("containerd binary not found at %s: %w", containerdBinary, err)
 		}
 
 		containerdComponent := containerdcomp.NewContainerdComponent(ctx.Log, opts.DataPath)
+
+		envPath := os.Getenv("PATH")
+		if binDir != "" {
+			envPath = binDir + ":" + envPath
+		}
 
 		baseDir := filepath.Join(opts.DataPath, "containerd")
 		containerdConfig := &containerdcomp.Config{
 			BinaryPath: containerdBinary,
 			BaseDir:    baseDir,
+			BinDir:     binDir,
 			SocketPath: filepath.Join(baseDir, "containerd.sock"),
-			Env:        []string{"PATH=" + os.Getenv("PATH")},
+			Env:        []string{"PATH=" + envPath},
 		}
 
 		if err := containerdComponent.Start(ctx, containerdConfig); err != nil {

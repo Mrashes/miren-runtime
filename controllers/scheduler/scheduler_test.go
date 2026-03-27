@@ -56,6 +56,9 @@ func createReadyNode(t *testing.T, ctx context.Context, client *entityserver.Cli
 	// Create the node without the session-scoped status attribute
 	status := node.Status
 	node.Status = ""
+	if node.ApiAddress == "" {
+		node.ApiAddress = ":8444"
+	}
 	nodeID, err := client.Create(ctx, name, node)
 	require.NoError(t, err)
 

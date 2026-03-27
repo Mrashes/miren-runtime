@@ -1,8 +1,10 @@
 package commands
 
 import (
+	"bufio"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 
 	"miren.dev/runtime/api/runner/runner_v1alpha"
@@ -15,6 +17,7 @@ import (
 
 func RunnerJoin(ctx *Context, opts struct {
 	Coordinator string   `short:"c" long:"coordinator" description:"Coordinator address (host:port)"`
+	Code        string   `long:"code" description:"Join code (or pass via stdin)"`
 	ListenAddr  string   `short:"l" long:"listen" description:"Address this runner will listen on"`
 	Labels      []string `long:"labels" description:"Additional labels for the runner (key=value)"`
 	ConfigPath  string   `long:"config" description:"Path to save runner config" default:"/var/lib/miren/runner/config.yaml"`
@@ -43,7 +46,20 @@ func RunnerJoin(ctx *Context, opts struct {
 
 	ctx.Printf("Joining coordinator at %s\n", coordinator)
 
-	code := opts.Args.JoinCode
+	// Resolve join code: --code flag > positional arg > stdin pipe > TTY prompt
+	code := opts.Code
+	if code == "" {
+		code = opts.Args.JoinCode
+	}
+	if code == "" {
+		if stat, _ := os.Stdin.Stat(); stat.Mode()&os.ModeCharDevice == 0 {
+			// stdin is a pipe, read the code from it
+			scanner := bufio.NewScanner(os.Stdin)
+			if scanner.Scan() {
+				code = strings.TrimSpace(scanner.Text())
+			}
+		}
+	}
 	if code == "" {
 		var err error
 		code, err = ui.PromptForInput(
@@ -93,14 +109,26 @@ func RunnerJoin(ctx *Context, opts struct {
 		}
 	}
 
+	// Use the address the runner actually connected to rather than the
+	// coordinator's bind address (which may be 0.0.0.0 or localhost).
+	coordinatorHost, _, _ := net.SplitHostPort(coordinator)
+
+	// Rewrite loopback/unspecified hosts in etcd endpoints with the
+	// coordinator host. For embedded etcd (the common case with distributed
+	// runners), etcd is colocated with the coordinator.
+	etcdEndpoints := res.EtcdEndpoints()
+	for i, ep := range etcdEndpoints {
+		etcdEndpoints[i] = rewriteLoopbackEndpoint(ep, coordinatorHost)
+	}
+
 	cfg := &runnerconfig.Config{
 		RunnerID:           runnerID,
-		CoordinatorAddress: res.CoordinatorAddr(),
+		CoordinatorAddress: coordinator,
 		CACert:             string(res.CaPem()),
 		ClientCert:         string(res.CertPem()),
 		ClientKey:          string(res.KeyPem()),
 		Labels:             labels,
-		EtcdEndpoints:      res.EtcdEndpoints(),
+		EtcdEndpoints:      etcdEndpoints,
 		EtcdPrefix:         res.EtcdPrefix(),
 		NetworkBackend:     res.NetworkBackend(),
 	}
@@ -114,4 +142,37 @@ func RunnerJoin(ctx *Context, opts struct {
 	ctx.Printf("  miren runner start\n")
 
 	return nil
+}
+
+// rewriteLoopbackEndpoint replaces loopback or unspecified hosts in an
+// endpoint URL with the given replacement host. Endpoints may be bare
+// host:port or have a scheme (e.g. "https://localhost:12379").
+func rewriteLoopbackEndpoint(endpoint, replaceHost string) string {
+	host := endpoint
+	scheme := ""
+
+	// Strip scheme if present
+	if idx := strings.Index(endpoint, "://"); idx != -1 {
+		scheme = endpoint[:idx+3]
+		host = endpoint[idx+3:]
+	}
+
+	h, port, err := net.SplitHostPort(host)
+	if err != nil {
+		return endpoint
+	}
+
+	if isLoopbackOrUnspecified(h) {
+		return scheme + net.JoinHostPort(replaceHost, port)
+	}
+
+	return endpoint
+}
+
+func isLoopbackOrUnspecified(host string) bool {
+	switch host {
+	case "localhost", "127.0.0.1", "::1", "0.0.0.0", "::":
+		return true
+	}
+	return false
 }

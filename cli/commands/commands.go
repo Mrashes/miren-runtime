@@ -624,6 +624,13 @@ miren deploy --analyze
 				Body: "miren runner list",
 			}),
 		))
+		d.Dispatch("runner status", Infer("runner status", "Show runner health and configuration", RunnerStatus,
+			WithLabsFeature(labs.FeatureDistributedRunners),
+			WithExample(mflags.Example{
+				Name: "Check runner status",
+				Body: "miren runner status",
+			}),
+		))
 		d.Dispatch("runner revoke", Infer("runner revoke", "Revoke a runner invitation", RunnerRevoke,
 			WithLabsFeature(labs.FeatureDistributedRunners),
 			WithExample(mflags.Example{
