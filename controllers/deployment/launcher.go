@@ -669,6 +669,35 @@ func (l *Launcher) buildSandboxSpec(
 		}
 	}
 
+	// Auto-add local storage volume if any env var references /miren/data/local
+	// but no local disk is explicitly configured. This eases migration from the
+	// old automatic mount behavior.
+	hasLocalDisk := false
+	for _, vol := range sbSpec.Volume {
+		if vol.Provider == "local" {
+			hasLocalDisk = true
+			break
+		}
+	}
+	if !hasLocalDisk {
+		for _, v := range envMap {
+			if strings.Contains(v, "/miren/data/local") {
+				l.Log.Info("auto-adding local storage volume (env var references /miren/data/local)",
+					"service", serviceName)
+				sbSpec.Volume = append(sbSpec.Volume, compute_v1alpha.SandboxSpecVolume{
+					Name:      "local-data",
+					Provider:  "local",
+					MountPath: "/miren/data/local",
+				})
+				appCont.Mount = append(appCont.Mount, compute_v1alpha.SandboxSpecContainerMount{
+					Source:      "local-data",
+					Destination: "/miren/data/local",
+				})
+				break
+			}
+		}
+	}
+
 	if shutdownTimeout != "" {
 		appCont.ShutdownTimeout = shutdownTimeout
 	}
