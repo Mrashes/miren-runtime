@@ -621,7 +621,15 @@ func (l *Launcher) buildSandboxSpec(
 	// Add disk volumes and mounts for this service
 	for _, svc := range cfgSpec.Services {
 		if svc.Name == serviceName {
-			if len(svc.Disks) > 0 {
+			// Check concurrency constraints for miren disk volumes
+			hasMirenDisks := false
+			for _, disk := range svc.Disks {
+				if disk.Provider == "" || disk.Provider == "miren" {
+					hasMirenDisks = true
+					break
+				}
+			}
+			if hasMirenDisks {
 				svcConcurrency, err := coreutil.GetServiceConcurrency(cfgSpec, serviceName)
 				if err != nil {
 					return nil, fmt.Errorf("failed to get service concurrency: %w", err)
@@ -636,9 +644,14 @@ func (l *Launcher) buildSandboxSpec(
 			}
 
 			for _, disk := range svc.Disks {
+				provider := disk.Provider
+				if provider == "" {
+					provider = "miren"
+				}
+
 				sbSpec.Volume = append(sbSpec.Volume, compute_v1alpha.SandboxSpecVolume{
 					Name:         disk.Name,
-					Provider:     "miren",
+					Provider:     provider,
 					DiskName:     disk.Name,
 					MountPath:    disk.MountPath,
 					ReadOnly:     disk.ReadOnly,

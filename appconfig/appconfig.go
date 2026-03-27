@@ -40,9 +40,12 @@ type ServiceConcurrencyConfig struct {
 	ShutdownTimeout     string `toml:"shutdown_timeout"` // e.g. "10s", "30s" - time to wait for graceful shutdown
 }
 
-// DiskConfig represents a disk attachment for a service
+// DiskConfig represents a disk attachment for a service.
+// Provider defaults to "miren" (network disk) when empty.
+// Use provider = "local" for node-local persistent storage.
 type DiskConfig struct {
 	Name         string `toml:"name"`
+	Provider     string `toml:"provider"`
 	MountPath    string `toml:"mount_path"`
 	ReadOnly     bool   `toml:"read_only"`
 	SizeGB       int    `toml:"size_gb"`
