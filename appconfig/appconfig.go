@@ -109,15 +109,18 @@ func LoadAppConfigWithPath() (*AppConfig, string, error) {
 	for dir != "/" {
 		path := filepath.Join(dir, AppConfigPath)
 		data, err := os.ReadFile(path)
-		if err == nil {
-			ac, parseErr := decodeAndValidate(data, path)
-			if parseErr != nil {
-				return nil, "", parseErr
+		if err != nil {
+			if !os.IsNotExist(err) {
+				return nil, "", err
 			}
-			return ac, path, nil
+			dir = filepath.Dir(dir)
+			continue
 		}
-
-		dir = filepath.Dir(dir)
+		ac, parseErr := decodeAndValidate(data, path)
+		if parseErr != nil {
+			return nil, "", parseErr
+		}
+		return ac, path, nil
 	}
 
 	return nil, "", nil

@@ -203,27 +203,41 @@ func walkAST(p *tomlast.Parser, parts []string, depth int) int {
 		switch node.Kind {
 		case tomlast.Table, tomlast.ArrayTable:
 			keyIter := node.Key()
+			// Table headers contain the full key path (e.g. [services.web.concurrency]).
+			// When we're at depth > 0, the first `depth` components were already
+			// matched by a parent table — skip them and only compare the remainder.
+			keyIdx := 0
 			matchDepth := depth
 			matched := true
 			var lastKeyNode *tomlast.Node
 
 			for keyIter.Next() {
+				n := keyIter.Node()
+				keyName := string(n.Data)
+
+				if keyIdx < depth {
+					// Skip already-matched prefix components
+					keyIdx++
+					continue
+				}
+
 				if matchDepth >= len(parts) {
 					matched = false
 					break
 				}
-				n := keyIter.Node()
 				lastKeyNode = n
-				keyName := string(n.Data)
 				wantKey := parts[matchDepth]
 				if wantKey != "*" && keyName != wantKey {
 					matched = false
 					break
 				}
 				matchDepth++
+				keyIdx++
 			}
 
-			if !matched {
+			if !matched || keyIdx < depth {
+				// keyIdx < depth means the table header had fewer components
+				// than our current depth — it's an unrelated table.
 				continue
 			}
 

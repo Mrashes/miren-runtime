@@ -21,6 +21,7 @@ func expandAlias(d *mflags.Dispatcher, args []string) ([]string, error) {
 	ac, err := appconfig.LoadAppConfig()
 	if err != nil {
 		if te, ok := err.(ui.TerminalError); ok {
+			fmt.Fprint(os.Stderr, "warning: ")
 			te.WriteForTerminal(os.Stderr)
 		} else {
 			fmt.Fprintf(os.Stderr, "warning: could not load %s: %v\n", appconfig.AppConfigPath, err)

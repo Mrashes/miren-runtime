@@ -167,6 +167,25 @@ requests_per_instance = 10
 	assert.Equal(t, 0, resolveKeyLine(data, "nonexistent.key"))
 }
 
+func TestResolveKeyLine_ParentChildTables(t *testing.T) {
+	// Regression: when a parent table [services.web] appears before a child
+	// table [services.web.concurrency], the AST walker must skip the
+	// already-matched prefix components when comparing table header keys.
+	data := []byte(`
+name = "test"
+
+[services.web]
+port = 8080
+
+[services.web.concurrency]
+mode = "auto"
+requests_per_instance = 10
+`)
+	assert.Equal(t, 8, resolveKeyLine(data, "services.web.concurrency.mode"))
+	assert.Equal(t, 9, resolveKeyLine(data, "services.web.concurrency.requests_per_instance"))
+	assert.Equal(t, 5, resolveKeyLine(data, "services.web.port"))
+}
+
 func TestKeyParentPath(t *testing.T) {
 	tests := []struct {
 		name string

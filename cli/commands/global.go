@@ -230,6 +230,7 @@ func (c *Context) Warn(format string, args ...interface{}) {
 // for rich output when available, otherwise falls back to a plain warning.
 func printConfigWarning(err error) {
 	if te, ok := err.(ui.TerminalError); ok {
+		fmt.Fprint(os.Stderr, "warning: ")
 		te.WriteForTerminal(os.Stderr)
 	} else {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
