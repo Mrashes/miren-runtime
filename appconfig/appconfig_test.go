@@ -1209,7 +1209,8 @@ unknown_field = "value"
 `
 		_, err := Parse([]byte(config))
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "strict mode")
+		assert.Contains(t, err.Error(), "unknown field")
+		assert.Contains(t, err.Error(), "unknown_field")
 	})
 
 	t.Run("size instead of size_gb in disk config", func(t *testing.T) {
@@ -1227,7 +1228,8 @@ size = 20
 `
 		_, err := Parse([]byte(config))
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "strict mode")
+		assert.Contains(t, err.Error(), "unknown field")
+		assert.Contains(t, err.Error(), `did you mean "size_gb"`)
 	})
 
 	t.Run("unknown field in service config", func(t *testing.T) {
@@ -1240,7 +1242,8 @@ bogus = true
 `
 		_, err := Parse([]byte(config))
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "strict mode")
+		assert.Contains(t, err.Error(), "unknown field")
+		assert.Contains(t, err.Error(), "bogus")
 	})
 
 	t.Run("valid config still works", func(t *testing.T) {
