@@ -2329,3 +2329,59 @@ func TestGetOneIndex(t *testing.T) {
 	_, err = store.GetOneIndex(t.Context(), String(DBShortId, "nonexistent"))
 	assert.Error(t, err)
 }
+
+// TestCreateEntity_OverwritePreservesAllAttrs verifies that CreateEntity with
+// WithOverwrite does not silently drop attributes when overwriting an existing
+// entity. This is a regression test for MIR-931, where buildEntitySaveOps
+// mutated a shared slice backing array via SetUpdatedAt + SortedAttrs, causing
+// attributes that sort after "db/entity.updated" (like "db/type") to be pushed
+// past the slice's length on the overwrite path.
+func TestCreateEntity_OverwritePreservesAllAttrs(t *testing.T) {
+	client := setupTestEtcd(t)
+
+	prefix := "/test-overwrite-attrs"
+	_, err := client.Delete(t.Context(), prefix, clientv3.WithPrefix())
+	require.NoError(t, err)
+
+	store, err := NewEtcdStore(t.Context(), slog.Default(), client, prefix)
+	require.NoError(t, err)
+
+	// Create a schema attribute entity (like schema.Apply does)
+	original := New(
+		Ident, "test/overwrite.attr",
+		Doc, "original doc",
+		Type, TypeStr,
+		Cardinality, CardinalityOne,
+	)
+
+	e1, err := store.CreateEntity(t.Context(), New(original.Attrs()), WithOverwrite)
+	require.NoError(t, err)
+	assert.Equal(t, Id("test/overwrite.attr"), e1.Id())
+
+	// Overwrite with changed doc — simulates schema.Apply on second boot
+	updated := New(
+		Ident, "test/overwrite.attr",
+		Doc, "updated doc",
+		Type, TypeStr,
+		Cardinality, CardinalityOne,
+	)
+
+	e2, err := store.CreateEntity(t.Context(), New(updated.Attrs()), WithOverwrite)
+	require.NoError(t, err)
+	assert.Equal(t, Id("test/overwrite.attr"), e2.Id())
+
+	// Read back from etcd and verify all attrs survived
+	fetched, err := store.GetEntity(t.Context(), Id("test/overwrite.attr"))
+	require.NoError(t, err)
+
+	// The critical check: db/type must still be present after overwrite.
+	// MIR-931 caused this attr to be silently dropped because buildEntitySaveOps
+	// mutated a shared slice, pushing later-sorted attrs past the slice length.
+	typeAttr, hasType := fetched.Get(Type)
+	require.True(t, hasType, "entity should still have db/type after overwrite")
+	assert.Equal(t, TypeStr, typeAttr.Value.Any(), "type should be preserved after overwrite")
+
+	docAttr, hasDoc := fetched.Get(Doc)
+	require.True(t, hasDoc, "entity should still have db/doc after overwrite")
+	assert.Equal(t, "updated doc", docAttr.Value.Any(), "doc should reflect the overwrite")
+}
