@@ -395,6 +395,8 @@ func (r *Runner) Start(ctx context.Context, eg ...*errgroup.Group) error {
 		client *rpc.NetworkClient
 	)
 
+	r.Log.Info("Establishing RPC connection", "listen", r.ListenAddress, "distributed", r.Config != nil)
+
 	if r.Config == nil {
 		rs, err = rpc.NewState(ctx, rpc.WithLogger(r.Log), rpc.WithBindAddr(r.ListenAddress), rpc.WithSkipVerify)
 		if err != nil {
@@ -417,6 +419,8 @@ func (r *Runner) Start(ctx context.Context, eg ...*errgroup.Group) error {
 		}
 	}
 
+	r.Log.Info("Connected to entity server")
+
 	eas := es.NewEntityAccessClient(client)
 
 	ec := entityserver.NewClient(r.Log, eas)
@@ -425,6 +429,8 @@ func (r *Runner) Start(ctx context.Context, eg ...*errgroup.Group) error {
 	if err != nil {
 		return err
 	}
+
+	r.Log.Info("Controllers initialized")
 
 	err = r.setupEntity(ctx, ec)
 	if err != nil {
@@ -465,6 +471,7 @@ func (r *Runner) initializeNetwork(ctx context.Context, eg ...*errgroup.Group) e
 
 	// Add TLS config if provided
 	if r.deps.EtcdTLSCertFile != "" && r.deps.EtcdTLSKeyFile != "" && r.deps.EtcdTLSCAFile != "" {
+		r.Log.Info("Using etcd TLS", "cert", r.deps.EtcdTLSCertFile, "ca", r.deps.EtcdTLSCAFile)
 		grungeOpts.TLSCertFile = r.deps.EtcdTLSCertFile
 		grungeOpts.TLSKeyFile = r.deps.EtcdTLSKeyFile
 		grungeOpts.TLSCAFile = r.deps.EtcdTLSCAFile
@@ -499,9 +506,21 @@ func (r *Runner) initializeNetwork(ctx context.Context, eg ...*errgroup.Group) e
 		}()
 	}
 
-	// Update deps with the leased IP
+	// Update deps with the leased IP and subnet
 	lease := gn.Lease()
 	r.deps.IPv4Routable = lease.IPv4()
+
+	// Initialize netdb subnet from the flannel lease so the sandbox
+	// controller can allocate IPs within this runner's subnet.
+	ndb, err := netdb.New(filepath.Join(r.DataPath, "net.db"))
+	if err != nil {
+		return fmt.Errorf("failed to open netdb: %w", err)
+	}
+	subnet, err := ndb.Subnet(lease.IPv4().String())
+	if err != nil {
+		return fmt.Errorf("failed to create subnet from lease: %w", err)
+	}
+	r.deps.Subnet = subnet
 
 	r.Log.Info("Joined Flannel network", "ipv4", lease.IPv4().String())
 
@@ -512,6 +531,8 @@ func (r *Runner) setupEntity(ctx context.Context, ec *entityserver.Client) error
 	if r.Id == "" {
 		return nil
 	}
+
+	r.Log.Info("Creating health session")
 
 	sess, ec, err := ec.NewSession(ctx, "runner health")
 	if err != nil {
@@ -527,9 +548,12 @@ func (r *Runner) setupEntity(ctx context.Context, ec *entityserver.Client) error
 	}
 
 	node := compute_v1alpha.Node{
+		RunnerId:    r.Id,
 		Constraints: types.LabelSet("compute", "generic", "role", role),
 		ApiAddress:  r.ListenAddress,
 	}
+
+	r.Log.Info("Registering node entity", "role", role, "address", r.ListenAddress)
 
 	res, err := ec.CreateOrUpdate(ctx, r.Id, &node)
 	if err != nil {
@@ -543,7 +567,7 @@ func (r *Runner) setupEntity(ctx context.Context, ec *entityserver.Client) error
 		return err
 	}
 
-	r.Log.Info("Registered runner", "id", res)
+	r.Log.Info("Runner registered and ready", "id", res, "status", "ready")
 
 	return nil
 }
@@ -557,6 +581,11 @@ func (r *Runner) SetupControllers(
 	retErr error,
 ) {
 	cm := controller.NewControllerManager()
+
+	// Initialize NetServ if not provided (distributed runner mode)
+	if r.deps.NetServ == nil {
+		r.deps.NetServ = network.NewServiceManager(r.Log, eas)
+	}
 
 	// Create sandbox controller with explicit dependencies
 	sbcDeps := sandbox.SandboxControllerDeps{
@@ -905,7 +934,7 @@ func (r *Runner) SetupControllers(
 
 	// Add disk_volume watch controller to trigger disk re-reconciliation when
 	// disk_volume entities change (e.g. volume becomes DV_READY after provisioning)
-	diskVolumeWatchController := disk.NewDiskVolumeWatchController(log, eas, diskRC)
+	diskVolumeWatchController := disk.NewDiskVolumeWatchController(log, eas, diskRC, r.Id)
 	cm.AddController(
 		controller.NewReconcileController(
 			"disk-volume-watch",
@@ -920,7 +949,7 @@ func (r *Runner) SetupControllers(
 
 	// Add disk_mount watch controller to trigger disk lease re-reconciliation when
 	// disk_mount entities change (e.g. mount becomes DM_MOUNTED after mounting)
-	diskMountWatchController := disk.NewDiskMountWatchController(log, eas, diskLeaseRC)
+	diskMountWatchController := disk.NewDiskMountWatchController(log, eas, diskLeaseRC, r.Id)
 	cm.AddController(
 		controller.NewReconcileController(
 			"disk-mount-watch",

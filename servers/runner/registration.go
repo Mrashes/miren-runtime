@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"miren.dev/runtime/api/compute/compute_v1alpha"
+	"miren.dev/runtime/api/core/core_v1alpha"
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
 	"miren.dev/runtime/api/runner/runner_v1alpha"
 	"miren.dev/runtime/pkg/caauth"
@@ -218,9 +219,14 @@ func (s *RegistrationServer) Join(ctx context.Context, req *runner_v1alpha.Runne
 		Constraints:  labels,
 	}
 
-	nodeAttrs := node.Encode()
+	// Create node entity with an ident so setupEntity can find it via CreateOrUpdate
 	nodeEntity := &entityserver_v1alpha.Entity{}
-	nodeEntity.SetAttrs(nodeAttrs)
+	nodeEntity.SetAttrs(
+		entity.New(
+			(&core_v1alpha.Metadata{Name: runnerID}).Encode,
+			node.Encode,
+			entity.Ident, types.Keyword(node.ShortKind()+"/"+runnerID),
+		).Attrs())
 
 	nodePutResp, err := s.EAC.Put(ctx, nodeEntity)
 	if err != nil {

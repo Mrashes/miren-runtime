@@ -5,6 +5,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -65,19 +66,40 @@ func RunnerStart(ctx *Context, opts struct {
 		defer cc.Close()
 	} else {
 		// Start embedded containerd (same as server standalone mode)
-		containerdBinary, err := exec.LookPath("containerd")
-		if err != nil {
-			return fmt.Errorf("containerd binary not found in PATH: %w", err)
+		var (
+			containerdBinary string
+			binDir           string
+		)
+
+		if releasePath := FindReleasePath(); releasePath != "" {
+			candidate := filepath.Join(releasePath, "containerd")
+			if _, err := os.Stat(candidate); err == nil {
+				binDir = releasePath
+				containerdBinary = candidate
+			}
+		}
+		if containerdBinary == "" {
+			var err error
+			containerdBinary, err = exec.LookPath("containerd")
+			if err != nil {
+				return fmt.Errorf("containerd binary not found in PATH or release directory: %w", err)
+			}
 		}
 
 		containerdComponent := containerdcomp.NewContainerdComponent(ctx.Log, opts.DataPath)
+
+		envPath := os.Getenv("PATH")
+		if binDir != "" {
+			envPath = binDir + ":" + envPath
+		}
 
 		baseDir := filepath.Join(opts.DataPath, "containerd")
 		containerdConfig := &containerdcomp.Config{
 			BinaryPath: containerdBinary,
 			BaseDir:    baseDir,
+			BinDir:     binDir,
 			SocketPath: filepath.Join(baseDir, "containerd.sock"),
-			Env:        []string{"PATH=" + os.Getenv("PATH")},
+			Env:        []string{"PATH=" + envPath},
 		}
 
 		if err := containerdComponent.Start(ctx, containerdConfig); err != nil {
@@ -114,10 +136,18 @@ func RunnerStart(ctx *Context, opts struct {
 	// Create errgroup for background tasks
 	eg, egCtx := errgroup.WithContext(sigCtx)
 
-	// Determine listen address
+	// Determine listen address. If no explicit address is given, discover the
+	// machine's outbound IP (the one that would route to the coordinator) and
+	// advertise that so the coordinator knows how to reach this runner.
 	listenAddr := opts.ListenAddr
 	if listenAddr == "" {
-		listenAddr = ":8444" // Default runner listen port
+		port := "8444"
+		ip, err := discoverOutboundIP(cfg.CoordinatorAddress)
+		if err != nil {
+			return fmt.Errorf("could not discover outbound IP for listen address (use --listen to set manually): %w", err)
+		}
+		listenAddr = net.JoinHostPort(ip.String(), port)
+		ctx.Log.Info("discovered listen address", "addr", listenAddr)
 	}
 
 	// Build runner configuration
@@ -130,8 +160,14 @@ func RunnerStart(ctx *Context, opts struct {
 		DiskMode:      cfg.DiskMode,
 	}
 
-	// Create resolver for network operations
-	resolver, _ := netresolve.NewLocalResolver()
+	// Create resolver for network operations and map cluster.local to the
+	// coordinator so the runner can pull images from the coordinator's registry.
+	resolver, hostMapper := netresolve.NewLocalResolver()
+	coordinatorHost, _, _ := net.SplitHostPort(cfg.CoordinatorAddress)
+	if addr, err := netip.ParseAddr(coordinatorHost); err == nil {
+		hostMapper.SetHost("cluster.local", addr)
+		ctx.Log.Info("mapped cluster.local to coordinator", "addr", addr)
+	}
 
 	// Build runner dependencies
 	// Note: Some deps like NetServ require entity access client which we get after connecting
@@ -224,4 +260,24 @@ func RunnerStart(ctx *Context, opts struct {
 
 	ctx.Log.Info("runner stopped")
 	return nil
+}
+
+// discoverOutboundIP finds the local IP that would be used to reach the given
+// remote address. This gives us the machine's IP on the right interface without
+// actually connecting.
+func discoverOutboundIP(remoteAddr string) (netip.Addr, error) {
+	conn, err := net.Dial("udp4", remoteAddr)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	defer conn.Close()
+	addr, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		return netip.Addr{}, fmt.Errorf("unexpected local address type")
+	}
+	ip4 := addr.IP.To4()
+	if ip4 == nil {
+		return netip.Addr{}, fmt.Errorf("discovered non-IPv4 address: %s", addr.IP)
+	}
+	return netip.AddrFrom4([4]byte(ip4)), nil
 }
