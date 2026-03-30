@@ -721,8 +721,7 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 
 	// Persist the leased subnet so we can pass it as PrevIPv4 on next restart
 	if err := ndb.SetLeasedSubnet(lease.IPv4()); err != nil {
-		ctx.Log.Error("failed to persist leased subnet", "error", err)
-		// Non-fatal: continue without persistence
+		return fmt.Errorf("failed to persist leased subnet: %w", err)
 	}
 
 	ctx.ServerState.Subnet, err = ndb.Subnet(lease.IPv4().String())
