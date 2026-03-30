@@ -85,10 +85,7 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 				cfg.TLS.AdditionalIPs = append(cfg.TLS.AdditionalIPs, addr.IP)
 			}
 		}
-		if discovery.PublicIP != "" {
-			cfg.TLS.AdditionalIPs = append(cfg.TLS.AdditionalIPs, discovery.PublicIP)
-		}
-		ctx.Log.Info("discovered IPs", "local-addresses", len(discovery.Addresses), "public", discovery.PublicIP)
+		ctx.Log.Info("discovered IPs", "local-addresses", len(discovery.Addresses))
 	}
 
 	switch cfg.GetMode() {
