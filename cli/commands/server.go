@@ -74,14 +74,16 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 	versionInfo := version.GetInfo()
 	ctx.UILog.Info("starting miren server", "version", versionInfo.Version, "commit", versionInfo.Commit)
 
-	// Discover local IPs early so they're available for etcd TLS SANs.
+	// Discover local and public IPs early so they're available for TLS cert SANs.
 	// We track discovered IPs separately from user-configured IPs so the
 	// coordinator can treat them differently (netcheck can replace discovered
 	// public IPs but user-configured IPs always pass through).
 	var discoveredIps []net.IP
-	discovery, err := ipdiscovery.DiscoverWithTimeout(5*time.Second, ctx.Log)
+	discovery, err := ipdiscovery.DiscoverWithTimeout(10*time.Second, ctx.Log, ipdiscovery.Options{
+		NetcheckURL: coordinate.DefaultCloudURL,
+	})
 	if err != nil {
-		ctx.Log.Warn("failed to discover local IPs", "error", err)
+		ctx.Log.Warn("failed to discover IPs", "error", err)
 	} else {
 		for _, addr := range discovery.Addresses {
 			ip := net.ParseIP(addr.IP)
@@ -90,7 +92,7 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 				discoveredIps = append(discoveredIps, ip)
 			}
 		}
-		ctx.Log.Info("discovered IPs", "local-addresses", len(discovery.Addresses))
+		ctx.Log.Info("discovered IPs", "addresses", len(discovery.Addresses))
 	}
 
 	switch cfg.GetMode() {
