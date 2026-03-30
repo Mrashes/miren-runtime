@@ -292,6 +292,27 @@ func lastIPInPrefix(prefix netip.Prefix) netip.Addr {
 	return netipx.PrefixLastIP(prefix)
 }
 
+// isUsableHostAddr returns true if addr is a usable host address within the subnet,
+// excluding the network address, gateway (.1), and broadcast address.
+func (s *Subnet) isUsableHostAddr(addr netip.Addr) bool {
+	if !s.net.Contains(addr) {
+		return false
+	}
+	// Exclude network address (.0)
+	if addr == s.net.Addr() {
+		return false
+	}
+	// Exclude gateway address (.1)
+	if addr == s.net.Addr().Next() {
+		return false
+	}
+	// Exclude broadcast address (last IP)
+	if addr == netipx.PrefixLastIP(s.net) {
+		return false
+	}
+	return true
+}
+
 func (s *Subnet) Reserve() (netip.Prefix, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -378,10 +399,10 @@ func (s *Subnet) Reserve() (netip.Prefix, error) {
 
 // ReserveSpecificAddr reserves a specific IP address in the subnet.
 // This is idempotent: it succeeds whether the IP is new, already reserved, or was released.
-// Returns an error if the address is not within the subnet.
+// Returns an error if the address is not a usable host address within the subnet.
 func (s *Subnet) ReserveSpecificAddr(addr netip.Addr) error {
-	if !s.net.Contains(addr) {
-		return fmt.Errorf("address %s is not within subnet %s", addr, s.net)
+	if !s.isUsableHostAddr(addr) {
+		return fmt.Errorf("address %s is not a usable host address in subnet %s", addr, s.net)
 	}
 
 	s.mu.Lock()

@@ -208,7 +208,7 @@ func TestNetDB(t *testing.T) {
 		r.Equal("172.16.8.3/24", ip2.String())
 	})
 
-	t.Run("rejects address outside subnet", func(t *testing.T) {
+	t.Run("rejects unusable host addresses", func(t *testing.T) {
 		r := require.New(t)
 
 		n, err := New(filepath.Join(t.TempDir(), "net.db"))
@@ -217,10 +217,31 @@ func TestNetDB(t *testing.T) {
 		subnet, err := n.Subnet("172.16.8.0/24")
 		r.NoError(err)
 
+		// Outside subnet
 		addr, _ := netip.ParseAddr("10.0.0.1")
 		err = subnet.ReserveSpecificAddr(addr)
 		r.Error(err)
-		r.Contains(err.Error(), "not within subnet")
+		r.Contains(err.Error(), "not a usable host address")
+
+		// Network address (.0)
+		addr, _ = netip.ParseAddr("172.16.8.0")
+		err = subnet.ReserveSpecificAddr(addr)
+		r.Error(err)
+
+		// Gateway address (.1)
+		addr, _ = netip.ParseAddr("172.16.8.1")
+		err = subnet.ReserveSpecificAddr(addr)
+		r.Error(err)
+
+		// Broadcast address (.255)
+		addr, _ = netip.ParseAddr("172.16.8.255")
+		err = subnet.ReserveSpecificAddr(addr)
+		r.Error(err)
+
+		// Valid host address works
+		addr, _ = netip.ParseAddr("172.16.8.2")
+		err = subnet.ReserveSpecificAddr(addr)
+		r.NoError(err)
 	})
 
 	t.Run("can reserve an interface", func(t *testing.T) {
