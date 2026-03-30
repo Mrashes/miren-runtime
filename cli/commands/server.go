@@ -663,10 +663,27 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 		netip.MustParsePrefix("fd47:cafe:d00d::/64"),
 	}
 
+	// Initialize netdb before flannel so we can read the previous subnet lease
+	dataPath := cfg.Server.GetDataPath()
+	if err := os.MkdirAll(dataPath, 0755); err != nil {
+		return fmt.Errorf("failed to create directory %s: %w", dataPath, err)
+	}
+
+	ndb, err := netdb.New(filepath.Join(dataPath, "net.db"))
+	if err != nil {
+		return fmt.Errorf("failed to open netdb: %w", err)
+	}
+
+	prevSubnet, err := ndb.GetLeasedSubnet()
+	if err != nil {
+		return fmt.Errorf("failed to read leased subnet from netdb: %w", err)
+	}
+
 	grungeOpts := grunge.NetworkOptions{
 		EtcdEndpoints: cfg.Etcd.Endpoints,
 		EtcdPrefix:    cfg.Etcd.GetPrefix() + "/sub/flannel",
 		BackendType:   cfg.Server.GetNetworkBackend(),
+		PrevIPv4:      prevSubnet,
 	}
 
 	// Add TLS config when distributed runners is enabled
@@ -702,15 +719,9 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 
 	ctx.Log.Info("leased IP prefixes", "ipv4", lease.IPv4().String(), "ipv6", lease.IPv6().String())
 
-	// Initialize subnet from leased IP
-	dataPath := cfg.Server.GetDataPath()
-	if err := os.MkdirAll(dataPath, 0755); err != nil {
-		return fmt.Errorf("failed to create directory %s: %w", dataPath, err)
-	}
-
-	ndb, err := netdb.New(filepath.Join(dataPath, "net.db"))
-	if err != nil {
-		return fmt.Errorf("failed to open netdb: %w", err)
+	// Persist the leased subnet so we can pass it as PrevIPv4 on next restart
+	if err := ndb.SetLeasedSubnet(lease.IPv4()); err != nil {
+		return fmt.Errorf("failed to persist leased subnet: %w", err)
 	}
 
 	ctx.ServerState.Subnet, err = ndb.Subnet(lease.IPv4().String())

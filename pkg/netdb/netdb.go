@@ -82,6 +82,10 @@ func New(path string) (*NetDB, error) {
 			name TEXT PRIMARY KEY,
 			reserved INTEGER DEFAULT 1
 		);
+		CREATE TABLE IF NOT EXISTS metadata (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		);
 	`)
 	if err != nil {
 		return nil, err
@@ -111,6 +115,32 @@ func (n *NetDB) Subnet(cidr string) (*Subnet, error) {
 		db:    n.db,
 		net:   prefix,
 	}, nil
+}
+
+// GetLeasedSubnet returns the previously persisted flannel subnet lease, if any.
+// Returns an invalid prefix with nil error if no lease has been saved.
+func (n *NetDB) GetLeasedSubnet() (netip.Prefix, error) {
+	var value string
+	err := n.db.QueryRow("SELECT value FROM metadata WHERE key = 'leased_subnet'").Scan(&value)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return netip.Prefix{}, nil
+		}
+		return netip.Prefix{}, fmt.Errorf("failed to query leased subnet: %w", err)
+	}
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil {
+		return netip.Prefix{}, fmt.Errorf("failed to parse leased subnet %q: %w", value, err)
+	}
+	return prefix, nil
+}
+
+// SetLeasedSubnet persists the flannel subnet lease so it can be reused on restart.
+func (n *NetDB) SetLeasedSubnet(prefix netip.Prefix) error {
+	_, err := n.db.Exec(
+		"INSERT INTO metadata (key, value) VALUES ('leased_subnet', ?) ON CONFLICT(key) DO UPDATE SET value = ?",
+		prefix.String(), prefix.String())
+	return err
 }
 
 func (s *Subnet) Router() netip.Prefix {
@@ -262,6 +292,27 @@ func lastIPInPrefix(prefix netip.Prefix) netip.Addr {
 	return netipx.PrefixLastIP(prefix)
 }
 
+// isUsableHostAddr returns true if addr is a usable host address within the subnet,
+// excluding the network address, gateway (.1), and broadcast address.
+func (s *Subnet) isUsableHostAddr(addr netip.Addr) bool {
+	if !s.net.Contains(addr) {
+		return false
+	}
+	// Exclude network address (.0)
+	if addr == s.net.Addr() {
+		return false
+	}
+	// Exclude gateway address (.1)
+	if addr == s.net.Addr().Next() {
+		return false
+	}
+	// Exclude broadcast address (last IP)
+	if addr == netipx.PrefixLastIP(s.net) {
+		return false
+	}
+	return true
+}
+
 func (s *Subnet) Reserve() (netip.Prefix, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -344,6 +395,25 @@ func (s *Subnet) Reserve() (netip.Prefix, error) {
 	}
 
 	return netip.Prefix{}, net.InvalidAddrError("no available IPs in subnet")
+}
+
+// ReserveSpecificAddr reserves a specific IP address in the subnet.
+// This is idempotent: it succeeds whether the IP is new, already reserved, or was released.
+// Returns an error if the address is not a usable host address within the subnet.
+func (s *Subnet) ReserveSpecificAddr(addr netip.Addr) error {
+	if !s.isUsableHostAddr(addr) {
+		return fmt.Errorf("address %s is not a usable host address in subnet %s", addr, s.net)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		INSERT INTO ips (ip, subnet, reserved, released_at)
+		VALUES (?, ?, 1, NULL)
+		ON CONFLICT(ip) DO UPDATE SET reserved = 1, released_at = NULL`,
+		addr.String(), s.net.String())
+	return err
 }
 
 func (s *Subnet) Release(prefix netip.Prefix) error {
