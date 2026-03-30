@@ -959,7 +959,7 @@ func (s *EtcdStore) buildUniqueUpdateOps(ctx context.Context, entityId Id, oldEn
 func (s *EtcdStore) buildEntitySaveOps(entity *Entity, key string, primary, session []Attr, o *entityOpts) ([]clientv3.Op, error) {
 	var ops []clientv3.Op
 
-	entity.attrs = primary
+	entity.attrs = slices.Clone(primary)
 	// Store manages UpdatedAt - set it on every save
 	entity.SetUpdatedAt(time.Now())
 
@@ -1374,7 +1374,7 @@ func (s *EtcdStore) GetAttributeSchema(ctx context.Context, id Id) (*AttributeSc
 
 	if ok {
 		if schema.Type == "" {
-			panic("attribute schema in cache has empty type")
+			panic(fmt.Sprintf("attribute schema %q in cache has empty type", id))
 		}
 		return schema, nil
 	}
