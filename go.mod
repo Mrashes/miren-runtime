@@ -40,6 +40,7 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.3
 	github.com/go-logr/logr v1.4.3
 	github.com/go-ozzo/ozzo-validation/v4 v4.3.0
+	github.com/go-sql-driver/mysql v1.9.3
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/cel-go v0.24.1
 	github.com/google/gofuzz v1.2.0
@@ -131,7 +132,6 @@ require (
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.0.5 // indirect
-	github.com/go-sql-driver/mysql v1.9.3 // indirect
 )
 
 require (
