@@ -20,6 +20,8 @@ import (
 	"miren.dev/runtime/pkg/testutils"
 )
 
+const testNodeId = "test-node"
+
 func TestContainerWatchdog(t *testing.T) {
 	testDeps, cleanup := testutils.NewTestDeps()
 	defer cleanup()
@@ -38,6 +40,18 @@ func TestContainerWatchdog(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	// Create the node entity so sandbox ScheduleKeys can reference it.
+	// Only set the kind — Status is a session attribute and can't be set via Put.
+	{
+		nodeId := entity.Id("node/" + testNodeId)
+		node := &compute.Node{}
+		var nodeE entityserver_v1alpha.Entity
+		nodeE.SetId(nodeId.String())
+		nodeE.SetAttrs(entity.New(entity.DBId, nodeId, node.Encode).Attrs())
+		_, err := eac.Put(context.Background(), &nodeE)
+		require.NoError(t, err)
+	}
+
 	t.Run("removes orphaned containers", func(t *testing.T) {
 		r := require.New(t)
 
@@ -46,18 +60,27 @@ func TestContainerWatchdog(t *testing.T) {
 
 		ctx = namespaces.WithNamespace(ctx, ns)
 
-		// Create a sandbox entity in the store
+		// Create a sandbox entity in the store with a schedule key so it
+		// matches the watchdog's node-scoped query.
 		sbID := entity.Id(idgen.GenNS("sb"))
 		sb := &compute.Sandbox{
 			ID:     sbID,
 			Status: compute.RUNNING,
+		}
+		schedule := compute.Schedule{
+			Key: compute.Key{
+				Kind: compute.KindSandbox,
+				Node: entity.Id("node/" + testNodeId),
+			},
 		}
 
 		var rpcE entityserver_v1alpha.Entity
 		rpcE.SetId(sbID.String())
 		rpcE.SetAttrs(entity.New(
 			entity.DBId, sbID,
-			sb.Encode).Attrs())
+			sb.Encode,
+			schedule.Encode,
+		).Attrs())
 		_, err := eac.Put(ctx, &rpcE)
 		r.NoError(err)
 
@@ -87,6 +110,7 @@ func TestContainerWatchdog(t *testing.T) {
 			CC:            cc,
 			EAC:           eac,
 			Namespace:     ns,
+			NodeId:        testNodeId,
 			CheckInterval: 100 * time.Millisecond,
 		}
 
@@ -130,6 +154,7 @@ func TestContainerWatchdog(t *testing.T) {
 			CC:        cc,
 			EAC:       eac,
 			Namespace: ns,
+			NodeId:    testNodeId,
 		}
 
 		// Run cleanup
@@ -159,12 +184,20 @@ func TestContainerWatchdog(t *testing.T) {
 			ID:     oldDeadSbID,
 			Status: compute.DEAD,
 		}
+		schedule := compute.Schedule{
+			Key: compute.Key{
+				Kind: compute.KindSandbox,
+				Node: entity.Id("node/" + testNodeId),
+			},
+		}
 
 		var rpcE entityserver_v1alpha.Entity
 		rpcE.SetId(oldDeadSbID.String())
 		rpcE.SetAttrs(entity.New(
 			entity.DBId, oldDeadSbID,
-			oldDeadSb.Encode).Attrs())
+			oldDeadSb.Encode,
+			schedule.Encode,
+		).Attrs())
 		_, err := eac.Put(ctx, &rpcE)
 		r.NoError(err)
 
@@ -186,14 +219,13 @@ func TestContainerWatchdog(t *testing.T) {
 
 		// Create the watchdog
 		watchdog := &sandbox.ContainerWatchdog{
-			Log:       slog.Default(),
-			CC:        cc,
-			EAC:       eac,
-			Namespace: ns,
+			Log:         slog.Default(),
+			CC:          cc,
+			EAC:         eac,
+			Namespace:   ns,
+			NodeId:      testNodeId,
+			GraceWindow: 10 * time.Millisecond,
 		}
-
-		// Create the watchdog with a very short grace window
-		watchdog.GraceWindow = 10 * time.Millisecond
 
 		// Run cleanup
 		result, err := watchdog.CleanupOrphanedContainers(ctx)
@@ -223,12 +255,20 @@ func TestContainerWatchdog(t *testing.T) {
 			ID:     recentDeadSbID,
 			Status: compute.DEAD,
 		}
+		schedule := compute.Schedule{
+			Key: compute.Key{
+				Kind: compute.KindSandbox,
+				Node: entity.Id("node/" + testNodeId),
+			},
+		}
 
 		var rpcE entityserver_v1alpha.Entity
 		rpcE.SetId(recentDeadSbID.String())
 		rpcE.SetAttrs(entity.New(
 			entity.DBId, recentDeadSbID,
-			recentDeadSb.Encode).Attrs())
+			recentDeadSb.Encode,
+			schedule.Encode,
+		).Attrs())
 		_, err := eac.Put(ctx, &rpcE)
 		r.NoError(err)
 
@@ -252,6 +292,7 @@ func TestContainerWatchdog(t *testing.T) {
 			CC:          cc,
 			EAC:         eac,
 			Namespace:   ns,
+			NodeId:      testNodeId,
 			GraceWindow: 10 * time.Second,
 		}
 
@@ -278,6 +319,7 @@ func TestContainerWatchdog(t *testing.T) {
 			CC:            cc,
 			EAC:           eac,
 			Namespace:     ns,
+			NodeId:        testNodeId,
 			CheckInterval: 100 * time.Millisecond,
 		}
 
