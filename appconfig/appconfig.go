@@ -108,27 +108,19 @@ func LoadAppConfigWithPath() (*AppConfig, string, error) {
 
 	for dir != "/" {
 		path := filepath.Join(dir, AppConfigPath)
-		fi, err := os.Open(path)
-		if err == nil {
-			defer fi.Close()
-
-			var ac AppConfig
-			dec := toml.NewDecoder(fi)
-			dec.DisallowUnknownFields()
-			err = dec.Decode(&ac)
-			if err != nil {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if !os.IsNotExist(err) {
 				return nil, "", err
 			}
-
-			// Validate the configuration
-			if err := ac.Validate(); err != nil {
-				return nil, "", err
-			}
-
-			return &ac, path, nil
+			dir = filepath.Dir(dir)
+			continue
 		}
-
-		dir = filepath.Dir(dir)
+		ac, parseErr := decodeAndValidate(data, path)
+		if parseErr != nil {
+			return nil, "", parseErr
+		}
+		return ac, path, nil
 	}
 
 	return nil, "", nil
@@ -136,52 +128,42 @@ func LoadAppConfigWithPath() (*AppConfig, string, error) {
 
 func LoadAppConfigUnder(dir string) (*AppConfig, error) {
 	path := filepath.Join(dir, AppConfigPath)
-	fi, err := os.Open(path)
-	if err == nil {
-		defer fi.Close()
-
-		var ac AppConfig
-		dec := toml.NewDecoder(fi)
-		dec.DisallowUnknownFields()
-		err = dec.Decode(&ac)
-		if err != nil {
-			return nil, err
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
 		}
-
-		// Validate the configuration
-		if err := ac.Validate(); err != nil {
-			return nil, err
-		}
-
-		return &ac, nil
+		return nil, err
 	}
-
-	return nil, nil
+	return decodeAndValidate(data, path)
 }
 
 func Parse(data []byte) (*AppConfig, error) {
+	return decodeAndValidate(data, "<input>")
+}
+
+// decodeAndValidate decodes TOML data into an AppConfig and validates it,
+// enriching any errors with file path, source locations, and suggestions.
+func decodeAndValidate(data []byte, filePath string) (*AppConfig, error) {
 	var ac AppConfig
 	dec := toml.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
-	err := dec.Decode(&ac)
-	if err != nil {
-		return nil, err
+	if err := dec.Decode(&ac); err != nil {
+		return nil, enrichDecodeError(filePath, data, err)
 	}
-
-	// Validate the configuration
 	if err := ac.Validate(); err != nil {
-		return nil, err
+		return nil, enrichValidationError(filePath, data, err)
 	}
-
 	return &ac, nil
 }
 
-// Validate checks that the AppConfig has valid values
+// Validate checks that the AppConfig has valid values.
+// Returns *ValidationError with a key path for AST-based line resolution.
 func (ac *AppConfig) Validate() error {
 	// Validate global environment variables
 	for i, ev := range ac.EnvVars {
 		if ev.Key == "" {
-			return fmt.Errorf("env[%d]: key is required", i)
+			return &ValidationError{KeyPath: "env", Message: fmt.Sprintf("env[%d]: key is required", i)}
 		}
 	}
 
@@ -191,47 +173,74 @@ func (ac *AppConfig) Validate() error {
 			continue
 		}
 
+		svcPrefix := "services." + serviceName
+
 		// Validate concurrency if present
 		if svcConfig.Concurrency != nil {
 			concurrency := svcConfig.Concurrency
+			concurrencyPath := svcPrefix + ".concurrency"
 
 			// Validate mode
 			if concurrency.Mode != "" && concurrency.Mode != "auto" && concurrency.Mode != "fixed" {
-				return fmt.Errorf("service %s: invalid concurrency mode %q, must be \"auto\" or \"fixed\"", serviceName, concurrency.Mode)
+				return &ValidationError{
+					KeyPath: concurrencyPath + ".mode",
+					Message: fmt.Sprintf("service %s: invalid concurrency mode %q, must be \"auto\" or \"fixed\"", serviceName, concurrency.Mode),
+				}
 			}
 
 			// Validate auto mode settings
 			if concurrency.Mode == "auto" || concurrency.Mode == "" {
 				if concurrency.RequestsPerInstance < 0 {
-					return fmt.Errorf("service %s: requests_per_instance must be non-negative", serviceName)
+					return &ValidationError{
+						KeyPath: concurrencyPath + ".requests_per_instance",
+						Message: fmt.Sprintf("service %s: requests_per_instance must be non-negative", serviceName),
+					}
 				}
 				if concurrency.ScaleDownDelay != "" {
 					if _, err := time.ParseDuration(concurrency.ScaleDownDelay); err != nil {
-						return fmt.Errorf("service %s: invalid scale_down_delay %q: %v", serviceName, concurrency.ScaleDownDelay, err)
+						return &ValidationError{
+							KeyPath: concurrencyPath + ".scale_down_delay",
+							Message: fmt.Sprintf("service %s: invalid scale_down_delay %q: %v", serviceName, concurrency.ScaleDownDelay, err),
+						}
 					}
 				}
 				if concurrency.NumInstances > 0 {
-					return fmt.Errorf("service %s: num_instances cannot be set in auto mode", serviceName)
+					return &ValidationError{
+						KeyPath: concurrencyPath + ".num_instances",
+						Message: fmt.Sprintf("service %s: num_instances cannot be set in auto mode", serviceName),
+					}
 				}
 			}
 
 			// Validate fixed mode settings
 			if concurrency.Mode == "fixed" {
 				if concurrency.NumInstances <= 0 {
-					return fmt.Errorf("service %s: num_instances must be at least 1 for fixed mode", serviceName)
+					return &ValidationError{
+						KeyPath: concurrencyPath + ".num_instances",
+						Message: fmt.Sprintf("service %s: num_instances must be at least 1 for fixed mode", serviceName),
+					}
 				}
 				if concurrency.RequestsPerInstance > 0 {
-					return fmt.Errorf("service %s: requests_per_instance cannot be set in fixed mode", serviceName)
+					return &ValidationError{
+						KeyPath: concurrencyPath + ".requests_per_instance",
+						Message: fmt.Sprintf("service %s: requests_per_instance cannot be set in fixed mode", serviceName),
+					}
 				}
 				if concurrency.ScaleDownDelay != "" {
-					return fmt.Errorf("service %s: scale_down_delay cannot be set in fixed mode", serviceName)
+					return &ValidationError{
+						KeyPath: concurrencyPath + ".scale_down_delay",
+						Message: fmt.Sprintf("service %s: scale_down_delay cannot be set in fixed mode", serviceName),
+					}
 				}
 			}
 
 			// Validate shutdown_timeout (applies to both modes)
 			if concurrency.ShutdownTimeout != "" {
 				if _, err := time.ParseDuration(concurrency.ShutdownTimeout); err != nil {
-					return fmt.Errorf("service %s: invalid shutdown_timeout %q: %v", serviceName, concurrency.ShutdownTimeout, err)
+					return &ValidationError{
+						KeyPath: concurrencyPath + ".shutdown_timeout",
+						Message: fmt.Sprintf("service %s: invalid shutdown_timeout %q: %v", serviceName, concurrency.ShutdownTimeout, err),
+					}
 				}
 			}
 		}
@@ -239,7 +248,10 @@ func (ac *AppConfig) Validate() error {
 		// Validate service environment variables
 		for i, ev := range svcConfig.EnvVars {
 			if ev.Key == "" {
-				return fmt.Errorf("service %s: env[%d] key is required", serviceName, i)
+				return &ValidationError{
+					KeyPath: svcPrefix + ".env",
+					Message: fmt.Sprintf("service %s: env[%d] key is required", serviceName, i),
+				}
 			}
 		}
 
@@ -247,7 +259,10 @@ func (ac *AppConfig) Validate() error {
 		if len(svcConfig.Ports) > 0 {
 			// Mutual exclusion: cannot use both ports[] and scalar port fields
 			if svcConfig.Port != 0 || svcConfig.PortName != "" || svcConfig.PortType != "" {
-				return fmt.Errorf("service %s: cannot use both 'ports' array and scalar port/port_name/port_type fields", serviceName)
+				return &ValidationError{
+					KeyPath: svcPrefix + ".ports",
+					Message: fmt.Sprintf("service %s: cannot use both 'ports' array and scalar port/port_name/port_type fields", serviceName),
+				}
 			}
 
 			seenNames := make(map[string]bool)
@@ -258,28 +273,46 @@ func (ac *AppConfig) Validate() error {
 			seenPortProto := make(map[portProto]bool)
 			for i, p := range svcConfig.Ports {
 				if p.Port <= 0 || p.Port > 65535 {
-					return fmt.Errorf("service %s: ports[%d] port must be between 1 and 65535", serviceName, i)
+					return &ValidationError{
+						KeyPath: svcPrefix + ".ports",
+						Message: fmt.Sprintf("service %s: ports[%d] port must be between 1 and 65535", serviceName, i),
+					}
 				}
 				if p.Name == "" {
-					return fmt.Errorf("service %s: ports[%d] name is required", serviceName, i)
+					return &ValidationError{
+						KeyPath: svcPrefix + ".ports",
+						Message: fmt.Sprintf("service %s: ports[%d] name is required", serviceName, i),
+					}
 				}
 				if p.Type != "" && p.Type != "http" && p.Type != "tcp" && p.Type != "udp" {
-					return fmt.Errorf("service %s: ports[%d] type must be \"http\", \"tcp\", or \"udp\"", serviceName, i)
+					return &ValidationError{
+						KeyPath: svcPrefix + ".ports",
+						Message: fmt.Sprintf("service %s: ports[%d] type must be \"http\", \"tcp\", or \"udp\"", serviceName, i),
+					}
 				}
 				proto := "tcp"
 				if p.Type == "udp" {
 					proto = "udp"
 				}
 				if p.NodePort < 0 || p.NodePort > 65535 {
-					return fmt.Errorf("service %s: ports[%d] node_port must be between 0 and 65535", serviceName, i)
+					return &ValidationError{
+						KeyPath: svcPrefix + ".ports",
+						Message: fmt.Sprintf("service %s: ports[%d] node_port must be between 0 and 65535", serviceName, i),
+					}
 				}
 				if seenNames[p.Name] {
-					return fmt.Errorf("service %s: ports[%d] duplicate port name %q", serviceName, i, p.Name)
+					return &ValidationError{
+						KeyPath: svcPrefix + ".ports",
+						Message: fmt.Sprintf("service %s: ports[%d] duplicate port name %q", serviceName, i, p.Name),
+					}
 				}
 				seenNames[p.Name] = true
 				pp := portProto{p.Port, proto}
 				if seenPortProto[pp] {
-					return fmt.Errorf("service %s: ports[%d] duplicate port number %d (protocol %q)", serviceName, i, p.Port, proto)
+					return &ValidationError{
+						KeyPath: svcPrefix + ".ports",
+						Message: fmt.Sprintf("service %s: ports[%d] duplicate port number %d (protocol %q)", serviceName, i, p.Port, proto),
+					}
 				}
 				seenPortProto[pp] = true
 			}
@@ -289,40 +322,70 @@ func (ac *AppConfig) Validate() error {
 		hasMirenDisks := false
 		for i, disk := range svcConfig.Disks {
 			if disk.Provider != "" && disk.Provider != "miren" && disk.Provider != "local" {
-				return fmt.Errorf("service %s: disk[%d] (%s) has invalid provider %q, must be \"miren\" or \"local\"", serviceName, i, disk.Name, disk.Provider)
+				return &ValidationError{
+					KeyPath: svcPrefix + ".disks",
+					Message: fmt.Sprintf("service %s: disk[%d] (%s) has invalid provider %q, must be \"miren\" or \"local\"", serviceName, i, disk.Name, disk.Provider),
+				}
 			}
 			if disk.Provider == "" || disk.Provider == "miren" {
 				hasMirenDisks = true
 			}
 			if disk.Name == "" {
-				return fmt.Errorf("service %s: disk[%d] must have a name", serviceName, i)
+				return &ValidationError{
+					KeyPath: svcPrefix + ".disks",
+					Message: fmt.Sprintf("service %s: disk[%d] must have a name", serviceName, i),
+				}
 			}
 			if disk.MountPath == "" {
-				return fmt.Errorf("service %s: disk[%d] (%s) must have a mount_path", serviceName, i, disk.Name)
+				return &ValidationError{
+					KeyPath: svcPrefix + ".disks",
+					Message: fmt.Sprintf("service %s: disk[%d] (%s) must have a mount_path", serviceName, i, disk.Name),
+				}
 			}
 			if !filepath.IsAbs(disk.MountPath) {
-				return fmt.Errorf("service %s: disk[%d] (%s) mount_path must be an absolute path", serviceName, i, disk.Name)
+				return &ValidationError{
+					KeyPath: svcPrefix + ".disks",
+					Message: fmt.Sprintf("service %s: disk[%d] (%s) mount_path must be an absolute path", serviceName, i, disk.Name),
+				}
 			}
 			if disk.Provider == "local" {
 				if disk.SizeGB != 0 {
-					return fmt.Errorf("service %s: disk[%d] (%s) size_gb is not supported for local disks", serviceName, i, disk.Name)
+					return &ValidationError{
+						KeyPath: svcPrefix + ".disks",
+						Message: fmt.Sprintf("service %s: disk[%d] (%s) size_gb is not supported for local disks", serviceName, i, disk.Name),
+					}
 				}
 				if disk.Filesystem != "" {
-					return fmt.Errorf("service %s: disk[%d] (%s) filesystem is not supported for local disks", serviceName, i, disk.Name)
+					return &ValidationError{
+						KeyPath: svcPrefix + ".disks",
+						Message: fmt.Sprintf("service %s: disk[%d] (%s) filesystem is not supported for local disks", serviceName, i, disk.Name),
+					}
 				}
 				if disk.LeaseTimeout != "" {
-					return fmt.Errorf("service %s: disk[%d] (%s) lease_timeout is not supported for local disks", serviceName, i, disk.Name)
+					return &ValidationError{
+						KeyPath: svcPrefix + ".disks",
+						Message: fmt.Sprintf("service %s: disk[%d] (%s) lease_timeout is not supported for local disks", serviceName, i, disk.Name),
+					}
 				}
 			} else {
 				if disk.Filesystem != "" && disk.Filesystem != "ext4" && disk.Filesystem != "xfs" && disk.Filesystem != "btrfs" {
-					return fmt.Errorf("service %s: disk[%d] (%s) has invalid filesystem %q, must be ext4, xfs, or btrfs", serviceName, i, disk.Name, disk.Filesystem)
+					return &ValidationError{
+						KeyPath: svcPrefix + ".disks",
+						Message: fmt.Sprintf("service %s: disk[%d] (%s) has invalid filesystem %q, must be ext4, xfs, or btrfs", serviceName, i, disk.Name, disk.Filesystem),
+					}
 				}
 				if disk.SizeGB < 0 {
-					return fmt.Errorf("service %s: disk[%d] (%s) size_gb must be non-negative", serviceName, i, disk.Name)
+					return &ValidationError{
+						KeyPath: svcPrefix + ".disks",
+						Message: fmt.Sprintf("service %s: disk[%d] (%s) size_gb must be non-negative", serviceName, i, disk.Name),
+					}
 				}
 				if disk.LeaseTimeout != "" {
 					if _, err := time.ParseDuration(disk.LeaseTimeout); err != nil {
-						return fmt.Errorf("service %s: disk[%d] (%s) invalid lease_timeout %q: %v", serviceName, i, disk.Name, disk.LeaseTimeout, err)
+						return &ValidationError{
+							KeyPath: svcPrefix + ".disks",
+							Message: fmt.Sprintf("service %s: disk[%d] (%s) invalid lease_timeout %q: %v", serviceName, i, disk.Name, disk.LeaseTimeout, err),
+						}
 					}
 				}
 			}
@@ -331,10 +394,16 @@ func (ac *AppConfig) Validate() error {
 		// Miren disks require fixed concurrency with a single instance
 		if hasMirenDisks {
 			if svcConfig.Concurrency == nil || svcConfig.Concurrency.Mode != "fixed" {
-				return fmt.Errorf("service %s: miren disks can only be attached to services with fixed concurrency mode", serviceName)
+				return &ValidationError{
+					KeyPath: svcPrefix + ".concurrency",
+					Message: fmt.Sprintf("service %s: miren disks can only be attached to services with fixed concurrency mode", serviceName),
+				}
 			}
 			if svcConfig.Concurrency.NumInstances != 1 {
-				return fmt.Errorf("service %s: miren disks can only be attached to services with fixed concurrency mode and num_instances=1", serviceName)
+				return &ValidationError{
+					KeyPath: svcPrefix + ".concurrency.num_instances",
+					Message: fmt.Sprintf("service %s: miren disks can only be attached to services with fixed concurrency mode and num_instances=1", serviceName),
+				}
 			}
 		}
 	}
@@ -342,15 +411,24 @@ func (ac *AppConfig) Validate() error {
 	for name, target := range ac.Aliases {
 		words := strings.Fields(name)
 		if len(words) == 0 {
-			return fmt.Errorf("alias %q: name must not be empty", name)
+			return &ValidationError{
+				KeyPath: "aliases",
+				Message: fmt.Sprintf("alias %q: name must not be empty", name),
+			}
 		}
 		for _, word := range words {
 			if !aliasWordRegexp.MatchString(word) {
-				return fmt.Errorf("alias %q: each word must start with a lowercase letter and contain only lowercase letters, numbers, dashes, and underscores", name)
+				return &ValidationError{
+					KeyPath: "aliases." + name,
+					Message: fmt.Sprintf("alias %q: each word must start with a lowercase letter and contain only lowercase letters, numbers, dashes, and underscores", name),
+				}
 			}
 		}
 		if strings.TrimSpace(target) == "" {
-			return fmt.Errorf("alias %q: command must not be empty", name)
+			return &ValidationError{
+				KeyPath: "aliases." + name,
+				Message: fmt.Sprintf("alias %q: command must not be empty", name),
+			}
 		}
 	}
 
