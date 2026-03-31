@@ -106,11 +106,11 @@ func UndoWaitForDedicatedService(ctx context.Context, in WaitForDedicatedService
 // DeleteDedicatedService deletes the dedicated network Service.
 
 type DeleteDedicatedServiceIn struct {
-	DedicatedServiceID entity.Id
+	DedicatedServiceID entity.Id `saga:"dedicatedserviceid"`
 }
 
 type DeleteDedicatedServiceOut struct {
-	ServiceDeleted bool
+	ServiceDeleted bool `saga:"dedicated_service_deleted"`
 }
 
 func DeleteDedicatedService(ctx context.Context, in DeleteDedicatedServiceIn) (DeleteDedicatedServiceOut, error) {
@@ -133,7 +133,7 @@ func UndoDeleteDedicatedService(ctx context.Context, in DeleteDedicatedServiceIn
 // DeleteDedicatedPool deletes the dedicated sandbox pool.
 
 type DeleteDedicatedPoolIn struct {
-	DedicatedPoolID entity.Id
+	DedicatedPoolID entity.Id `saga:"dedicatedpoolid"`
 }
 
 type DeleteDedicatedPoolOut struct {
