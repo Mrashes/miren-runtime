@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 )
@@ -23,9 +24,12 @@ func main() {
 			}
 			w.Write(data)
 		case http.MethodPost:
-			buf := make([]byte, 1024)
-			n, _ := r.Body.Read(buf)
-			if err := os.WriteFile("/data/value", buf[:n], 0644); err != nil {
+			data, err := io.ReadAll(io.LimitReader(r.Body, 1024))
+			if err != nil {
+				http.Error(w, "invalid request body", http.StatusBadRequest)
+				return
+			}
+			if err := os.WriteFile("/data/value", data, 0644); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}

@@ -5,7 +5,6 @@ package blackbox
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -107,7 +106,7 @@ func getAppVersion(t *testing.T, m *harness.Miren, appName string) string {
 		t.Fatalf("failed to parse app list JSON: %v", err)
 	}
 	for _, app := range apps {
-		if strings.Contains(app.Name, appName) {
+		if app.Name == appName {
 			return app.Version
 		}
 	}
