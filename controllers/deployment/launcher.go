@@ -753,7 +753,7 @@ func (l *Launcher) findMatchingPool(ctx context.Context, appID entity.Id, servic
 		}
 
 		// Check if specs match
-		reason, matches := l.specsMatch(&pool.SandboxSpec, desiredSpec)
+		reason, matches := specsMatch(&pool.SandboxSpec, desiredSpec)
 		if matches {
 			return &PoolWithEntity{
 				Pool:   &pool,
@@ -768,7 +768,7 @@ func (l *Launcher) findMatchingPool(ctx context.Context, appID entity.Id, servic
 
 // specsMatch compares two SandboxSpecs, ignoring the version field
 // Returns (reason, matches) where reason explains why specs don't match (empty if they do match)
-func (l *Launcher) specsMatch(spec1, spec2 *compute_v1alpha.SandboxSpec) (string, bool) {
+func specsMatch(spec1, spec2 *compute_v1alpha.SandboxSpec) (string, bool) {
 	// Quick checks first
 	if len(spec1.Container) != len(spec2.Container) {
 		return fmt.Sprintf("container count mismatch: %d vs %d", len(spec1.Container), len(spec2.Container)), false
@@ -801,10 +801,80 @@ func (l *Launcher) specsMatch(spec1, spec2 *compute_v1alpha.SandboxSpec) (string
 		if !portsEqual(c1.Port, c2.Port) {
 			return fmt.Sprintf("container[%d] ports mismatch", i), false
 		}
+
+		// Compare mounts
+		if !mountsEqual(c1.Mount, c2.Mount) {
+			return fmt.Sprintf("container[%d] mounts mismatch", i), false
+		}
+	}
+
+	// Compare volumes
+	if !volumesEqual(spec1.Volume, spec2.Volume) {
+		return "volume mismatch", false
 	}
 
 	// All fields match (excluding version)
 	return "", true
+}
+
+// volumesEqual compares two volume slices
+func volumesEqual(vols1, vols2 []compute_v1alpha.SandboxSpecVolume) bool {
+	if len(vols1) != len(vols2) {
+		return false
+	}
+
+	for i := range vols1 {
+		v1 := &vols1[i]
+		v2 := &vols2[i]
+
+		if v1.Name != v2.Name ||
+			v1.DiskName != v2.DiskName ||
+			v1.Provider != v2.Provider ||
+			v1.MountPath != v2.MountPath ||
+			v1.SizeGb != v2.SizeGb ||
+			v1.Filesystem != v2.Filesystem ||
+			v1.ReadOnly != v2.ReadOnly ||
+			v1.LeaseTimeout != v2.LeaseTimeout {
+			return false
+		}
+
+		if !labelsEqual(v1.Labels, v2.Labels) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// labelsEqual compares two label slices
+func labelsEqual(l1, l2 types.Labels) bool {
+	if len(l1) != len(l2) {
+		return false
+	}
+
+	for i := range l1 {
+		if l1[i].Key != l2[i].Key || l1[i].Value != l2[i].Value {
+			return false
+		}
+	}
+
+	return true
+}
+
+// mountsEqual compares two mount slices
+func mountsEqual(mounts1, mounts2 []compute_v1alpha.SandboxSpecContainerMount) bool {
+	if len(mounts1) != len(mounts2) {
+		return false
+	}
+
+	for i := range mounts1 {
+		if mounts1[i].Source != mounts2[i].Source ||
+			mounts1[i].Destination != mounts2[i].Destination {
+			return false
+		}
+	}
+
+	return true
 }
 
 // envVarsEqual compares two env var slices in an order-independent way,

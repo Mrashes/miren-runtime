@@ -1,0 +1,276 @@
+package deployment
+
+import (
+	"crypto/sha256"
+	"fmt"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"miren.dev/runtime/api/compute/compute_v1alpha"
+	"miren.dev/runtime/pkg/entity/types"
+)
+
+// structFingerprint recursively builds a string from a type's field names and
+// their types, so that adding a field at any depth changes the hash.
+func structFingerprint(t reflect.Type) string {
+	var walk func(reflect.Type) string
+	walk = func(t reflect.Type) string {
+		if t.Kind() == reflect.Slice {
+			t = t.Elem()
+		}
+		if t.Kind() != reflect.Struct {
+			return t.Name()
+		}
+		var parts []string
+		for i := range t.NumField() {
+			f := t.Field(i)
+			parts = append(parts, f.Name+":"+walk(f.Type))
+		}
+		return strings.Join(parts, ",")
+	}
+	h := sha256.Sum256([]byte(walk(t)))
+	return fmt.Sprintf("%x", h[:8])
+}
+
+// TestSpecsMatchCoversAllFields is a tripwire that fires when fields are added
+// to or removed from SandboxSpec or any of its nested structs. When this test
+// fails, update specsMatch to handle the new field (or explicitly skip it),
+// then update the expected hash here.
+func TestSpecsMatchCoversAllFields(t *testing.T) {
+	assert.Equal(t, "5f449fa70a9f419f", structFingerprint(reflect.TypeOf(compute_v1alpha.SandboxSpec{})),
+		"SandboxSpec struct tree changed — update specsMatch and this hash")
+}
+
+func baseSpec() *compute_v1alpha.SandboxSpec {
+	return &compute_v1alpha.SandboxSpec{
+		Container: []compute_v1alpha.SandboxSpecContainer{
+			{
+				Name:    "web",
+				Image:   "app:v1",
+				Command: "./start",
+				Env:     []string{"FOO=bar"},
+				Port: []compute_v1alpha.SandboxSpecContainerPort{
+					{Port: 8080, Name: "http"},
+				},
+			},
+		},
+	}
+}
+
+func TestSpecsMatch(t *testing.T) {
+	tests := []struct {
+		name       string
+		modify     func(a, b *compute_v1alpha.SandboxSpec)
+		wantMatch  bool
+		wantReason string // substring to check in reason when !wantMatch
+	}{
+		{
+			name:      "identical specs match",
+			modify:    func(a, b *compute_v1alpha.SandboxSpec) {},
+			wantMatch: true,
+		},
+		{
+			name: "different images do not match",
+			modify: func(a, b *compute_v1alpha.SandboxSpec) {
+				b.Container[0].Image = "app:v2"
+			},
+			wantMatch:  false,
+			wantReason: "image mismatch",
+		},
+		{
+			name: "different versions are ignored",
+			modify: func(a, b *compute_v1alpha.SandboxSpec) {
+				a.Version = "ver-1"
+				b.Version = "ver-2"
+			},
+			wantMatch: true,
+		},
+
+		// Volume tests — these capture the bug in MIR-944
+		{
+			name: "adding a volume does not match",
+			modify: func(a, b *compute_v1alpha.SandboxSpec) {
+				b.Volume = []compute_v1alpha.SandboxSpecVolume{
+					{Name: "data", Provider: "local", MountPath: "/data", SizeGb: 10},
+				}
+			},
+			wantMatch:  false,
+			wantReason: "volume",
+		},
+		{
+			name: "removing a volume does not match",
+			modify: func(a, b *compute_v1alpha.SandboxSpec) {
+				a.Volume = []compute_v1alpha.SandboxSpecVolume{
+					{Name: "data", Provider: "local", MountPath: "/data", SizeGb: 10},
+				}
+			},
+			wantMatch:  false,
+			wantReason: "volume",
+		},
+		{
+			name: "same volumes match",
+			modify: func(a, b *compute_v1alpha.SandboxSpec) {
+				vol := compute_v1alpha.SandboxSpecVolume{
+					Name: "data", Provider: "miren", MountPath: "/miren/data", SizeGb: 5,
+				}
+				a.Volume = []compute_v1alpha.SandboxSpecVolume{vol}
+				b.Volume = []compute_v1alpha.SandboxSpecVolume{vol}
+			},
+			wantMatch: true,
+		},
+		{
+			name: "volume size change does not match",
+			modify: func(a, b *compute_v1alpha.SandboxSpec) {
+				a.Volume = []compute_v1alpha.SandboxSpecVolume{
+					{Name: "data", Provider: "miren", MountPath: "/miren/data", SizeGb: 5},
+				}
+				b.Volume = []compute_v1alpha.SandboxSpecVolume{
+					{Name: "data", Provider: "miren", MountPath: "/miren/data", SizeGb: 10},
+				}
+			},
+			wantMatch:  false,
+			wantReason: "volume",
+		},
+		{
+			name: "volume provider change does not match",
+			modify: func(a, b *compute_v1alpha.SandboxSpec) {
+				a.Volume = []compute_v1alpha.SandboxSpecVolume{
+					{Name: "data", Provider: "local", MountPath: "/data", SizeGb: 10},
+				}
+				b.Volume = []compute_v1alpha.SandboxSpecVolume{
+					{Name: "data", Provider: "miren", MountPath: "/data", SizeGb: 10},
+				}
+			},
+			wantMatch:  false,
+			wantReason: "volume",
+		},
+		{
+			name: "volume mount path change does not match",
+			modify: func(a, b *compute_v1alpha.SandboxSpec) {
+				a.Volume = []compute_v1alpha.SandboxSpecVolume{
+					{Name: "data", Provider: "local", MountPath: "/data"},
+				}
+				b.Volume = []compute_v1alpha.SandboxSpecVolume{
+					{Name: "data", Provider: "local", MountPath: "/mnt/data"},
+				}
+			},
+			wantMatch:  false,
+			wantReason: "volume",
+		},
+		{
+			name: "volume read-only change does not match",
+			modify: func(a, b *compute_v1alpha.SandboxSpec) {
+				a.Volume = []compute_v1alpha.SandboxSpecVolume{
+					{Name: "data", Provider: "local", MountPath: "/data"},
+				}
+				b.Volume = []compute_v1alpha.SandboxSpecVolume{
+					{Name: "data", Provider: "local", MountPath: "/data", ReadOnly: true},
+				}
+			},
+			wantMatch:  false,
+			wantReason: "volume",
+		},
+		{
+			name: "volume label change does not match",
+			modify: func(a, b *compute_v1alpha.SandboxSpec) {
+				a.Volume = []compute_v1alpha.SandboxSpecVolume{
+					{Name: "data", Provider: "miren", MountPath: "/data", Labels: types.Labels{{Key: "env", Value: "prod"}}},
+				}
+				b.Volume = []compute_v1alpha.SandboxSpecVolume{
+					{Name: "data", Provider: "miren", MountPath: "/data", Labels: types.Labels{{Key: "env", Value: "staging"}}},
+				}
+			},
+			wantMatch:  false,
+			wantReason: "volume",
+		},
+		{
+			name: "multiple volumes same match",
+			modify: func(a, b *compute_v1alpha.SandboxSpec) {
+				vols := []compute_v1alpha.SandboxSpecVolume{
+					{Name: "data", Provider: "miren", MountPath: "/miren/data", SizeGb: 5},
+					{Name: "cache", Provider: "local", MountPath: "/cache", SizeGb: 1},
+				}
+				a.Volume = vols
+				b.Volume = vols
+			},
+			wantMatch: true,
+		},
+
+		// Container mount tests — also part of MIR-944
+		{
+			name: "adding a container mount does not match",
+			modify: func(a, b *compute_v1alpha.SandboxSpec) {
+				b.Container[0].Mount = []compute_v1alpha.SandboxSpecContainerMount{
+					{Source: "data", Destination: "/data"},
+				}
+			},
+			wantMatch:  false,
+			wantReason: "mount",
+		},
+		{
+			name: "removing a container mount does not match",
+			modify: func(a, b *compute_v1alpha.SandboxSpec) {
+				a.Container[0].Mount = []compute_v1alpha.SandboxSpecContainerMount{
+					{Source: "data", Destination: "/data"},
+				}
+			},
+			wantMatch:  false,
+			wantReason: "mount",
+		},
+		{
+			name: "same container mounts match",
+			modify: func(a, b *compute_v1alpha.SandboxSpec) {
+				mnt := []compute_v1alpha.SandboxSpecContainerMount{
+					{Source: "data", Destination: "/data"},
+				}
+				a.Container[0].Mount = mnt
+				b.Container[0].Mount = mnt
+			},
+			wantMatch: true,
+		},
+		{
+			name: "container mount destination change does not match",
+			modify: func(a, b *compute_v1alpha.SandboxSpec) {
+				a.Container[0].Mount = []compute_v1alpha.SandboxSpecContainerMount{
+					{Source: "data", Destination: "/data"},
+				}
+				b.Container[0].Mount = []compute_v1alpha.SandboxSpecContainerMount{
+					{Source: "data", Destination: "/mnt/data"},
+				}
+			},
+			wantMatch:  false,
+			wantReason: "mount",
+		},
+		{
+			name: "container mount source change does not match",
+			modify: func(a, b *compute_v1alpha.SandboxSpec) {
+				a.Container[0].Mount = []compute_v1alpha.SandboxSpecContainerMount{
+					{Source: "data", Destination: "/data"},
+				}
+				b.Container[0].Mount = []compute_v1alpha.SandboxSpecContainerMount{
+					{Source: "cache", Destination: "/data"},
+				}
+			},
+			wantMatch:  false,
+			wantReason: "mount",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := baseSpec()
+			b := baseSpec()
+			tt.modify(a, b)
+
+			reason, match := specsMatch(a, b)
+			assert.Equal(t, tt.wantMatch, match, "specsMatch result")
+			if !tt.wantMatch {
+				assert.Contains(t, reason, tt.wantReason, "mismatch reason")
+			} else {
+				assert.Empty(t, reason, "reason should be empty on match")
+			}
+		})
+	}
+}
