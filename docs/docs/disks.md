@@ -3,6 +3,8 @@
 
 Miren provides two options for persistent storage: **Local Storage** (simple, node-local) and **Miren Disks** (managed persistent volumes). Both are configured as disks in your `app.toml`.
 
+Both storage options are node-local — your data lives on the server where your app runs. See each section below for backup options.
+
 ## Local Storage
 
 Local storage gives your app a persistent directory on the server's filesystem. Data survives container restarts and redeployments.
@@ -51,7 +53,7 @@ mount_path = "/var/lib/postgresql/data"
 ### Limitations
 
 - **Host-local**: Data is tied to the server. If you move your app to a different server, you'll need to migrate the data manually.
-- **No managed backups**: You're responsible for your own backup strategy with local storage.
+- **No managed backups**: Back up your data by copying the host directory, or use your own backup tooling.
 - **Shared access**: All containers in your app can read/write simultaneously—your application needs to handle concurrent access (SQLite handles this well when configured with `PRAGMA journal_mode=WAL`).
 - **Node affinity**: Apps with any disk (local or miren) are pinned to the coordinator and won't be scheduled to distributed runners.
 
@@ -65,10 +67,8 @@ If any of your environment variables reference `/miren/data/local`, Miren will a
 
 ## Miren Disks
 
-:::info Experimental Feature
-Miren Disks are under active development. They provide managed local persistent storage today, with cloud backup and sync capabilities on the roadmap. Be sure to manage your own backups for now.
-
-We'd love to have you try Disks and share your feedback!
+:::note Backups
+Miren Disks live on your server. Back up important data with `miren disk backup` and restore it with `miren disk restore`. Cloud backup is on the [roadmap](#roadmap-cloud-backup--sync).
 :::
 
 Miren Disks provide managed persistent storage for your applications. Disks are provisioned with a specific size and filesystem, support exclusive leasing for data consistency, and persist across app restarts and redeployments.
