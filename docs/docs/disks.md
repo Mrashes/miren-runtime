@@ -66,7 +66,7 @@ If any of your environment variables reference `/miren/data/local`, Miren will a
 ## Miren Disks
 
 :::info Experimental Feature
-Miren Disks are under active development. They provide managed local persistent storage today, with cloud backup and sync capabilities on the roadmap. For data you care about, disks work well — just be aware the feature is still evolving.
+Miren Disks are under active development. They provide managed local persistent storage today, with cloud backup and sync capabilities on the roadmap. Be sure to manage your own backups for now.
 
 We'd love to have you try Disks and share your feedback!
 :::
