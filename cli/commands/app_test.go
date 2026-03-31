@@ -39,6 +39,19 @@ func TestInferAppName(t *testing.T) {
 	}
 }
 
+// chdir changes the working directory for the duration of the test and restores it on cleanup.
+func chdir(t *testing.T, dir string) {
+	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("failed to chdir to %s: %v", dir, err)
+	}
+	t.Cleanup(func() { os.Chdir(orig) })
+}
+
 func TestAppCentricValidate(t *testing.T) {
 	t.Run("invalid TOML syntax returns parse error", func(t *testing.T) {
 		dir := t.TempDir()
@@ -134,6 +147,73 @@ command = ["foo", "bar"]
 		}
 		if a.App != "myapp" {
 			t.Errorf("expected App to be 'myapp', got %q", a.App)
+		}
+	})
+
+	t.Run("config in parent directory sets foundInParent", func(t *testing.T) {
+		parent := t.TempDir()
+		writeAppToml(t, parent, `name = "myapp"`)
+
+		sub := filepath.Join(parent, "scripts")
+		if err := os.MkdirAll(sub, 0755); err != nil {
+			t.Fatalf("failed to create subdirectory: %v", err)
+		}
+
+		chdir(t, sub)
+
+		a := AppCentric{Dir: "."}
+		err := a.Validate(&GlobalFlags{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if a.App != "myapp" {
+			t.Errorf("expected App to be 'myapp', got %q", a.App)
+		}
+		if !a.foundInParent {
+			t.Error("expected foundInParent to be true")
+		}
+		if a.ResolvedDir() != parent {
+			t.Errorf("expected ResolvedDir() = %q, got %q", parent, a.ResolvedDir())
+		}
+	})
+
+	t.Run("config in current directory does not set foundInParent", func(t *testing.T) {
+		dir := t.TempDir()
+		writeAppToml(t, dir, `name = "myapp"`)
+
+		chdir(t, dir)
+
+		a := AppCentric{Dir: "."}
+		err := a.Validate(&GlobalFlags{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if a.App != "myapp" {
+			t.Errorf("expected App to be 'myapp', got %q", a.App)
+		}
+		if a.foundInParent {
+			t.Error("expected foundInParent to be false")
+		}
+	})
+
+	t.Run("explicit dir flag does not walk parents", func(t *testing.T) {
+		parent := t.TempDir()
+		writeAppToml(t, parent, `name = "myapp"`)
+
+		sub := filepath.Join(parent, "scripts")
+		if err := os.MkdirAll(sub, 0755); err != nil {
+			t.Fatalf("failed to create subdirectory: %v", err)
+		}
+
+		// With explicit -d pointing at the subdirectory, we should NOT
+		// find the parent config.
+		a := AppCentric{Dir: sub}
+		err := a.Validate(&GlobalFlags{})
+		if err == nil {
+			t.Fatal("expected error when no app.toml in explicit dir")
+		}
+		if !strings.Contains(err.Error(), "miren init") {
+			t.Errorf("expected error to mention 'miren init', got: %v", err)
 		}
 	})
 }

@@ -30,7 +30,19 @@ type AppCentric struct {
 	App string   `short:"a" long:"app" env:"MIREN_APP" description:"Application name"`
 	Dir string   `short:"d" long:"dir" description:"Directory to run from" default:"."`
 
-	config *appconfig.AppConfig
+	config        *appconfig.AppConfig
+	resolvedDir   string // absolute path to the directory containing .miren/app.toml
+	foundInParent bool   // true when config was found by walking up from CWD
+}
+
+// ResolvedDir returns the directory that should be used as the app source.
+// When a config is found in a parent directory, this returns that parent
+// directory instead of the original Dir value.
+func (a *AppCentric) ResolvedDir() string {
+	if a.resolvedDir != "" {
+		return a.resolvedDir
+	}
+	return a.Dir
 }
 
 func (a *AppCentric) Validate(glbl *GlobalFlags) error {
@@ -40,7 +52,17 @@ func (a *AppCentric) Validate(glbl *GlobalFlags) error {
 	if a.Dir != "." {
 		ac, err = appconfig.LoadAppConfigUnder(a.Dir)
 	} else {
-		ac, err = appconfig.LoadAppConfig()
+		var configPath string
+		ac, configPath, err = appconfig.LoadAppConfigWithPath()
+		if err == nil && ac != nil && configPath != "" {
+			// Config was found — check if it's in a parent directory.
+			configDir := filepath.Dir(filepath.Dir(configPath)) // strip .miren/app.toml
+			cwd, wdErr := os.Getwd()
+			if wdErr == nil && configDir != cwd {
+				a.foundInParent = true
+				a.resolvedDir = configDir
+			}
+		}
 	}
 
 	if err != nil {
