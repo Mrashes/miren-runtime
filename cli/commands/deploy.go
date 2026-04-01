@@ -53,7 +53,7 @@ func Deploy(ctx *Context, opts struct {
 	Sensitive     []string `short:"s" long:"sensitive" description:"Set sensitive environment variable (masked in output)"`
 }) error {
 	name := opts.App
-	dir := opts.Dir
+	dir := opts.ResolvedDir()
 
 	if ctx.ClientConfig == nil {
 		return fmt.Errorf("no client configuration available; run `miren login` to authenticate or install a server locally")
@@ -221,9 +221,15 @@ func Deploy(ctx *Context, opts struct {
 	// Replace the context so downstream calls inherit the trace
 	ctx.Context = deployCtxTraced
 
-	// Confirm deployment unless --force is used, stdin is not a TTY, or only one cluster is configured
+	// Confirm deployment unless --force is used or stdin is not a TTY.
+	// Always confirm when the app config was found in a parent directory,
+	// otherwise skip confirmation when only one cluster is configured.
 	hasSingleCluster := ctx.ClientConfig != nil && ctx.ClientConfig.GetClusterCount() == 1
-	if !opts.Force && isInteractive && !hasSingleCluster {
+	needsConfirm := opts.foundInParent || !hasSingleCluster
+	if !opts.Force && isInteractive && needsConfirm {
+		if opts.foundInParent {
+			ctx.Printf("  ℹ App config found in parent directory %s\n", dir)
+		}
 		message := fmt.Sprintf("Deploy app '%s' to cluster '%s'?", name, ctx.ClusterName)
 		confirmed, err := ui.Confirm(
 			ui.WithMessage(message),
