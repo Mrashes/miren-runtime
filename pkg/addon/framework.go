@@ -46,6 +46,7 @@ type CreateSandboxPoolSpec struct {
 	DesiredInstances int64
 	Labels           types.Labels
 	SandboxPrefix    string
+	Command          string
 	Mounts           []compute_v1alpha.SandboxSpecContainerMount
 	Volumes          []compute_v1alpha.SandboxSpecVolume
 }
@@ -65,11 +66,12 @@ func (fw *ProviderFramework) CreateSandboxPool(ctx context.Context, spec CreateS
 	}
 
 	container := compute_v1alpha.SandboxSpecContainer{
-		Name:  "addon",
-		Image: spec.Image,
-		Env:   spec.Env,
-		Port:  spec.Ports,
-		Mount: spec.Mounts,
+		Name:    "addon",
+		Image:   spec.Image,
+		Command: spec.Command,
+		Env:     spec.Env,
+		Port:    spec.Ports,
+		Mount:   spec.Mounts,
 	}
 
 	pool.SandboxSpec.Container = append(pool.SandboxSpec.Container, container)

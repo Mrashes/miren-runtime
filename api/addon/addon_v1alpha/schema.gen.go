@@ -888,6 +888,177 @@ func (o *PostgresqlSharedData) InitSchema(sb *schema.SchemaBuilder) {
 	sb.String("username", "dev.miren.addon/postgresql_shared_data.username")
 }
 
+const (
+	ValkeyDedicatedDataValkeyServerId = entity.Id("dev.miren.addon/valkey_dedicated_data.valkey_server")
+)
+
+type ValkeyDedicatedData struct {
+	ID           entity.Id `json:"id"`
+	ValkeyServer entity.Id `cbor:"valkey_server,omitempty" json:"valkey_server,omitempty"`
+}
+
+func (o *ValkeyDedicatedData) Decode(e entity.AttrGetter) {
+	o.ID = entity.MustGet(e, entity.DBId).Value.Id()
+	if a, ok := e.Get(ValkeyDedicatedDataValkeyServerId); ok && a.Value.Kind() == entity.KindId {
+		o.ValkeyServer = a.Value.Id()
+	}
+}
+
+func (o *ValkeyDedicatedData) Is(e entity.AttrGetter) bool {
+	return entity.Is(e, KindValkeyDedicatedData)
+}
+
+func (o *ValkeyDedicatedData) ShortKind() string {
+	return "valkey_dedicated_data"
+}
+
+func (o *ValkeyDedicatedData) Kind() entity.Id {
+	return KindValkeyDedicatedData
+}
+
+func (o *ValkeyDedicatedData) EntityId() entity.Id {
+	return o.ID
+}
+
+func (o *ValkeyDedicatedData) Encode() (attrs []entity.Attr) {
+	if !entity.Empty(o.ValkeyServer) {
+		attrs = append(attrs, entity.Ref(ValkeyDedicatedDataValkeyServerId, o.ValkeyServer))
+	}
+	attrs = append(attrs, entity.Ref(entity.EntityKind, KindValkeyDedicatedData))
+	return
+}
+
+func (o *ValkeyDedicatedData) Empty() bool {
+	return entity.Empty(o.ValkeyServer)
+}
+
+func (o *ValkeyDedicatedData) InitSchema(sb *schema.SchemaBuilder) {
+	sb.Ref("valkey_server", "dev.miren.addon/valkey_dedicated_data.valkey_server")
+}
+
+const (
+	ValkeyServerAddonNameId        = entity.Id("dev.miren.addon/valkey_server.addon_name")
+	ValkeyServerAssociationCountId = entity.Id("dev.miren.addon/valkey_server.association_count")
+	ValkeyServerPasswordId         = entity.Id("dev.miren.addon/valkey_server.password")
+	ValkeyServerSandboxPoolId      = entity.Id("dev.miren.addon/valkey_server.sandbox_pool")
+	ValkeyServerServiceId          = entity.Id("dev.miren.addon/valkey_server.service")
+	ValkeyServerStatusId           = entity.Id("dev.miren.addon/valkey_server.status")
+	ValkeyServerVariantId          = entity.Id("dev.miren.addon/valkey_server.variant")
+)
+
+type ValkeyServer struct {
+	ID               entity.Id `json:"id"`
+	AddonName        string    `cbor:"addon_name,omitempty" json:"addon_name,omitempty"`
+	AssociationCount int64     `cbor:"association_count,omitempty" json:"association_count,omitempty"`
+	Password         string    `cbor:"password,omitempty" json:"password,omitempty"`
+	SandboxPool      entity.Id `cbor:"sandbox_pool,omitempty" json:"sandbox_pool,omitempty"`
+	Service          entity.Id `cbor:"service,omitempty" json:"service,omitempty"`
+	Status           string    `cbor:"status,omitempty" json:"status,omitempty"`
+	Variant          string    `cbor:"variant,omitempty" json:"variant,omitempty"`
+}
+
+func (o *ValkeyServer) Decode(e entity.AttrGetter) {
+	o.ID = entity.MustGet(e, entity.DBId).Value.Id()
+	if a, ok := e.Get(ValkeyServerAddonNameId); ok && a.Value.Kind() == entity.KindString {
+		o.AddonName = a.Value.String()
+	}
+	if a, ok := e.Get(ValkeyServerAssociationCountId); ok && a.Value.Kind() == entity.KindInt64 {
+		o.AssociationCount = a.Value.Int64()
+	}
+	if a, ok := e.Get(ValkeyServerPasswordId); ok && a.Value.Kind() == entity.KindString {
+		o.Password = a.Value.String()
+	}
+	if a, ok := e.Get(ValkeyServerSandboxPoolId); ok && a.Value.Kind() == entity.KindId {
+		o.SandboxPool = a.Value.Id()
+	}
+	if a, ok := e.Get(ValkeyServerServiceId); ok && a.Value.Kind() == entity.KindId {
+		o.Service = a.Value.Id()
+	}
+	if a, ok := e.Get(ValkeyServerStatusId); ok && a.Value.Kind() == entity.KindString {
+		o.Status = a.Value.String()
+	}
+	if a, ok := e.Get(ValkeyServerVariantId); ok && a.Value.Kind() == entity.KindString {
+		o.Variant = a.Value.String()
+	}
+}
+
+func (o *ValkeyServer) Is(e entity.AttrGetter) bool {
+	return entity.Is(e, KindValkeyServer)
+}
+
+func (o *ValkeyServer) ShortKind() string {
+	return "valkey_server"
+}
+
+func (o *ValkeyServer) Kind() entity.Id {
+	return KindValkeyServer
+}
+
+func (o *ValkeyServer) EntityId() entity.Id {
+	return o.ID
+}
+
+func (o *ValkeyServer) Encode() (attrs []entity.Attr) {
+	if !entity.Empty(o.AddonName) {
+		attrs = append(attrs, entity.String(ValkeyServerAddonNameId, o.AddonName))
+	}
+	if !entity.Empty(o.AssociationCount) {
+		attrs = append(attrs, entity.Int64(ValkeyServerAssociationCountId, o.AssociationCount))
+	}
+	if !entity.Empty(o.Password) {
+		attrs = append(attrs, entity.String(ValkeyServerPasswordId, o.Password))
+	}
+	if !entity.Empty(o.SandboxPool) {
+		attrs = append(attrs, entity.Ref(ValkeyServerSandboxPoolId, o.SandboxPool))
+	}
+	if !entity.Empty(o.Service) {
+		attrs = append(attrs, entity.Ref(ValkeyServerServiceId, o.Service))
+	}
+	if !entity.Empty(o.Status) {
+		attrs = append(attrs, entity.String(ValkeyServerStatusId, o.Status))
+	}
+	if !entity.Empty(o.Variant) {
+		attrs = append(attrs, entity.String(ValkeyServerVariantId, o.Variant))
+	}
+	attrs = append(attrs, entity.Ref(entity.EntityKind, KindValkeyServer))
+	return
+}
+
+func (o *ValkeyServer) Empty() bool {
+	if !entity.Empty(o.AddonName) {
+		return false
+	}
+	if !entity.Empty(o.AssociationCount) {
+		return false
+	}
+	if !entity.Empty(o.Password) {
+		return false
+	}
+	if !entity.Empty(o.SandboxPool) {
+		return false
+	}
+	if !entity.Empty(o.Service) {
+		return false
+	}
+	if !entity.Empty(o.Status) {
+		return false
+	}
+	if !entity.Empty(o.Variant) {
+		return false
+	}
+	return true
+}
+
+func (o *ValkeyServer) InitSchema(sb *schema.SchemaBuilder) {
+	sb.String("addon_name", "dev.miren.addon/valkey_server.addon_name", schema.Indexed)
+	sb.Int64("association_count", "dev.miren.addon/valkey_server.association_count")
+	sb.String("password", "dev.miren.addon/valkey_server.password")
+	sb.Ref("sandbox_pool", "dev.miren.addon/valkey_server.sandbox_pool")
+	sb.Ref("service", "dev.miren.addon/valkey_server.service")
+	sb.String("status", "dev.miren.addon/valkey_server.status")
+	sb.String("variant", "dev.miren.addon/valkey_server.variant")
+}
+
 var (
 	KindAddon                   = entity.Id("dev.miren.addon/kind.addon")
 	KindAddonAssociation        = entity.Id("dev.miren.addon/kind.addon_association")
@@ -897,6 +1068,8 @@ var (
 	KindPostgresServer          = entity.Id("dev.miren.addon/kind.postgres_server")
 	KindPostgresqlDedicatedData = entity.Id("dev.miren.addon/kind.postgresql_dedicated_data")
 	KindPostgresqlSharedData    = entity.Id("dev.miren.addon/kind.postgresql_shared_data")
+	KindValkeyDedicatedData     = entity.Id("dev.miren.addon/kind.valkey_dedicated_data")
+	KindValkeyServer            = entity.Id("dev.miren.addon/kind.valkey_server")
 	Schema                      = entity.Id("dev.miren.addon/schema.v1alpha")
 )
 
@@ -910,6 +1083,8 @@ func init() {
 		(&PostgresServer{}).InitSchema(sb)
 		(&PostgresqlDedicatedData{}).InitSchema(sb)
 		(&PostgresqlSharedData{}).InitSchema(sb)
+		(&ValkeyDedicatedData{}).InitSchema(sb)
+		(&ValkeyServer{}).InitSchema(sb)
 	})
-	schema.RegisterEncodedSchema("dev.miren.addon", "v1alpha", []byte("\x1f\x8b\b\x00\x00\x00\x00\x00\x00\xff\xa4\x98َ\xdb,\x14ǟ\xe3[\xbb\xefUFSU\x95\xfa4\x161ġ\xc1\xe0\x01\xecƗm\xa5\xf6A\xba\xa8/\xd8^W\x80\x13\xb3\x1bgnF\xf8\x88\xf3c9\x7f\xce9\x93o\x90\x82\x161\x88\x86M\x8b9\xa2\x1b\x00!\xa3\xe8\x80)\x14?\x8f\x7f{\xf6+e7\xc3\x1fڱ\xf7'X\xee\xbfw\x90\xb5\x00S\x1f\xbe\xdbaD\xa0\xf8\xfcu\x8b\xe1\xf1Q\x14\xb0\x81h\az\"\xab\x01p\f\xa8<m\xd25ʱC;!9\xa6\x8df\xddK\xb1D\xcdq'1\xa3\x9as\xb0\r>\xe3~\x82\x81EG\xc0X)\x7f\r!\x8eŧ<\x88S\b\xab\x01\xc1r\xacZ\x06\r\xa6uM>'\xb8\x7f\xc39\xef\x02\xfa\xab\x7fW^\xffǽ\xa6k\x13\xb0\x05t\xfc\xa5]\xf7g\x9bb\xe0\x9a\xb5\x1d\xa3\x88\xcayd\xc2\x1c 7.\xb2(\xe0\x9f\xf4\x91\x1e\xfa\x9b;1\x8a\xe3\xa4\xcfx7\x83\x91\x00\x13\xfb\x94\xcdɴp\xc8\xc7\xf9C\x9e\xc8E\x87\xfd\xa8\x0f\xfb\x8f\xbf\xcb\t\xb19\xa0Q\xafY\xab\x81\x1f\xf5\xffR^\x03 \xbd\x8992C˳\x19\x10\x17\x98\xd1f\xb8\x06\xa4\xdb\x03\xd2q\xdc\x02>Vj\xb7\xa7\x1b\x88\xe3\xcf\aL\xeb*K?\xab(;\v\xe9\xc5\xc2G\xaaSJ;\x8a\x1bR\t\xc4\aħh\xfc\xebO\xb4\xe7\x14\xc5\xe0\x8b>\xee\x93\x1cǘ\xe6g\xfd\xce\xfa\xf6òɃ\x84`5\x06J\xacU\xcd\xfa)g݄f\x85\xad1\x95\x9a\xf9<\xcb\xe4\x8cɪ\x03B\xbcg\x1c\x9a|\xe1\x9a\xfc->\xcb\xe2\x04\xa0pˎU\xc7\x181I̱(\xd8\x16\xc3\xf8+uA\x88\x0f\xb867֜>l\xf7 \xff\xb9\xee\x12\xc8^h\xef\xdd4\xf6\x0f\x92_߮\nM\xa4\x1aduHlT\xb8\x90\x96cǄl8\x12\xae\"\xef\xf8s\xbdi+D\x19\xc4\xddC\xad\xd1\xe5\xf5\"\xeb\"i\xbe\\®\x90S\xf0\x06\x03֒\xa2\xfc\xdc\x1c\x12\x96E\xf5j\x91\xd1w\x88\xf7\x02q\xf7\xd1\xf1\x88\xddg/\x9e\xf0V\x9ae\x1e-\xbc\x8e\xb91\xab\xac\xb8N\u008d7F\xf6\xc4\x15\x1d[p\xd2\x00f\xec\xa6N\x99\xa1\x1d\xc9x\xc7\xe7\xfaw\x9d\xa9\x8ej`\xfb^-\xfb\"\xce\x19\xafZ$\x04h\xa6\x1e\xcb5\xf9\x91{\xba\xcc\xcckK\xf7#/\x96):\xe8[\x82\xec\xd6\x04\xcfƅ\xe6\xc4_ \f\xf6\xbc\xc0\x8av,\xde\f(H\xbeG\t2\xfc\xec'\x10\x15X\xe2\xc1\xdc>\x9e?\x15\x03n\x19#\x9a\x10dәpq\x9f3_g\xbc\x1c&\xee\xec\xd2gy\x13\xf0\x12\x0fs*9{\xc0\x11\xac \x90 \xf50\x83\x89+B\x19<\x8e\x00\xb6Q\x7f\xb6@\xa0\xb9\xb0\xb4\xae\xa9\xb4籘v95e\xc0\xb1\xd8\xcf7\xd5\xedX4\x95eϛ۟\xbf\x8a#\x12\x10C\x11X\x11\x81\b\xe2\x1aH7(\x89\xdeÝ[\x14\x97\x0f\xf1\xfa\x1c\xe3\x15^c\xf6\xf02\x06\x0e3\x93\xd3\xe1De\x99,\xb6\x17k\xf3u\x19q\xbd@\xdf\x14\x82\xbd\x02j~P\xf0\x8d\xd9R\x93\x00\xdfR\xb0C\x1c\x1b><?jQ\xe9\x06ZO:\xac\xd0\xef\xdbb\xe8\xaa[\xce^\xcb\xf1\xaf\xe4\"\xbe\xdfA\xec\x19\x97\x95\xf9\xc5j\xfa'3\xf3\xbb\x95\xdb\xfe/\xff7\x1a\xb4^E\xff1\x14W\x86`^$\x83\x15֔\xf8\xf3/O\x7f))\xaeI \x99\xb8\xad\x95\xf4\x1f\x00\x00\x00\xff\xff\x01\x00\x00\xff\xffc\x95\x1ds\x9a\x14\x00\x00"))
+	schema.RegisterEncodedSchema("dev.miren.addon", "v1alpha", []byte("\x1f\x8b\b\x00\x00\x00\x00\x00\x00\xff\xa4\x98[\xae\xdb,\x10\xc7\xd7\xf1ݿޯ\xca\xd1i\xabJ]\x8dE\fqh\xb0\xf1\x01\xecƏm\xa5v!\xbd<t\x7f\xedsepb`\x00㜗\xc8\x191?\x03\xf3\x9fa\xf0Wܠ\x9apL\xfaMM\x05i6\bcސ\x03m\xb0\xfcq\xfcӳ_\x8dv\xf3\xf8];v\xfe\x00\xcb\xfd\xd7\x0e\xf3\x1a\xd1Ƈ\xefv\x940,?}\xd9R||\x10\x04l0١\x8e\xa9\xa2G\x82\xa2F\x9d&\xe9\x1a\xd5В\x9dT\x826\x95f݉\xb1d)h\xab(o4\xe7`\x1b|\xc6\xdd\b\x83ʖ\xa1\xa1\x18\xfd5\x849\x16\x9fr/La\xbcD\x8c\xaa\xa1\xa896\x98\xda5\xf9\x1c\xb0\xff\x86s\x9e\x05\xf6\xdf\xfem\xf4\xfa7\xec5m\x9b\xc45j\x86\x9f\xdau\x7f\xb6\x8d\fZ\xf2\xba\xe5\ri\xd4\xfcd\xc2\f\x90\x1b\x17\x99\x15\xf0\x8fzI\xf7\xfdɝ\x18\xd9q\xd2k\xfc?\x81Q\x882{\x95\xd5ɴ\xb0ȇ\xe9E\x9e\xc8Y\x8b\xfd\xa0\x17\xfb\x97?\xcb\t\xb19\x90A\xbf\xb3\x1c\x1f\xfc\xa8\xff\x13\xf3\xea\x11\xebL̉y\xb4<\xab\x9e\bIyS\xf5\u05c8\xb5{\xc4ZAk$\x86b\x9c\xedi\a\xc2\xf8\xf3\x02\xe3\xbaJ\xd2\xcf*J\x8e\"\xfae0IuI\xa9\ay\xc3\nIDO\xc4\x14\x8d\xbf\xfd\x81\xf6\x98\xac\x18|\xd6\xcb}\x94\xe2\x18Ӝ\xd6o\xad\xff~X6i\x90\x94\xbc\xa4h\x14kQ\xf2n\xaaY7\xd0<bK\xda(\xcd|\x9ad\n\xceU\xd1\")\xdfq\x81M\xbdpM\xfe\x14\x9f$q\x125xˏE\xcb93E̱\x8c\xb0-\xc5\xe1,uAD\xf4\xb44;V\x9d\xfe\xd8\xee\xa0\xfe\xb9\xee\n\xa9Nj\xef\xdd\xf4\xec/$\xfd~\xfbT\xa8\x02\xa7AR\x87\xccF\xc1z\xaf\xe5\xd8#v \x83\xab\xc7@\xdaX\x83V\b\xf2q\x12\xb4F\x91W\v\xa4\x8b$\xe9WA\x0f\xea\xc8q\x1fU\"\x10\xb6KY!E\xd0!x\xa4%-\x06\x0e\x1c\xc7\x7fY\x8c\v3\xb8\x95\x1ak\x87\x05'\xab\xe5\xd8r\xa9*A\xa4+\xc8\xff\xfc\xb1ް\x15\x92\x04\xd1\xf2PkDy\xbdȺH\x96ϗ\xb0+$\x05\x8e\x04\xc0Z\x12\x15H\x12@X\x96ՋEF\xd7\x12\xd1I\"\xdc3@\x04\xec>{q\x85\xb7\x12-\xf7hp;\xe6{Ba\xc5u\x12n\xb8O\xb7\a\xae\xb8@\x80\x95\x02\x98\xb1\x9b\xb6\xc9<&\xcbK\xc0\xbfmM\xb36>ؾ\xa0\xfeB_\"\x04\x17EM\xa4D\xd5\xd4\xf2\xbb&?r\xe0t\x80̴\xb6t{\xfcl\x99\xa2\x83\xbee\xc4\xee\x94\xe9l\\\xe8\x95\xfd\x17\xc0`\xcf/Xq;\b\xf7\xa6#$\xdd2\x83\x86c\xf6\x93\xa4\x91T\xd1\xde\xec>\x9d\xff\x8e\f\xbc\xe5\x9ci\x02\xa8\xa63\xe1\xe2\xb6{\xde\xcepw\x16ٳK\xd3\xf2\x06\xf0\"\x899u@{$\b.0R(\x96\x98`\xe0\x8aP\x82\xe4\x00\xb0\xcd\xf8\xb3E\x92\xcc\aK\xed\x9ar[p\x8biww\xe6\x18p,v\xfaƚo\x8b6V\xd9\xf3\xe4\xf6\xe7\x7f\xd9\x11\x01D(\x02+\"\x98`Z\"\xe5\x06%\xd2\n\xbbc\xb3\xe2\xf2>|>\x87x\x99ۘ\\\xbc\n\x81\xe1\xa6\xdb\rwp\x03b\xed\xd7\xc5;\xf02\v\xe8^\x02\x8c:]S\xce&tA6\xac\xcfN\x9f\x17L\xceh\xcbqq\x86\xbe\xca#\xaeO\xd3י`\xaf\x8d0_\xf9|c\xf2\xc0\x8d\x80o\x99\xb6}\x18\vˏ\x1f\xb5\xa0~A\xc6G\x1dVh\xf8M6t\xd5.'\xb7\xe5\xf8G\xf4%\xbe\xdfA\xee\xb9P\x85\xf9\x8c<}\xf9I|Lv\xef\xe4˟\x88\xbc[S\xc6%\x1e\xb4\xacY7\xad\xec\x13\x15\x8c\vT\xfe̳8\\6\xf3\x8f\x8dH\xc5YQwc\xf2_S\xb4\x12ZY\x9bF\xbf\x01\x00\x00\xff\xff\x01\x00\x00\xff\xff7\xd4l\x1e\xa3\x18\x00\x00"))
 }

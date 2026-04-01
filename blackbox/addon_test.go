@@ -17,6 +17,7 @@ func TestAddonListAvailable(t *testing.T) {
 	r := m.MustRun("addon", "list-available")
 	r.RequireContains(t, "miren-postgresql")
 	r.RequireContains(t, "miren-mysql")
+	r.RequireContains(t, "miren-valkey")
 }
 
 func TestAddonVariants(t *testing.T) {
@@ -30,6 +31,9 @@ func TestAddonVariants(t *testing.T) {
 	r = m.MustRun("addon", "variants", "miren-mysql")
 	r.RequireContains(t, "small")
 	r.RequireContains(t, "shared")
+
+	r = m.MustRun("addon", "variants", "miren-valkey")
+	r.RequireContains(t, "small")
 }
 
 func TestAddonCreateListDestroy(t *testing.T) {
@@ -192,6 +196,32 @@ func TestMysqlAddonCreateListDestroy(t *testing.T) {
 
 	// Destroy the addon
 	m.MustRun("addon", "destroy", "miren-mysql", "-a", name, "--force")
+}
+
+func TestValkeyAddonCreateListDestroy(t *testing.T) {
+	c := harness.NewCluster(t)
+	m := harness.NewMiren(t, c)
+
+	name := harness.DeployApp(t, m, harness.AppOptions{
+		Testdata: "go-server",
+	})
+
+	// Create a small (dedicated) Valkey addon on the app
+	m.MustRun("addon", "create", "miren-valkey:small", "-a", name)
+
+	// Wait for addon to appear and provisioning to complete.
+	harness.WaitForAddonReady(t, m, name, "miren-valkey", 30*time.Second)
+	harness.WaitForEnvVar(t, m, name, "VALKEY_URL", 5*time.Minute)
+
+	// Verify Valkey-specific env vars are injected
+	harness.WaitForEnvVar(t, m, name, "VALKEY_HOST", 30*time.Second)
+	harness.WaitForEnvVar(t, m, name, "VALKEY_PORT", 30*time.Second)
+
+	// Verify REDIS_* aliases are also injected
+	harness.WaitForEnvVar(t, m, name, "REDIS_URL", 30*time.Second)
+
+	// Destroy the addon
+	m.MustRun("addon", "destroy", "miren-valkey", "-a", name, "--force")
 }
 
 func TestAddonUnknownAddon(t *testing.T) {
