@@ -813,10 +813,11 @@ func (b *Builder) checkLocalStorageMigration(ctx context.Context, appID entity.I
 		return
 	}
 
-	// Check if any service already has an explicit local disk definition
+	// Check if any service already declares a disk at /miren/data/local
+	// (any provider — local or miren). If so, the user has migrated.
 	for _, svc := range configSpec.Services {
 		for _, disk := range svc.Disks {
-			if disk.Provider == core_v1alpha.ConfigSpecServicesDisksLOCAL {
+			if disk.MountPath == "/miren/data/local" {
 				return
 			}
 		}

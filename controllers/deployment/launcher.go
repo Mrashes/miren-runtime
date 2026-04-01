@@ -700,14 +700,14 @@ func (l *Launcher) buildSandboxSpec(
 	// data but no explicit disk config. This prevents data loss for apps that
 	// relied on the old implicit mount behavior. Will be removed in a future release.
 	if l.DataPath != "" {
-		hasLocalDisk := false
-		for _, vol := range sbSpec.Volume {
-			if vol.Provider == "local" {
-				hasLocalDisk = true
+		hasLocalMount := false
+		for _, m := range appCont.Mount {
+			if m.Destination == "/miren/data/local" {
+				hasLocalMount = true
 				break
 			}
 		}
-		if !hasLocalDisk && dirHasData(filepath.Join(l.DataPath, "data", "local", app.ID.String())) {
+		if !hasLocalMount && dirHasData(filepath.Join(l.DataPath, "data", "local", app.ID.String())) {
 			l.Log.Warn("auto-mounting local storage for app with existing data but no disk config",
 				"service", serviceName,
 				"app", app.ID)

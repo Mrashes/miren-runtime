@@ -2695,7 +2695,7 @@ func TestNoAutoMountWhenExplicitDiskConfig(t *testing.T) {
 						{
 							Name:      "my-data",
 							Provider:  core_v1alpha.LOCAL,
-							MountPath: "/data",
+							MountPath: "/miren/data/local",
 						},
 					},
 				},
