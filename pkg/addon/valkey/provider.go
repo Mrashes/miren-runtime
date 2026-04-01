@@ -3,6 +3,7 @@ package valkey
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/url"
 
 	"miren.dev/runtime/pkg/addon"
@@ -33,7 +34,7 @@ func (p *Provider) Deprovision(ctx context.Context, assoc addon.AddonAssociation
 func buildValkeyURL(host string, port int, password string) string {
 	u := &url.URL{
 		Scheme: "redis",
-		Host:   fmt.Sprintf("%s:%d", host, port),
+		Host:   net.JoinHostPort(host, fmt.Sprintf("%d", port)),
 	}
 	if password != "" {
 		u.User = url.UserPassword("", password)
