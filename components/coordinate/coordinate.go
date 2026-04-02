@@ -52,6 +52,7 @@ import (
 	"miren.dev/runtime/pkg/addon"
 	"miren.dev/runtime/pkg/addon/mysql"
 	"miren.dev/runtime/pkg/addon/postgresql"
+	"miren.dev/runtime/pkg/addon/valkey"
 	"miren.dev/runtime/pkg/caauth"
 	"miren.dev/runtime/pkg/cloudauth"
 	"miren.dev/runtime/pkg/controller"
@@ -866,6 +867,7 @@ func (c *Coordinator) Start(ctx context.Context) error {
 	addonFw := addon.NewProviderFramework(c.Log, ec, eac, saga.NewEntityStorage(etcdStore, c.Log))
 	addonRegistry.Register(postgresql.AddonName, postgresql.NewProvider(addonFw), postgresql.Definition())
 	addonRegistry.Register(mysql.AddonName, mysql.NewProvider(addonFw), mysql.Definition())
+	addonRegistry.Register(valkey.AddonName, valkey.NewProvider(addonFw), valkey.Definition())
 
 	if err := addonRegistry.EnsureEntities(ctx, ec); err != nil {
 		c.Log.Error("failed to ensure addon entities", "error", err)
