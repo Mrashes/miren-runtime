@@ -1020,7 +1020,9 @@ func renderDeployWarning(ctx *Context, entry *build_v1alpha.LogEntry) {
 	const maxWidth = 76
 	detailWidth := maxWidth
 	if tw := ui.TerminalWidth(); tw > 0 {
-		detailWidth = min(tw-indent, maxWidth)
+		if available := tw - indent; available > 0 {
+			detailWidth = min(available, maxWidth)
+		}
 	}
 	detailStyle := lipgloss.NewStyle().Foreground(orange).Width(detailWidth).PaddingLeft(indent)
 

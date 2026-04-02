@@ -23,7 +23,6 @@ import (
 func newTestLauncher(log *slog.Logger, eac *entityserver_v1alpha.EntityAccessClient) *Launcher {
 	l := NewLauncher(log, eac)
 	l.PoolReadyTimeout = 100 * time.Millisecond
-	l.DataPath = os.TempDir()
 	return l
 }
 
