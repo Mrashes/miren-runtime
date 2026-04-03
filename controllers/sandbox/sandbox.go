@@ -551,6 +551,13 @@ func containerPrefix(id entity.Id) string {
 	return "sandbox." + cid
 }
 
+// sandboxHostname returns a valid hostname for a sandbox container.
+// This is used both for the UTS hostname and the /etc/hosts entry so that
+// processes like EPMD that resolve their own hostname can find themselves.
+func sandboxHostname(id entity.Id) string {
+	return strings.TrimPrefix(id.String(), "sandbox/")
+}
+
 func pauseContainerId(id entity.Id) string {
 	return PauseContainerID(id)
 }
@@ -1385,7 +1392,7 @@ func (c *SandboxController) BuildSpec(
 		return nil, err
 	}
 
-	err = c.setupHosts(sb, sb.ID.String())
+	err = c.setupHosts(sb, sandboxHostname(sb.ID))
 	if err != nil {
 		return nil, err
 	}
@@ -1426,6 +1433,7 @@ func (c *SandboxController) BuildSpec(
 		oci.WithoutMounts("/sys"),
 		oci.WithMounts(mounts),
 		oci.WithProcessCwd("/"),
+		oci.WithHostname(sandboxHostname(sb.ID)),
 		oci.WithAnnotations(map[string]string{
 			"io.kubernetes.cri.container-type": "sandbox",
 		}),
@@ -1969,6 +1977,10 @@ func (c *SandboxController) buildSubContainerSpec(
 		oci.WithLinuxNamespace(specs.LinuxNamespace{
 			Type: specs.IPCNamespace,
 			Path: fmt.Sprintf("/proc/%d/ns/ipc", sbPid),
+		}),
+		oci.WithLinuxNamespace(specs.LinuxNamespace{
+			Type: specs.UTSNamespace,
+			Path: fmt.Sprintf("/proc/%d/ns/uts", sbPid),
 		}),
 		oci.WithLinuxNamespace(specs.LinuxNamespace{
 			Type: specs.TimeNamespace,
