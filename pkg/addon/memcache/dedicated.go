@@ -273,7 +273,8 @@ func UndoLookupDedicatedServer(ctx context.Context, in LookupDedicatedServerIn, 
 type DeleteDedicatedServerEntityIn struct {
 	DedicatedServerID entity.Id `saga:"dedicatedserverid"`
 
-	PoolCleanedUp saga.Edge `saga:"dedicated_pool_deleted"`
+	ServiceCleanedUp saga.Edge `saga:"dedicated_service_deleted"`
+	PoolCleanedUp    saga.Edge `saga:"dedicated_pool_deleted"`
 }
 
 type DeleteDedicatedServerEntityOut struct {

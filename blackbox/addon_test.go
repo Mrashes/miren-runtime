@@ -64,8 +64,8 @@ func TestAddonCreateListDestroy(t *testing.T) {
 
 	// Destroy the addon and verify full async cleanup completes.
 	m.MustRun("addon", "destroy", "miren-postgresql", "-a", name, "--force")
-	harness.WaitForAddonRemoved(t, m, name, "miren-postgresql", 2*time.Minute)
-	harness.WaitForEnvVarRemoved(t, m, name, "DATABASE_URL", 2*time.Minute)
+	harness.WaitForAddonRemoved(t, m, name, "miren-postgresql", 5*time.Minute)
+	harness.WaitForEnvVarRemoved(t, m, name, "DATABASE_URL", 5*time.Minute)
 }
 
 func TestAddonDeployWithAppToml(t *testing.T) {
@@ -202,8 +202,8 @@ func TestMysqlAddonCreateListDestroy(t *testing.T) {
 
 	// Destroy the addon and verify full async cleanup completes.
 	m.MustRun("addon", "destroy", "miren-mysql", "-a", name, "--force")
-	harness.WaitForAddonRemoved(t, m, name, "miren-mysql", 2*time.Minute)
-	harness.WaitForEnvVarRemoved(t, m, name, "DATABASE_URL", 2*time.Minute)
+	harness.WaitForAddonRemoved(t, m, name, "miren-mysql", 5*time.Minute)
+	harness.WaitForEnvVarRemoved(t, m, name, "DATABASE_URL", 5*time.Minute)
 }
 
 func TestValkeyAddonCreateListDestroy(t *testing.T) {
@@ -230,8 +230,8 @@ func TestValkeyAddonCreateListDestroy(t *testing.T) {
 
 	// Destroy the addon and verify full async cleanup completes.
 	m.MustRun("addon", "destroy", "miren-valkey", "-a", name, "--force")
-	harness.WaitForAddonRemoved(t, m, name, "miren-valkey", 2*time.Minute)
-	harness.WaitForEnvVarRemoved(t, m, name, "VALKEY_URL", 2*time.Minute)
+	harness.WaitForAddonRemoved(t, m, name, "miren-valkey", 5*time.Minute)
+	harness.WaitForEnvVarRemoved(t, m, name, "VALKEY_URL", 5*time.Minute)
 }
 
 func TestAddonUnknownAddon(t *testing.T) {

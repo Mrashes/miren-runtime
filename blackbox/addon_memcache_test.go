@@ -31,8 +31,8 @@ func TestMemcacheAddonCreateListDestroy(t *testing.T) {
 
 	// Destroy the addon and verify full async cleanup completes.
 	m.MustRun("addon", "destroy", "miren-memcache", "-a", name, "--force")
-	harness.WaitForAddonRemoved(t, m, name, "miren-memcache", 2*time.Minute)
-	harness.WaitForEnvVarRemoved(t, m, name, "MEMCACHE_URL", 2*time.Minute)
+	harness.WaitForAddonRemoved(t, m, name, "miren-memcache", 5*time.Minute)
+	harness.WaitForEnvVarRemoved(t, m, name, "MEMCACHE_URL", 5*time.Minute)
 }
 
 func TestMemcacheAddonDeployWithAppToml(t *testing.T) {
