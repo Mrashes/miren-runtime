@@ -14,6 +14,7 @@ func TestDefinitionHasAllVariants(t *testing.T) {
 	assert.Equal(t, "small", def.DefaultVariant)
 	assert.Len(t, def.Variants, 1)
 	assert.Equal(t, "small", def.Variants[0].Name)
+	assert.Equal(t, "1Gi", def.Variants[0].Config[ConfigStorage])
 }
 
 func TestBuildEnvVars(t *testing.T) {
@@ -43,6 +44,18 @@ func TestBuildEnvVars(t *testing.T) {
 }
 
 func TestBuildRabbitmqURL(t *testing.T) {
-	url := buildRabbitmqURL("user", "pass", "host.example.com", 5672, "myapp")
-	assert.Equal(t, "amqp://user:pass@host.example.com:5672/myapp", url)
+	t.Run("simple vhost", func(t *testing.T) {
+		u := buildRabbitmqURL("user", "pass", "host.example.com", 5672, "myapp")
+		assert.Equal(t, "amqp://user:pass@host.example.com:5672/myapp", u)
+	})
+
+	t.Run("root vhost is percent-encoded", func(t *testing.T) {
+		u := buildRabbitmqURL("user", "pass", "host.example.com", 5672, "/")
+		assert.Equal(t, "amqp://user:pass@host.example.com:5672/%2F", u)
+	})
+
+	t.Run("vhost with slash", func(t *testing.T) {
+		u := buildRabbitmqURL("user", "pass", "host.example.com", 5672, "my/app")
+		assert.Equal(t, "amqp://user:pass@host.example.com:5672/my%2Fapp", u)
+	})
 }

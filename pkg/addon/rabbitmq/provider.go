@@ -32,13 +32,16 @@ func (p *Provider) Deprovision(ctx context.Context, assoc addon.AddonAssociation
 }
 
 func buildRabbitmqURL(user, password, host string, port int, vhost string) string {
+	// Build the authority portion using url.URL for proper escaping of
+	// user/password, then append the vhost path manually. Per the AMQP URI
+	// spec, the vhost is a single path segment so slashes must be
+	// percent-encoded (e.g. the default vhost "/" becomes "/%2F").
 	u := url.URL{
 		Scheme: "amqp",
 		User:   url.UserPassword(user, password),
 		Host:   net.JoinHostPort(host, fmt.Sprintf("%d", port)),
-		Path:   "/" + vhost,
 	}
-	return u.String()
+	return u.String() + "/" + url.PathEscape(vhost)
 }
 
 func buildEnvVars(user, password, host string, port int, vhost string) []addon.Variable {

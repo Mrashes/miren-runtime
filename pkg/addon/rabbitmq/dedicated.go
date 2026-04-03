@@ -7,6 +7,7 @@ import (
 
 	"miren.dev/runtime/api/addon/addon_v1alpha"
 	"miren.dev/runtime/api/compute/compute_v1alpha"
+	"miren.dev/runtime/api/core/core_v1alpha"
 	"miren.dev/runtime/pkg/addon"
 	"miren.dev/runtime/pkg/addon/dbsaga"
 	"miren.dev/runtime/pkg/entity"
@@ -99,11 +100,12 @@ func UndoCreateRabbitmqServer(ctx context.Context, in CreateRabbitmqServerIn, ou
 }
 
 type CreateDedicatedPoolIn struct {
-	ServerName string `saga:"servername"`
-	AppName    string `saga:"appname"`
-	Password   string `saga:"password"`
-	Username   string `saga:"username"`
-	Vhost      string `saga:"vhost"`
+	ServerName    string            `saga:"servername"`
+	AppName       string            `saga:"appname"`
+	Password      string            `saga:"password"`
+	Username      string            `saga:"username"`
+	Vhost         string            `saga:"vhost"`
+	VariantConfig map[string]string `saga:"variantconfig"`
 }
 
 type CreateDedicatedPoolOut struct {
@@ -119,6 +121,10 @@ func CreateDedicatedPool(ctx context.Context, in CreateDedicatedPoolIn) (CreateD
 		"server", in.ServerName,
 	)
 
+	sizeGb := addon.ParseStorageGb(in.VariantConfig[ConfigStorage])
+	diskName := fmt.Sprintf("rmq-%s-data", in.ServerName)
+	mountPath := "/var/lib/rabbitmq"
+
 	poolID, err := fw.CreateSandboxPool(ctx, addon.CreateSandboxPoolSpec{
 		Name:  in.ServerName,
 		Image: DefaultImage,
@@ -131,6 +137,20 @@ func CreateDedicatedPool(ctx context.Context, in CreateDedicatedPoolIn) (CreateD
 		DesiredInstances: 1,
 		Labels:           labels,
 		SandboxPrefix:    fmt.Sprintf("%s-rmq", in.AppName),
+		Mounts: []compute_v1alpha.SandboxSpecContainerMount{
+			{Source: "rmqdata", Destination: mountPath},
+		},
+		Volumes: []compute_v1alpha.SandboxSpecVolume{
+			{
+				Name:         "rmqdata",
+				Provider:     "miren",
+				DiskName:     diskName,
+				MountPath:    mountPath,
+				SizeGb:       sizeGb,
+				Filesystem:   "ext4",
+				LeaseTimeout: "5m",
+			},
+		},
 	})
 	if err != nil {
 		return CreateDedicatedPoolOut{}, fmt.Errorf("creating sandbox pool: %w", err)
@@ -141,7 +161,11 @@ func CreateDedicatedPool(ctx context.Context, in CreateDedicatedPoolIn) (CreateD
 
 func UndoCreateDedicatedPool(ctx context.Context, in CreateDedicatedPoolIn, out CreateDedicatedPoolOut) error {
 	fw := saga.Get[*addon.ProviderFramework](ctx)
-	return fw.DeleteSandboxPool(ctx, out.PoolID)
+	if err := fw.DeleteSandboxPool(ctx, out.PoolID); err != nil {
+		return err
+	}
+	diskName := fmt.Sprintf("rmq-%s-data", in.ServerName)
+	return fw.DeleteDiskByName(ctx, diskName)
 }
 
 type UpdateDedicatedServerIn struct {
@@ -264,8 +288,9 @@ type LookupDedicatedServerIn struct {
 }
 
 type LookupDedicatedServerOut struct {
-	DedicatedServiceID entity.Id `saga:"dedicatedserviceid"`
-	DedicatedPoolID    entity.Id `saga:"dedicatedpoolid"`
+	DedicatedServiceID  entity.Id `saga:"dedicatedserviceid"`
+	DedicatedPoolID     entity.Id `saga:"dedicatedpoolid"`
+	DedicatedServerName string    `saga:"dedicatedservername"`
 }
 
 func LookupDedicatedServer(ctx context.Context, in LookupDedicatedServerIn) (LookupDedicatedServerOut, error) {
@@ -276,9 +301,15 @@ func LookupDedicatedServer(ctx context.Context, in LookupDedicatedServerIn) (Loo
 		return LookupDedicatedServerOut{}, fmt.Errorf("looking up rabbitmq server: %w", err)
 	}
 
+	var meta core_v1alpha.Metadata
+	if err := fw.EC.GetById(ctx, in.DedicatedServerID, &meta); err != nil {
+		return LookupDedicatedServerOut{}, fmt.Errorf("looking up server metadata: %w", err)
+	}
+
 	return LookupDedicatedServerOut{
-		DedicatedServiceID: server.Service,
-		DedicatedPoolID:    server.SandboxPool,
+		DedicatedServiceID:  server.Service,
+		DedicatedPoolID:     server.SandboxPool,
+		DedicatedServerName: meta.Name,
 	}, nil
 }
 
@@ -287,9 +318,11 @@ func UndoLookupDedicatedServer(ctx context.Context, in LookupDedicatedServerIn, 
 }
 
 type DeleteDedicatedServerEntityIn struct {
-	DedicatedServerID entity.Id `saga:"dedicatedserverid"`
+	DedicatedServerID   entity.Id `saga:"dedicatedserverid"`
+	DedicatedServerName string    `saga:"dedicatedservername"`
 
-	PoolCleanedUp saga.Edge `saga:"dedicated_pool_deleted"`
+	ServiceCleanedUp saga.Edge `saga:"dedicated_service_deleted"`
+	PoolCleanedUp    saga.Edge `saga:"dedicated_pool_deleted"`
 }
 
 type DeleteDedicatedServerEntityOut struct {
@@ -298,6 +331,13 @@ type DeleteDedicatedServerEntityOut struct {
 
 func DeleteDedicatedServerEntity(ctx context.Context, in DeleteDedicatedServerEntityIn) (DeleteDedicatedServerEntityOut, error) {
 	fw := saga.Get[*addon.ProviderFramework](ctx)
+
+	if in.DedicatedServerName != "" {
+		diskName := fmt.Sprintf("rmq-%s-data", in.DedicatedServerName)
+		if err := fw.DeleteDiskByName(ctx, diskName); err != nil {
+			return DeleteDedicatedServerEntityOut{}, fmt.Errorf("deleting dedicated data disk %s: %w", diskName, err)
+		}
+	}
 
 	if err := fw.EC.Delete(ctx, in.DedicatedServerID); err != nil {
 		return DeleteDedicatedServerEntityOut{}, fmt.Errorf("deleting rabbitmq server: %w", err)
@@ -339,6 +379,7 @@ func (p *Provider) provisionDedicated(ctx context.Context, app addon.App, varian
 	err := executor.Start("provision-dedicated-rabbitmq").
 		Input("appname", app.Name).
 		Input("variantname", variant.Name).
+		Input("variantconfig", variant.Config).
 		Execute(ctx)
 	if err != nil {
 		return nil, err

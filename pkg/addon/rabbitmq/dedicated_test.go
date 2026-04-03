@@ -67,6 +67,8 @@ func TestDeprovisionDedicatedSagaOrder(t *testing.T) {
 		"lookup-dedicated-server must come before delete-dedicated-pool")
 	assert.Less(t, indexOf("delete-dedicated-pool"), indexOf("delete-dedicated-server-entity"),
 		"delete-dedicated-pool must come before delete-dedicated-server-entity")
+	assert.Less(t, indexOf("delete-dedicated-service"), indexOf("delete-dedicated-server-entity"),
+		"delete-dedicated-service must come before delete-dedicated-server-entity")
 }
 
 func TestDedicatedSagaActionOrder(t *testing.T) {
