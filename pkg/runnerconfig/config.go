@@ -12,6 +12,7 @@ const DefaultConfigPath = "/var/lib/miren/runner/config.yaml"
 
 type Config struct {
 	RunnerID           string            `yaml:"runner_id" json:"runner_id"`
+	Name               string            `yaml:"name,omitempty" json:"name,omitempty"`
 	CoordinatorAddress string            `yaml:"coordinator_address" json:"coordinator_address"`
 	CACert             string            `yaml:"ca_cert" json:"ca_cert"`
 	ClientCert         string            `yaml:"client_cert" json:"client_cert"`

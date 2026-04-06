@@ -374,6 +374,7 @@ type runnerRegistrationJoinArgsData struct {
 	ListenAddr *string   `cbor:"2,keyasint,omitempty" json:"listen_addr,omitempty"`
 	Version    *string   `cbor:"3,keyasint,omitempty" json:"version,omitempty"`
 	Labels     *[]string `cbor:"4,keyasint,omitempty" json:"labels,omitempty"`
+	Name       *string   `cbor:"5,keyasint,omitempty" json:"name,omitempty"`
 }
 
 type RunnerRegistrationJoinArgs struct {
@@ -434,6 +435,17 @@ func (v *RunnerRegistrationJoinArgs) Labels() []string {
 		return nil
 	}
 	return *v.data.Labels
+}
+
+func (v *RunnerRegistrationJoinArgs) HasName() bool {
+	return v.data.Name != nil
+}
+
+func (v *RunnerRegistrationJoinArgs) Name() string {
+	if v.data.Name == nil {
+		return ""
+	}
+	return *v.data.Name
 }
 
 func (v *RunnerRegistrationJoinArgs) MarshalCBOR() ([]byte, error) {
@@ -1075,7 +1087,7 @@ func (v *RunnerRegistrationClientJoinResults) Error() string {
 	return *v.data.Error
 }
 
-func (v RunnerRegistrationClient) Join(ctx context.Context, code string, runner_id string, listen_addr string, version string, labels []string) (*RunnerRegistrationClientJoinResults, error) {
+func (v RunnerRegistrationClient) Join(ctx context.Context, code string, runner_id string, listen_addr string, version string, labels []string, name string) (*RunnerRegistrationClientJoinResults, error) {
 	args := RunnerRegistrationJoinArgs{}
 	args.data.Code = &code
 	args.data.RunnerId = &runner_id
@@ -1083,6 +1095,7 @@ func (v RunnerRegistrationClient) Join(ctx context.Context, code string, runner_
 	args.data.Version = &version
 	x := slices.Clone(labels)
 	args.data.Labels = &x
+	args.data.Name = &name
 
 	var ret runnerRegistrationJoinResultsData
 

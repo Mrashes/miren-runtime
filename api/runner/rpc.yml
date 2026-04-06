@@ -51,6 +51,9 @@ interfaces:
             type: list
             element: string
             doc: Additional labels from the runner (key=value format)
+          - name: name
+            type: string
+            doc: Human-readable name for this runner (defaults to hostname)
         results:
           - name: cert_pem
             type: bytes

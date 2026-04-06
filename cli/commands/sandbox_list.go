@@ -8,6 +8,7 @@ import (
 	"miren.dev/runtime/api/compute/compute_v1alpha"
 	"miren.dev/runtime/api/core/core_v1alpha"
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
+	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/ui"
 )
 
@@ -54,6 +55,31 @@ func SandboxList(ctx *Context, opts struct {
 		poolServiceMap[pool.ID.String()] = pool.Service
 	}
 
+	// Build a map of node entity ID -> human-readable name
+	nodeKindRes, err := eac.LookupKind(ctx, "node")
+	if err != nil {
+		return err
+	}
+	nodesRes, err := eac.List(ctx, nodeKindRes.Attr())
+	if err != nil {
+		return err
+	}
+	nodeNameMap := make(map[entity.Id]string)
+	for _, e := range nodesRes.Values() {
+		var node compute_v1alpha.Node
+		node.Decode(e.Entity())
+		name := node.Name
+		if name == "" {
+			name = node.RunnerId
+			if len(name) > 12 {
+				name = name[:12]
+			}
+		}
+		if name != "" {
+			nodeNameMap[node.ID] = name
+		}
+	}
+
 	// Determine whether to exclude dead sandboxes.
 	// Dead sandboxes are excluded by default unless --all is passed
 	// or --status explicitly requests a dead state.
@@ -66,6 +92,7 @@ func SandboxList(ctx *Context, opts struct {
 			Pool    string `json:"pool,omitempty"`
 			Service string `json:"service,omitempty"`
 			Address string `json:"address,omitempty"`
+			Runner  string `json:"runner,omitempty"`
 		}
 
 		for _, e := range res.Values() {
@@ -99,17 +126,28 @@ func SandboxList(ctx *Context, opts struct {
 				address = sandbox.Network[0].Address
 			}
 
-			sandboxes = append(sandboxes, struct {
+			// Resolve runner from schedule
+			var sch compute_v1alpha.Schedule
+			sch.Decode(e.Entity())
+			runner := ""
+			if !entity.Empty(sch.Key.Node) {
+				runner = nodeNameMap[sch.Key.Node]
+			}
+
+			entry := struct {
 				compute_v1alpha.Sandbox
 				Pool    string `json:"pool,omitempty"`
 				Service string `json:"service,omitempty"`
 				Address string `json:"address,omitempty"`
+				Runner  string `json:"runner,omitempty"`
 			}{
 				Sandbox: sandbox,
 				Pool:    poolLabel,
 				Service: service,
 				Address: address,
-			})
+				Runner:  runner,
+			}
+			sandboxes = append(sandboxes, entry)
 		}
 
 		return PrintJSON(sandboxes)
@@ -118,7 +156,7 @@ func SandboxList(ctx *Context, opts struct {
 	// Table output - all the UI formatting logic
 	var rows []ui.Row
 	var deadCount int
-	headers := []string{"ID", "VERSION", "SERVICE", "POOL", "ADDRESS", "STATUS", "CREATED", "UPDATED"}
+	headers := []string{"ID", "VERSION", "SERVICE", "POOL", "ADDRESS", "RUNNER", "STATUS", "CREATED", "UPDATED"}
 
 	for _, e := range res.Values() {
 		// Decode the sandbox entity
@@ -167,6 +205,16 @@ func SandboxList(ctx *Context, opts struct {
 			address = sandbox.Network[0].Address
 		}
 
+		// Resolve runner from schedule
+		var sch compute_v1alpha.Schedule
+		sch.Decode(e.Entity())
+		runnerName := "-"
+		if !entity.Empty(sch.Key.Node) {
+			if name, ok := nodeNameMap[sch.Key.Node]; ok {
+				runnerName = name
+			}
+		}
+
 		// Apply all UI formatting for table display
 		sandboxId := ui.CleanEntityID(sandbox.ID.String())
 		if !ctx.Verbose() {
@@ -179,6 +227,7 @@ func SandboxList(ctx *Context, opts struct {
 			service,
 			poolLabelDisplay,
 			address,
+			runnerName,
 			ui.DisplayStatus(status),
 			humanFriendlyTimestamp(time.UnixMilli(e.CreatedAt())),
 			humanFriendlyTimestamp(time.UnixMilli(e.UpdatedAt())),

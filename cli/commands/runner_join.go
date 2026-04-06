@@ -19,6 +19,7 @@ func RunnerJoin(ctx *Context, opts struct {
 	Coordinator string   `short:"c" long:"coordinator" description:"Coordinator address (host:port)"`
 	Code        string   `long:"code" description:"Join code (or pass via stdin)"`
 	ListenAddr  string   `short:"l" long:"listen" description:"Address this runner will listen on"`
+	Name        string   `long:"name" description:"Human-readable name for this runner (defaults to hostname)"`
 	Labels      []string `long:"labels" description:"Additional labels for the runner (key=value)"`
 	ConfigPath  string   `long:"config" description:"Path to save runner config" default:"/var/lib/miren/runner/config.yaml"`
 	RunnerID    string   `long:"runner-id" description:"Specific runner ID to use (for reconnecting)"`
@@ -75,6 +76,11 @@ func RunnerJoin(ctx *Context, opts struct {
 		return fmt.Errorf("invalid join code format")
 	}
 
+	name := opts.Name
+	if name == "" {
+		name, _ = os.Hostname()
+	}
+
 	cs, err := rpc.NewState(ctx, rpc.WithSkipVerify, rpc.WithLogger(ctx.Log), rpc.WithBindAddr("[::]:0"))
 	if err != nil {
 		return fmt.Errorf("failed to create RPC state: %w", err)
@@ -89,7 +95,7 @@ func RunnerJoin(ctx *Context, opts struct {
 	rc := runner_v1alpha.NewRunnerRegistrationClient(client)
 
 	versionInfo := version.GetInfo()
-	res, err := rc.Join(ctx, code, opts.RunnerID, opts.ListenAddr, versionInfo.Version, opts.Labels)
+	res, err := rc.Join(ctx, code, opts.RunnerID, opts.ListenAddr, versionInfo.Version, opts.Labels, name)
 	if err != nil {
 		return fmt.Errorf("join request failed: %w", err)
 	}
@@ -99,7 +105,7 @@ func RunnerJoin(ctx *Context, opts struct {
 	}
 
 	runnerID := res.RunnerId()
-	ctx.Printf("\n✓ Joined as runner '%s'\n", runnerID)
+	ctx.Printf("\n✓ Joined as runner '%s' (%s)\n", name, runnerID)
 
 	labels := make(map[string]string)
 	for _, l := range opts.Labels {
@@ -123,6 +129,7 @@ func RunnerJoin(ctx *Context, opts struct {
 
 	cfg := &runnerconfig.Config{
 		RunnerID:           runnerID,
+		Name:               name,
 		CoordinatorAddress: coordinator,
 		CACert:             string(res.CaPem()),
 		ClientCert:         string(res.CertPem()),

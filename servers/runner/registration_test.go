@@ -69,7 +69,7 @@ func TestJoinCreatesNodeEntity(t *testing.T) {
 
 	// Join using the invite code — this was failing before the fix because
 	// the node entity included a session attribute (status) without a session ID.
-	joinResult, err := client.Join(ctx, code, "", "10.0.0.1:8443", "test-version", nil)
+	joinResult, err := client.Join(ctx, code, "", "10.0.0.1:8443", "test-version", nil, "test-runner")
 	if err != nil {
 		t.Fatalf("Join RPC failed: %v", err)
 	}
