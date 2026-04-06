@@ -153,6 +153,7 @@ func RunnerStart(ctx *Context, opts struct {
 	// Build runner configuration
 	runnerCfg := runner.RunnerConfig{
 		Id:            cfg.RunnerID,
+		Name:          cfg.Name,
 		ListenAddress: listenAddr,
 		Workers:       runner.DefaulWorkers,
 		DataPath:      opts.DataPath,

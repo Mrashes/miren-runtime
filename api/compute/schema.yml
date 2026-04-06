@@ -437,6 +437,10 @@ kinds:
       doc: Unique identifier for the runner (for distributed runners)
       indexed: true
 
+    name:
+      type: string
+      doc: Human-readable name for the runner (defaults to hostname)
+
     version:
       type: string
       doc: Runner software version

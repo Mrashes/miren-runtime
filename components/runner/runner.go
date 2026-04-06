@@ -48,6 +48,7 @@ import (
 
 type RunnerConfig struct {
 	Id            string `json:"id" cbor:"id" yaml:"id"`
+	Name          string `json:"name" cbor:"name" yaml:"name"`
 	ListenAddress string `json:"listen_address" cbor:"listen_address" yaml:"listen_address"`
 	Workers       int    `json:"workers" cbor:"workers" yaml:"workers"`
 	DataPath      string `json:"data_path" cbor:"data_path" yaml:"data_path"`
@@ -549,6 +550,7 @@ func (r *Runner) setupEntity(ctx context.Context, ec *entityserver.Client) error
 
 	node := compute_v1alpha.Node{
 		RunnerId:    r.Id,
+		Name:        r.Name,
 		Constraints: types.LabelSet("compute", "generic", "role", role),
 		ApiAddress:  r.ListenAddress,
 	}

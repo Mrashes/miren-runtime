@@ -211,8 +211,14 @@ func (s *RegistrationServer) Join(ctx context.Context, req *runner_v1alpha.Runne
 		}
 	}
 
+	name := ""
+	if args.HasName() {
+		name = args.Name()
+	}
+
 	node := &compute_v1alpha.Node{
 		RunnerId:     runnerID,
+		Name:         name,
 		ApiAddress:   listenAddr,
 		Version:      version,
 		RegisteredAt: time.Now(),
@@ -237,6 +243,7 @@ func (s *RegistrationServer) Join(ctx context.Context, req *runner_v1alpha.Runne
 
 	s.Log.Info("Runner joined successfully",
 		"runner_id", runnerID,
+		"name", name,
 		"node_id", nodePutResp.Id(),
 		"listen_addr", listenAddr,
 		"version", version,
@@ -375,7 +382,11 @@ func (s *RegistrationServer) ListRunners(ctx context.Context, req *runner_v1alph
 		info := &runner_v1alpha.RunnerInfo{}
 		info.SetId(string(node.ID))
 		info.SetRunnerId(node.RunnerId)
-		info.SetName(string(node.ID))
+		name := node.Name
+		if name == "" {
+			name = string(node.ID)
+		}
+		info.SetName(name)
 		info.SetStatus(string(node.Status))
 		info.SetVersion(node.Version)
 		info.SetApiAddress(node.ApiAddress)
