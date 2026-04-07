@@ -2,7 +2,7 @@ import CliCommand from '@site/src/components/CliCommand';
 
 # Addons
 
-Addons are managed backing services that Miren provisions and operates for your app. Instead of running your own database as a service, you declare an addon and Miren handles the infrastructure — creating the server, injecting connection credentials, and cleaning up when you're done.
+Addons are managed services that Miren provisions and operates for your app. Instead of running your own database as a service, you configure an addon, and Miren handles the infrastructure — creating the server, injecting connection credentials, and cleaning up when you're done.
 
 ## Addons vs. Services
 
@@ -29,7 +29,7 @@ miren addon list-available
 ```
 </CliCommand>
 
-## Adding an Addon
+## Installing an Addon
 
 ### Via app.toml (recommended)
 
@@ -247,7 +247,7 @@ miren disk backup -n pg-pg-myapp-sCZDabc123-data -o /backups/myapp-db.miren.zst
 
 ### Restoring from a Backup
 
-To restore, provide the snapshot file. This must also be run on the server:
+To restore from a backup, provide the snapshot file. This must also be run on the server:
 
 <CliCommand context="server">
 ```miren
@@ -255,7 +255,7 @@ miren disk restore -s <snapshot-file>
 ```
 </CliCommand>
 
-The restore recreates the disk with the original name. If the disk already exists, use `--force` to overwrite:
+The restore procedure recreates the disk with the original name. If the disk already exists, use `--force` to overwrite:
 
 <CliCommand context="server">
 ```miren
