@@ -189,6 +189,7 @@ Complete reference for all `miren` CLI commands.
 | [`miren runner invite list`](/command/runner-invite-list) | List all runner invitations _(`distributedrunners`)_ |
 | [`miren runner join`](/command/runner-join) | Join this machine to a coordinator as a runner _(`distributedrunners`)_ |
 | [`miren runner list`](/command/runner-list) | List all registered runners _(`distributedrunners`)_ |
+| [`miren runner remove`](/command/runner-remove) | Remove a registered runner and clean up resources _(`distributedrunners`)_ |
 | [`miren runner revoke`](/command/runner-revoke) | Revoke a runner invitation _(`distributedrunners`)_ |
 | [`miren runner start`](/command/runner-start) | Start this machine as a distributed runner _(`distributedrunners`)_ |
 | [`miren runner status`](/command/runner-status) | Show runner health and configuration _(`distributedrunners`)_ |
