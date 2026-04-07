@@ -20,7 +20,7 @@ export default function prismIncludeLanguages(PrismObject: typeof Prism) {
 
   delete globalThis.Prism;
   if (typeof PrismBefore !== "undefined") {
-    globalThis.Prism = PrismObject;
+    globalThis.Prism = PrismBefore;
   }
 
   // Register our custom miren language

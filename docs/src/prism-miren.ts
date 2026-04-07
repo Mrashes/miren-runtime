@@ -13,52 +13,46 @@ export function registerMirenLanguage(PrismInstance: typeof Prism) {
       },
     ],
     variable: /\$\w+/,
-    // Hint text in parentheses: (Use ↑/↓ or j/k ...)
     hint: {
       pattern: /^\(.*\)$/m,
       alias: "comment",
     },
-    // Success checkmark lines: ✓ Something completed
     "status-success": {
       pattern: /✓.*/,
       alias: "inserted",
     },
-    // Spinner/progress indicator: ⠋ ⠙ ⠹ etc or ::
     "status-progress": {
       pattern: /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏].*/,
       alias: "comment",
     },
-    // Progress bar: █▓░ blocks or similar
     "progress-bar": {
       pattern: /[░▒▓█]{2,}/,
       alias: "builtin",
     },
-    // Deploy output: "Your app is available at:"
     "deploy-url-label": {
       pattern: /Your app is available at:/,
       alias: "builtin",
     },
-    // Version strings like demo-vCZpcrAAaU6mULzMSSBwc4
     "version-id": {
       pattern: /\b\w+-v[A-Za-z0-9]{10,}\b/,
       alias: "constant",
     },
-    // Arrow in "demo → club"
     arrow: {
       pattern: /→/,
       alias: "operator",
     },
-    // Table column headers: individual all-caps words (2+ chars)
+    // Matched before miren-full so ALL_CAPS words in table output
+    // don't get consumed as miren subcommands
     "table-header": {
       pattern: /\b[A-Z]{2,}\b/,
       alias: "tag",
     },
-    // Selection indicator
     selector: {
       pattern: /▸/,
       alias: "keyword",
     },
-    // Full miren command pattern: [sudo] miren <command> [<subcommand>]
+    // Captures [sudo] miren <command> [subcommand] as a single match,
+    // then the `inside` grammar splits it into distinct token types
     "miren-full": {
       pattern: /\b(sudo\s+)?(?:miren|m)\s+(\w[\w-]*)(?:\s+(\w[\w-]*))?/,
       inside: {
@@ -80,12 +74,11 @@ export function registerMirenLanguage(PrismInstance: typeof Prism) {
         },
       },
     },
-    // Bare sudo (e.g. sudo systemctl ...)
     sudo: {
       pattern: /\bsudo\b/,
       alias: "keyword",
     },
-    // IP address with optional :port
+    // Split IP:port so the port can be styled muted like the real CLI
     ip: {
       pattern: /\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?/,
       inside: {
@@ -99,34 +92,28 @@ export function registerMirenLanguage(PrismInstance: typeof Prism) {
         },
       },
     },
-    // Parenthetical counts like (+6)
     count: {
       pattern: /\(\+\d+\)/,
       alias: "comment",
     },
-    // Percentage: 100%
     percentage: {
       pattern: /\d+%/,
       alias: "number",
     },
-    // Timing: (7.8s), (0.1s)
     timing: {
       pattern: /\(\d+\.?\d*s\)/,
       alias: "comment",
     },
-    // Data sizes: 13.4 KB, 180.5 KB/s
     datasize: {
       pattern: /\d+\.?\d*\s*(?:KB|MB|GB|TB)(?:\/s)?/,
       alias: "number",
     },
-    // Flags: --long-flag or -s (only after whitespace)
+    // Lookbehind ensures we don't match hyphens inside words like "sample-apps"
     flag: {
       pattern: /(?<=\s)(?:--[\w-]+=?|-[a-zA-Z])\b/,
       alias: "parameter",
     },
-    // Pipes and redirects
     operator: /[|><]/,
-    // URLs
     url: {
       pattern: /https?:\/\/[^\s]+/,
       alias: "string",
