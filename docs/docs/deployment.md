@@ -1,3 +1,5 @@
+import CliCommand from '@site/src/components/CliCommand';
+
 # Deployment
 
 Deployment is the core workflow of Miren — it takes your application code, builds a container image, and runs it on your server.
@@ -16,16 +18,20 @@ Every deployment is tracked with a unique version ID, its current status, and th
 
 The most common workflow — run `miren deploy` from the root of your project:
 
-```bash
+<CliCommand context="client">
+```miren
 cd ~/myapp
 miren deploy
 ```
+</CliCommand>
 
 You can also deploy from a different directory with `-d`:
 
-```bash
+<CliCommand context="client">
+```miren
 miren deploy -d path/to/app
 ```
+</CliCommand>
 
 Miren reads the app name from `.miren/app.toml`. If you haven't set up your project yet, Miren offers to run `miren init` for you, which creates an `app.toml` with the app name derived from your directory name. If this is the first deploy of the app, Miren creates it automatically on the server.
 
@@ -33,9 +39,11 @@ Miren reads the app name from `.miren/app.toml`. If you haven't set up your proj
 
 If your cluster config includes multiple clusters, Miren asks you to confirm which cluster to deploy to. Skip the prompt with `--force`:
 
-```bash
+<CliCommand context="client">
+```miren
 miren deploy --force
 ```
+</CliCommand>
 
 The prompt is also skipped automatically when only one cluster is configured or when stdin is not a terminal (e.g., in CI).
 
@@ -45,9 +53,11 @@ Miren automatically detects how to build your application. It inspects your proj
 
 Use `--analyze` to see what Miren detects without actually building or deploying:
 
-```bash
+<CliCommand context="client">
+```miren
 miren deploy --analyze
 ```
+</CliCommand>
 
 You'll see the detected stack, services, entrypoint, and what files and frameworks influenced the result. Handy when a build isn't doing what you expect.
 
@@ -59,7 +69,8 @@ Use `--explain` (or `-x`) to watch each build step as it runs. This is the defau
 
 Set environment variables at deploy time with `-e` and `-s`. They're applied to the app before the new version activates.
 
-```bash
+<CliCommand context="client">
+```miren
 # Regular variables
 miren deploy -e RELEASE_SHA=abc123 -e LOG_LEVEL=debug
 
@@ -72,14 +83,17 @@ miren deploy -s API_KEY=@secrets/api-key.txt
 # Prompt for the value (sensitive vars mask input)
 miren deploy -s SECRET_KEY
 ```
+</CliCommand>
 
 ## Redeploying an Existing Version
 
 Skip the build entirely and redeploy a previously built version:
 
-```bash
+<CliCommand context="client">
+```miren
 miren deploy --version myapp-vCVkjR6u7744AsMebwMjGU
 ```
+</CliCommand>
 
 Useful for rolling forward to a known-good version without waiting for a new build.
 
@@ -89,9 +103,11 @@ Find version IDs with `miren app history` (see [Deployment History](#deployment-
 
 `miren rollback` provides an interactive way to revert to a previous version:
 
-```bash
+<CliCommand context="client">
+```miren
 miren rollback -a myapp
 ```
+</CliCommand>
 
 This presents a picker showing your recent successful deployments:
 
@@ -111,9 +127,11 @@ Rollback creates a new deployment record — it doesn't erase history.
 
 View the history of deployments for an app:
 
-```bash
+<CliCommand context="client">
+```miren
 miren app history -a myapp
 ```
+</CliCommand>
 
 ### Output
 
@@ -138,9 +156,11 @@ You can filter by status, show full git provenance with `--detailed`, or get JSO
 
 Cancel an in-progress deployment by its deployment ID:
 
-```bash
+<CliCommand context="client">
+```miren
 miren deploy cancel -d <deployment-id>
 ```
+</CliCommand>
 
 Get the deployment ID from `miren app history --detailed`. If a CLI session is watching that deployment, it'll detect the cancellation and exit cleanly.
 

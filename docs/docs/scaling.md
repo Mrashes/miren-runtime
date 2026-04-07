@@ -1,3 +1,4 @@
+import CliCommand from '@site/src/components/CliCommand';
 
 # Application Scaling
 
@@ -207,7 +208,8 @@ Consider your traffic patterns:
 
 View your current instance counts:
 
-```bash
+<CliCommand context="client">
+```miren
 # See app status including instance counts
 miren app
 
@@ -217,6 +219,7 @@ miren app --watch
 # List all running sandboxes
 miren sandbox list
 ```
+</CliCommand>
 
 ## Next Steps
 

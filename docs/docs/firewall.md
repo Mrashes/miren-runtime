@@ -1,3 +1,4 @@
+import CliCommand from '@site/src/components/CliCommand';
 
 # Firewall Configuration
 
@@ -112,6 +113,7 @@ Most cloud providers have some form of default firewall. Miren's rule insertion 
 
 Check current iptables rules:
 
+<CliCommand context="server">
 ```bash
 # View FORWARD chain
 sudo iptables -L FORWARD -n -v --line-numbers
@@ -122,19 +124,24 @@ sudo iptables -L INPUT -n -v --line-numbers
 # Look for Miren's bridge interface rules (usually miren0)
 sudo iptables -L -n -v | grep miren
 ```
+</CliCommand>
 
 Check if the bridge interface exists:
 
+<CliCommand context="server">
 ```bash
 ip link show miren0
 ```
+</CliCommand>
 
 Verify containers can reach the host:
 
+<CliCommand context="server">
 ```bash
 # From inside a sandbox, try to reach host DNS
 ping 10.8.0.1  # (adjust IP to your bridge gateway)
 ```
+</CliCommand>
 
 ### Common Issues
 

@@ -2,57 +2,29 @@
 slug: /
 ---
 
-# Welcome to Miren
+# Miren
 
-**Miren** is a modern infrastructure platform built for small teams doing big things. Deploy, observe, and scale without bureaucracy or burnout.
+Miren is a container platform for small teams. You install it on a Linux server, point your CLI at it, and deploy with `miren deploy`. It handles builds, scaling, routing, TLS, and backups so you don't have to stitch together a platform from parts.
 
-## What is Miren?
+## How it works
 
-Miren gives you the power of a full platform team without the overhead, complexity, or cost:
+Miren has two sides. The **server** runs on your Linux machine and manages containers, networking, and storage. The **client** is the `miren` CLI on your laptop (or CI runner), which talks to the server over a secure connection.
 
-- **Deploy Instantly**: Ship code from CLI to production in seconds. No YAML, no pipelines, no waiting.
-- **Team Management Made Easy**: Cloud authentication built in. Add teammates, manage access, and control permissions without rolling your own auth.
-- **Safe Data**: Data created by your services is automatically backed up to miren.cloud, giving you peace of mind.
-- **Workflows With Taste**: Great workflows out of the box. Opinionated, battle-tested practices that just work from day one.
-- **Unified Tooling**: Same workflows everywhere — local, staging, and production. Consistent tools and commands across all environments.
+You deploy apps by running `miren deploy` from your project directory. Miren detects your language (Python, Node, Bun, Go, Ruby, Rust, or a Dockerfile), builds a container image, and runs it. Your first app gets a route automatically. Scaling is automatic by default, adjusting instance counts based on traffic.
 
-## Quick Start
+Configuration lives in `.miren/app.toml` in your project. Environment variables, secrets, services, scaling behavior, and persistent disks are all managed through the CLI and this config file.
 
-Get started with Miren in seconds:
+## Get started
 
-```bash
-# Install Miren
-curl -fsSL https://miren.cloud/install | sudo bash
+**[Getting Started](/getting-started)** walks you through installation, server setup, and deploying your first app in a few minutes.
 
-# Deploy your first app
-miren deploy
+## Learn more
 
-# Check app status
-miren app list
-
-# View logs
-miren logs
-```
-
-## Key Concepts
-
-- **Apps**: Your applications, each containing one or more services
-- **Services**: Processes within an app — web servers, workers, databases
-- **Scaling**: Automatic instance scaling based on traffic, or fixed instance counts
-- **Deploy**: Push code to any environment with a single command
-- **Disks**: Persistent storage that survives restarts and follows your services anywhere
-- **Environments**: Local, staging, production — all work the same way
-- **Teams**: Manage who can access what, all through miren.cloud
-
-## Next Steps
-
-- [Getting Started](/getting-started) - Install Miren and deploy your first app
-- [Supported Languages](/languages) - Ruby, Python, Node.js, Go, Bun, and custom Dockerfiles
-- [Services](/services) - Run multiple processes in your app
-- [Scaling](/scaling) - Configure how your app scales
-- [Disks](/disks) - Add persistent storage to your apps
-- [CLI Reference](/commands) - Learn about all available commands
-
----
-
-**Enjoy the Deploy** 🚀
+- [App Configuration](/app-configuration) - `.miren/app.toml` and how to configure your app
+- [Deployment](/deployment) - Deploy workflows, rollbacks, and CI integration
+- [Services](/services) - Run multiple processes (web, workers, databases) in one app
+- [Scaling](/scaling) - Autoscaling and fixed instance modes
+- [Traffic Routing](/traffic-routing) - Custom domains, TLS, and path-based routing
+- [Disks](/disks) - Persistent storage with automatic cloud backup
+- [Logs](/logs) - Application, build, and system logs
+- [CLI Reference](/commands) - Every command and flag

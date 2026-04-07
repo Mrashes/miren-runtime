@@ -1,3 +1,4 @@
+import CliCommand from '@site/src/components/CliCommand';
 
 # CI/CD Deployment
 
@@ -24,9 +25,11 @@ No secrets are stored in your CI system. The OIDC token is issued fresh for each
 
 On a machine where you're already authenticated with the cluster, export the cluster address for use in CI:
 
-```bash
+<CliCommand context="client">
+```miren
 miren cluster export-address
 ```
+</CliCommand>
 
 This outputs a string like:
 
@@ -40,9 +43,11 @@ The value includes the cluster address and a TLS certificate fingerprint for ver
 
 Create a binding that allows your GitHub repository to deploy:
 
-```bash
+<CliCommand context="client">
+```miren
 miren auth ci myapp --github acme/web-app
 ```
+</CliCommand>
 
 This creates a binding with:
 - **Issuer:** `https://token.actions.githubusercontent.com`
@@ -105,10 +110,12 @@ The subject pattern controls which GitHub Actions runs can authenticate. GitHub 
 
 The default pattern `repo:acme/web-app:*` matches all refs and event types. To restrict to a specific branch:
 
-```bash
+<CliCommand context="client">
+```miren
 miren auth ci myapp --github acme/web-app \
   --subject "repo:acme/web-app:ref:refs/heads/main"
 ```
+</CliCommand>
 
 Glob patterns are supported. `*` matches any characters **including** `/`, unlike standard path matching. `?` matches a single character.
 
@@ -116,19 +123,23 @@ Glob patterns are supported. `*` matches any characters **including** `/`, unlik
 
 By default, only `push` and `workflow_dispatch` events are permitted. To also allow `pull_request` events:
 
-```bash
+<CliCommand context="client">
+```miren
 miren auth ci myapp --github acme/web-app \
   --allowed-events push,workflow_dispatch,pull_request
 ```
+</CliCommand>
 
 ### Allowed Refs
 
 Restrict deployments to specific git refs:
 
-```bash
+<CliCommand context="client">
+```miren
 miren auth ci myapp --github acme/web-app \
   --allowed-refs "refs/heads/main,refs/tags/v*"
 ```
+</CliCommand>
 
 ### Claim Conditions
 
@@ -150,11 +161,13 @@ OIDC callers **cannot** perform administrative operations like deleting apps, ma
 
 For CI systems other than GitHub Actions, use the `--issuer` and `--subject` flags to create a binding:
 
-```bash
+<CliCommand context="client">
+```miren
 miren auth ci myapp \
   --issuer https://gitlab.com \
   --subject "project_path:acme/web-app:ref_type:branch:ref:main"
 ```
+</CliCommand>
 
 The CLI auto-detects OIDC tokens in GitHub Actions. For other platforms, you can adapt the following script which replicates what the GitHub Actions do — downloading the CLI, connecting to the cluster, and deploying:
 
@@ -204,9 +217,11 @@ Each CI platform has its own way of issuing OIDC tokens — check your provider'
 
 ### List Bindings
 
-```bash
+<CliCommand context="client">
+```miren
 miren auth ci list -a myapp
 ```
+</CliCommand>
 
 Example output:
 
@@ -218,9 +233,11 @@ def456     generic    https://gitlab.com                            project_path
 
 ### Remove a Binding
 
-```bash
+<CliCommand context="client">
+```miren
 miren auth ci remove abc123
 ```
+</CliCommand>
 
 ## CLI Reference
 
@@ -252,21 +269,25 @@ List OIDC bindings for an application.
 
 Remove an OIDC binding by ID.
 
-```bash
+<CliCommand context="client">
+```miren
 miren auth ci remove <binding-id>
 ```
+</CliCommand>
 
 ### `miren cluster export-address`
 
 Export a cluster address with its TLS certificate fingerprint, for use with the `MIREN_CLUSTER` environment variable.
 
-```bash
+<CliCommand context="client">
+```miren
 # Export the active cluster
 miren cluster export-address
 
 # Export a specific cluster
 miren cluster export-address -C my-cluster
 ```
+</CliCommand>
 
 Output format: `address:port;sha1:fingerprint`
 

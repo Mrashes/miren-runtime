@@ -1,3 +1,4 @@
+import CliCommand from '@site/src/components/CliCommand';
 
 # Traffic Routing
 
@@ -11,9 +12,11 @@ When you deploy an app, the `web` service automatically receives HTTP traffic. N
 
 Map a hostname to your app:
 
-```bash
+<CliCommand context="client">
+```miren
 miren route set myapp.example.com myapp
 ```
+</CliCommand>
 
 Requests to that hostname are forwarded to your `web` service. TLS certificates are provisioned automatically (see [TLS Certificates](/tls)).
 
@@ -21,9 +24,11 @@ Requests to that hostname are forwarded to your `web` service. TLS certificates 
 
 Route all subdomains of a domain to a single app using a wildcard:
 
-```bash
+<CliCommand context="client">
+```miren
 miren route set '*.myapp.example.com' myapp
 ```
+</CliCommand>
 
 A wildcard route `*.myapp.example.com` matches any subdomain like `foo.myapp.example.com` or `bar.myapp.example.com`. It does **not** match the bare domain `myapp.example.com` — add a separate route for that if needed.
 

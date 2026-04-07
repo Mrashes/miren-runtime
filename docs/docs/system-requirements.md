@@ -1,3 +1,4 @@
+import CliCommand from '@site/src/components/CliCommand';
 
 # System Requirements
 
@@ -32,9 +33,13 @@ If you're below the recommended thresholds but above the minimums, you'll see a 
 
 If you know what you're doing and want to install anyway (say, for testing), you can bypass the check:
 
-```bash
+<CliCommand context="server">
+
+```miren
 sudo miren server install --skip-system-check
 ```
+
+</CliCommand>
 
 ## We'd love to hear from you
 

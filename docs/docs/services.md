@@ -1,3 +1,4 @@
+import CliCommand from '@site/src/components/CliCommand';
 
 # Services
 
@@ -262,9 +263,11 @@ Connect to other services using their DNS name and standard port—`postgres.app
 
 The `web` service receives external HTTP traffic through Miren's HTTP ingress. Create a route to make your app reachable:
 
-```bash
+<CliCommand context="client">
+```miren
 miren route add myapp.example.com --app myapp
 ```
+</CliCommand>
 
 The web service defaults to port 3000. Override it if your app listens elsewhere:
 
@@ -332,10 +335,12 @@ The hierarchy is:
 
 Use these commands to drill down from apps to running instances:
 
-```bash
+<CliCommand context="client">
+```miren
 # List all apps and their current versions
 miren app list
 ```
+</CliCommand>
 
 ```text
 NAME          VERSION                              DEPLOYED  COMMIT
@@ -343,10 +348,12 @@ demo          demo-vCVkjR6u7744AsMebwMjGU          1d ago    5f4dd55
 conference    conference-vCVkjJSe4fydvxEHfhsKfA    1d ago    5f4dd55
 ```
 
-```bash
+<CliCommand context="client">
+```miren
 # List sandbox pools (one per service per version)
 miren sandbox-pool list
 ```
+</CliCommand>
 
 ```text
 ID                          VERSION                              SERVICE  DESIRED  CURRENT  READY
@@ -355,10 +362,12 @@ pool-CVkjMv2R2VwcLdHJUoGKD  conference-vCVkjJSe4fydvxEHfhsKfA    web      3     
 pool-CVmuoeQCzjoNN9hGsu14c  conference-vCVkjJSe4fydvxEHfhsKfA    worker   2        2        2
 ```
 
-```bash
+<CliCommand context="client">
+```miren
 # List individual sandboxes (instances)
 miren sandbox list
 ```
+</CliCommand>
 
 ```text
 ID                                SERVICE  POOL                        ADDRESS        STATUS
@@ -367,10 +376,12 @@ conference-web-CVnbNhSjUbGEAC5L   web      pool-CVkjMv2R2VwcLdHJUoGKD  10.8.32.1
 conference-web-CVnbNhVDNcqapDcX   web      pool-CVkjMv2R2VwcLdHJUoGKD  10.8.32.19/24  running
 ```
 
-```bash
+<CliCommand context="client">
+```miren
 # View logs for a specific sandbox
 miren logs -s demo-web-CVok1wptmHEsJ6DmTRy7g
 ```
+</CliCommand>
 
 ## Complete Examples
 

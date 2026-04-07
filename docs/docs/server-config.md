@@ -2,6 +2,8 @@
 sidebar_label: server.toml
 ---
 
+import CliCommand from '@site/src/components/CliCommand';
+
 # Server Configuration Reference
 
 Complete reference for Miren server configuration. Settings can be specified via config file, environment variables, or CLI flags.
