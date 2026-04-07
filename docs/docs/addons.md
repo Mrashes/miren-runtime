@@ -1,3 +1,5 @@
+import CliCommand from '@site/src/components/CliCommand';
+
 # Addons
 
 Addons are managed backing services that Miren provisions and operates for your app. Instead of running your own database as a service, you declare an addon and Miren handles the infrastructure — creating the server, injecting connection credentials, and cleaning up when you're done.
@@ -21,9 +23,11 @@ If you just need a PostgreSQL database for your app, use an addon. If you need c
 
 List available addons on your cluster:
 
-```bash
+<CliCommand context="client">
+```miren
 miren addon list-available
 ```
+</CliCommand>
 
 ## Adding an Addon
 
@@ -45,9 +49,11 @@ variant = "small"
 
 Attach an addon to an existing app:
 
-```bash
+<CliCommand context="client">
+```miren
 miren addon create miren-postgresql:small -a myapp
 ```
+</CliCommand>
 
 ## Environment Variables
 
@@ -66,17 +72,21 @@ For PostgreSQL, the following variables are injected:
 
 Most frameworks and ORMs connect automatically using `DATABASE_URL`. You can verify the variables are set:
 
-```bash
+<CliCommand context="client">
+```miren
 miren env list -a myapp
 ```
+</CliCommand>
 
 ## Variants
 
 Each addon offers variants that control the resource allocation and architecture:
 
-```bash
+<CliCommand context="client">
+```miren
 miren addon variants miren-postgresql
 ```
+</CliCommand>
 
 ### PostgreSQL Variants
 
@@ -115,17 +125,21 @@ Your app won't start until addon provisioning completes — Miren holds off laun
 
 List addons attached to your app:
 
-```bash
+<CliCommand context="client">
+```miren
 miren addon list -a myapp
 ```
+</CliCommand>
 
 ### Removing an Addon
 
 Remove an addon and delete its data:
 
-```bash
+<CliCommand context="client">
+```miren
 miren addon destroy miren-postgresql -a myapp
 ```
+</CliCommand>
 
 :::warning
 Destroying an addon permanently deletes the database and all its data. This cannot be undone.
@@ -172,9 +186,11 @@ const server = Bun.serve({
 ```
 
 Deploy:
-```bash
+<CliCommand context="client">
+```miren
 miren deploy
 ```
+</CliCommand>
 
 Miren provisions PostgreSQL, injects `DATABASE_URL`, and starts your app once the database is ready.
 
@@ -192,9 +208,11 @@ Each PostgreSQL addon stores its data on a Miren disk. You can back up and resto
 
 List disks to find the one belonging to your addon:
 
-```bash
+<CliCommand context="client">
+```miren
 miren debug disk list
 ```
+</CliCommand>
 
 Addon disks are named with a `pg-` prefix. For dedicated (`small`) addons, the name includes your app name (e.g. `pg-pg-myapp-s...-data`). For shared addons, it starts with `pg-shared-data-`.
 
@@ -202,50 +220,64 @@ Addon disks are named with a `pg-` prefix. For dedicated (`small`) addons, the n
 
 Back up the disk to a compressed snapshot file. This must be run on the server:
 
-```bash
+<CliCommand context="server">
+```miren
 miren disk backup -n <disk-name>
 ```
+</CliCommand>
 
 This creates a timestamped `.miren.zst` file in the current directory. If the disk is currently in use, the backup will be crash-consistent (safe for PostgreSQL, which uses write-ahead logging).
 
 Example:
 
-```bash
+<CliCommand context="server">
+```miren
 miren disk backup -n pg-pg-myapp-sCZDabc123-data
 # Output: pg-pg-myapp-sCZDabc123-data-20260324-120000.miren.zst
 ```
+</CliCommand>
 
 You can specify a custom output path with `-o`:
 
-```bash
+<CliCommand context="server">
+```miren
 miren disk backup -n pg-pg-myapp-sCZDabc123-data -o /backups/myapp-db.miren.zst
 ```
+</CliCommand>
 
 ### Restoring from a Backup
 
 To restore, provide the snapshot file. This must also be run on the server:
 
-```bash
+<CliCommand context="server">
+```miren
 miren disk restore -s <snapshot-file>
 ```
+</CliCommand>
 
 The restore recreates the disk with the original name. If the disk already exists, use `--force` to overwrite:
 
-```bash
+<CliCommand context="server">
+```miren
 miren disk restore -s myapp-db.miren.zst --force
 ```
+</CliCommand>
 
 To restore to a different disk name:
 
-```bash
+<CliCommand context="server">
+```miren
 miren disk restore -s myapp-db.miren.zst -n new-disk-name
 ```
+</CliCommand>
 
 After restoring, restart your app to pick up the restored data:
 
-```bash
+<CliCommand context="client">
+```miren
 miren app restart myapp
 ```
+</CliCommand>
 
 ### Backup Recommendations
 

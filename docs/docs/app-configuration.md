@@ -1,3 +1,4 @@
+import CliCommand from '@site/src/components/CliCommand';
 
 # App Configuration
 
@@ -13,10 +14,14 @@ If your app is a single web service with a standard language stack, Miren handle
 
 You can deploy with just:
 
-```bash
+<CliCommand context="client">
+
+```miren
 miren init
 miren deploy
 ```
+
+</CliCommand>
 
 ## When You Need app.toml
 

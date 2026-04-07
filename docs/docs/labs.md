@@ -1,3 +1,4 @@
+import CliCommand from '@site/src/components/CliCommand';
 
 # Miren Labs
 
@@ -16,7 +17,8 @@ Labs features are:
 
 Labs features are controlled via the `--labs` flag or `MIREN_LABS` environment variable when starting the Miren server.
 
-```bash
+<CliCommand context="server">
+```miren
 # Enable a single labs feature
 miren server --labs adminapi
 
@@ -29,6 +31,7 @@ MIREN_LABS=adminapi miren server
 # Multiple features via environment variable (comma-separated)
 MIREN_LABS=adminapi,usersubdomains miren server
 ```
+</CliCommand>
 
 ## Giving Feedback
 

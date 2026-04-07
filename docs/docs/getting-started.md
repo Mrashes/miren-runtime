@@ -1,23 +1,28 @@
+import CliCommand from '@site/src/components/CliCommand';
 
 # Getting Started
 
 Get up and running with Miren in minutes.
 
+## Two Contexts: Server and Client
+
+Miren runs in two places. The **server** is the Linux machine that hosts your applications. The **client** is wherever you work: your laptop, a CI runner, or even the server itself. Most `miren` commands are client commands that talk to a remote server, but a few (like `miren server install`) run directly on the server to set it up.
+
+Throughout these docs, CLI examples are labeled <span class="cli-command__badge cli-command__badge--server">SERVER</span> or <span class="cli-command__badge cli-command__badge--client">CLIENT</span> so you always know which machine a command belongs on. When both labels appear, the command works in either context.
+
 ## Installation
 
-Install Miren with a single command:
+Install Miren on both your server and your local machine. Head to [miren.dev/get-started](https://miren.dev/get-started) for platform-specific instructions and options.
 
-```bash
-curl -fsSL https://miren.cloud/install | sudo bash
+Once installed, verify it's working on either machine:
+
+<CliCommand context="both">
+```miren
+miren version
 ```
+</CliCommand>
 
-This script will:
-- Download the latest Miren release
-- Install the `miren` CLI binary
-- Set up the Miren server
-- Configure everything you need to start deploying
-
-### System Requirements
+### System Requirements (Server)
 
 - **Operating System**: Linux (kernel 5.10+)
 - **Architecture**: x86_64 or arm64
@@ -26,258 +31,145 @@ This script will:
 
 See [System Requirements](/system-requirements) for details on why these numbers matter.
 
-### Verify Installation
+## Set Up Your Server
 
-Check that Miren is installed correctly:
+(Skip this section if you are using our [demo cluster](#using-our-demo-cluster))
 
-```bash
-miren version
-```
+On your server, run the install command to set up the Miren runtime:
 
-### Start the Miren Server
-
-(Skip this step if you are using our [demo cluster](#using-our-demo-cluster))
-
-Set up and start the Miren server:
-
-```bash
+<CliCommand context="server">
+```miren
 sudo miren server install
 ```
+</CliCommand>
 
-This will:
-- Download required components
-- Register your cluster with [miren.cloud](/miren-cloud/overview) (follow the prompts)
-- Install and start the Miren systemd service
-- Configure your CLI to use the local cluster
+This will download required components, register your cluster with [miren.cloud](/miren-cloud/overview) (follow the prompts), install and start the Miren systemd service, and configure the local CLI to talk to it.
 
 To skip cloud registration and run standalone:
 
-```bash
+<CliCommand context="server">
+```miren
 sudo miren server install --without-cloud
 ```
+</CliCommand>
 
 ### Using Our Demo Cluster
 
-Ask for access to our demo cluster in #miren-club on [Discord](https://miren.dev/discord).
+Ask for access to our demo cluster in #miren-club on [Discord](https://miren.dev/discord). Once you have access, log in and add the cluster:
 
-```bash
-# Once you have access, connect to the demo cluster
-$ miren login
-$ miren cluster add
+<CliCommand context="client">
+```miren
+miren login
+```
+</CliCommand>
+
+Follow the prompts to authenticate with Miren Cloud, then bind the cluster to your local CLI:
+
+<CliCommand context="client">
+```miren
+miren cluster add
 
 Select a cluster to bind:
-   NAME                ORGANIZATION   ADDRESS
-▸  miren-demo          mirendev       1.2.3.4:8443 (+7)
+   NAME   ORGANIZATION   ADDRESS
+▸  club   Miren Club     34.27.122.56:8443 (+6)
 ```
+</CliCommand>
 
 ## Deploy Your First App
 
-Miren automatically detects and builds your app. Supported languages include:
-- **Python**: Detects `requirements.txt`, `Pipfile`, `pyproject.toml`, `uv.lock`
-- **JavaScript/Node**: Detects `package.json` (npm, yarn)
-- **Bun**: Detects `bun.lockb`
-- **Go**: Detects `go.mod`
-- **Ruby**: Detects `Gemfile`
-- **Rust**: Detects `Cargo.toml`
+Let's deploy a real app so you can see the full flow. Clone the [sample apps repo](https://github.com/mirendev/sample-apps) and navigate to the demo app:
 
-Don't see your language? You can always provide a `Dockerfile`.
-
-:::tip Preview before deploying
-Use `miren deploy --analyze` to see what Miren detects without actually building or deploying:
-
+<CliCommand context="client">
 ```bash
+git clone https://github.com/mirendev/sample-apps.git
+cd sample-apps/demo
+```
+</CliCommand>
+
+This is a small Bun web app that's already configured for Miren. Before deploying, you can preview what Miren detects:
+
+<CliCommand context="client">
+```miren
 miren deploy --analyze
 ```
+</CliCommand>
 
-This shows the detected stack, services, environment variables, and how each service will be started.
+This shows the detected stack, services, and how each service will be started. When you're ready, deploy it:
+
+<CliCommand context="client">
+```miren
+miren deploy
+
+  ✓ Deploying: demo → club
+  ✓ Upload artifacts (0.1s) - 13.4 KB at 180.5 KB/s
+  ✓ Build & push image (7.8s) - 9 steps completed
+
+Updated version demo-vCZpcrAAaU6mULzMSSBwc4 deployed. All traffic moved to new version.
+
+No routes configured for this app.
+To set a hostname, try: miren route set demo.cluster-jwomf2l0tn8z.miren.systems demo
+```
+</CliCommand>
+
+Your app is deployed and running! Miren suggests a hostname on your cluster's `.miren.systems` subdomain. If your cluster is publicly accessible, go ahead and set that route:
+
+<CliCommand context="client">
+```miren
+miren route set demo.cluster-jwomf2l0tn8z.miren.systems demo
+```
+</CliCommand>
+
+Then open the URL in your browser to see the demo app.
+
+![The demo app running in a browser](/img/demo-app-browser.png)
+
+:::note Not publicly accessible?
+If your server is behind a firewall or on a private network, `miren route set` will still configure the route, but you won't be able to reach it from outside. You can verify your app is running with `miren app list` and `miren logs` instead. See [Firewall](/firewall) for details on making your cluster reachable.
 :::
 
-Just run:
+## See It Running
 
-```bash
-cd your-project
-miren init
-miren deploy
-```
+Check that your app deployed successfully:
 
-That's it! Miren will:
-- Detect your language and framework
-- Build a container image
-- Deploy your app
-- Show you the URL to access it
-
-Note: Your first app gets a default route automatically. For subsequent apps, you'll need to configure routes manually. See [Working with Routes](#working-with-routes).
-
-### "How do I configure multiple instances of my application?"
-
-By default, you don't!
-
-A core philosophy of Miren is that guessing replica/instance/copy counts is the wrong way to manage
-application scaling by default. For that reason, from day 1, Miren has built around autoscaling application
-instances. It does this using the same technique that Google Cloud Run uses, namely that as
-the amount of traffic to the application increases, additional instances are automatically launched.
-
-And as the traffic reduces, the instance counts are automatically reduced.
-
-If an application isn't stateless and needs to only run a certain number of copies, the application
-can be switched to fixed mode where you set the number of instances. This is commonly used for services
-that your application also needs, like databases, background workers, etc.
-
-See [Application Scaling](/scaling) for full documentation on configuring scaling behavior.
-
-## Check Your Application
-
-### View All Applications
-
-```bash
+<CliCommand context="client">
+```miren
 miren app list
+
+  NAME   VERSION                        SCALE   ROUTE
+  demo   demo-vCZpcrAAaU6mULzMSSBwc4    1       demo.cluster-jwomf2l0tn8z.miren.systems
 ```
+</CliCommand>
 
-### View Application Details
+You can also tail the logs to see requests coming in:
 
-```bash
-miren app
-```
-
-Or to view a specific app:
-
-```bash
-miren app --app myapp
-```
-
-### View Deployment History
-
-See past deployments:
-
-```bash
-miren app history
-```
-
-## View Logs
-
-See what your application is doing:
-
-```bash
+<CliCommand context="client">
+```miren
 miren logs
+
+S 2026-04-07 10:08:12: Server running at http://localhost:3000
+S 2026-04-07 10:08:15: GET / 200 2ms
+S 2026-04-07 10:08:15: GET /images/Miren-Logo-Secondary.svg 200 1ms
 ```
+</CliCommand>
 
-View logs for a specific app:
-
-```bash
-miren logs app -a myapp
-```
-
-Show logs from the last 5 minutes:
-
-```bash
-miren logs --last 5m
-```
-
-See [Logs](/logs) for the full reference on filtering, build logs, system logs, and more.
-
-## Managing Applications
-
-### Initialize a New Application
-
-If you want to set up a new project:
-
-```bash
-miren init
-```
-
-This creates the necessary configuration for your project.
-
-### Delete an Application
-
-Remove an application and all its resources:
-
-```bash
-miren app delete myapp
-```
-
-## Environment Variables
-
-Manage environment variables for your application:
-
-```bash
-# View environment variables
-miren env list
-
-# Set an environment variable (then redeploy)
-miren env set --env KEY=value
-```
-
-## Persistent Storage with Disks
-
-Need to store data that survives restarts? Add a disk to your service in `.miren/app.toml`:
-
-```toml
-[[services.db.disks]]
-name = "myapp-data"
-mount_path = "/data"
-size_gb = 10
-```
-
-**NOTE:** Disks can only be used with fixed instance scheduled services, which the default
-web service is not.
-
-Your data is automatically backed up to Miren Cloud. See [Disks](/disks) for full documentation.
-
-## Working with Routes
-
-When you deploy your first application, Miren automatically creates a default route for it.
-
-For additional apps, you'll need to either create a custom route:
-
-```bash
-miren route set myapp.example.com myapp
-```
-
-Or set the app as the new default:
-
-```bash
-miren route set-default myapp
-```
-
-View HTTP routes for your applications:
-
-```bash
-miren route
-```
-
-## Troubleshooting
-
-### Application Won't Start
-
-Check the logs:
-
-```bash
-miren logs
-```
-
-### Can't Access Application
-
-Verify the app is running:
-
-```bash
-miren app status
-```
-
-Check the routes:
-
-```bash
-miren route
-```
-
-### Need Help?
-
-- Check the [CLI Reference](/commands) for command details
-- View the [FAQ](https://miren.dev/developer-preview#faq-1)
-- See [Troubleshooting](/troubleshooting) for diagnostics, bug reports, and community help
+That's it! You have an app running on Miren.
 
 ## Next Steps
 
-- [App Configuration](/app-configuration) — Learn when and how to configure your app
-- [Application Scaling](/scaling) — Configure how your app scales
-- [CLI Reference](/commands) — Learn about all available commands
-- [Disks](/disks) — Persistent storage for your applications
+Now that you've got something deployed, here's where to go depending on what you need.
+
+**Deploy your own app.** Miren auto-detects Python, Node, Bun, Go, Ruby, and Rust projects. Run `miren init` in your project to create a [`.miren/app.toml`](/app-configuration) config, then `miren deploy`. You can always provide a `Dockerfile` if you need full control over the build.
+
+**Manage multiple clusters.** If you have more than one server, use [`miren cluster`](/command/cluster) to list your clusters and `miren cluster switch` to change which one you're targeting before deploying.
+
+**Configure your app.** The [App Configuration](/app-configuration) guide covers `.miren/app.toml` in depth: setting commands, ports, environment variables, concurrency, and more.
+
+**Set up routes.** Your first app gets a default route, but additional apps need explicit routing. See [Routes](/traffic-routing) for custom domains and path-based routing.
+
+**Scale your app.** Miren autoscales by default (like Cloud Run), spinning instances up and down with traffic. If you need fixed instance counts for things like databases or workers, see [Application Scaling](/scaling).
+
+**Add persistent storage.** [Disks](/disks) let you attach storage volumes to services, with automatic backup to Miren Cloud.
+
+**Explore the CLI.** The full [CLI Reference](/commands) documents every command and flag.
+
+**Get help.** If something isn't working, check [Troubleshooting](/troubleshooting) or ask in #miren-club on [Discord](https://miren.dev/discord).

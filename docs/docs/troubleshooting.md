@@ -1,3 +1,4 @@
+import CliCommand from '@site/src/components/CliCommand';
 
 # Troubleshooting
 
@@ -7,17 +8,21 @@ A step-by-step guide to diagnosing issues with your Miren applications and serve
 
 Start with `miren doctor` to verify your environment is set up correctly:
 
-```bash
+<CliCommand context="client">
+```miren
 miren doctor
 ```
+</CliCommand>
 
 This checks your configuration, server connectivity, and authentication. It provides context-aware suggestions when it detects issues. You can also run the subcommands individually:
 
-```bash
+<CliCommand context="client">
+```miren
 miren doctor config   # Check cluster configuration
 miren doctor server   # Check server connectivity
 miren doctor auth     # Check authentication
 ```
+</CliCommand>
 
 ## App not starting
 
@@ -25,15 +30,18 @@ If your app is deployed but not responding:
 
 **1. Check the app status**
 
-```bash
+<CliCommand context="client">
+```miren
 miren app status -a myapp
 ```
+</CliCommand>
 
 This shows the current deployment state, version, configuration, and any error messages.
 
 **2. Check the logs**
 
-```bash
+<CliCommand context="client">
+```miren
 # Recent logs
 miren logs -a myapp
 
@@ -46,12 +54,15 @@ miren logs -a myapp -g error
 # Logs from a specific service
 miren logs -a myapp --service web
 ```
+</CliCommand>
 
 **3. Check sandbox state**
 
-```bash
+<CliCommand context="client">
+```miren
 miren sandbox list
 ```
+</CliCommand>
 
 Look for sandboxes that are stuck in `pending` or `not_ready`, or that have gone `dead`. Use `--all` to include dead sandboxes in the output.
 
@@ -59,17 +70,21 @@ Look for sandboxes that are stuck in `pending` or `not_ready`, or that have gone
 
 **1. Find the failed deployment**
 
-```bash
+<CliCommand context="client">
+```miren
 miren app history -a myapp
 ```
+</CliCommand>
 
 Failed deployments are marked with a red `✗`. Use `--detailed` for more info including error messages and git SHAs.
 
 **2. Check build logs**
 
-```bash
+<CliCommand context="client">
+```miren
 miren logs build -a myapp VERSION
 ```
+</CliCommand>
 
 Replace `VERSION` with the version from the deployment history. This shows the build output so you can see where things went wrong. See [Logs](/logs) for more on filtering and following logs.
 
@@ -81,21 +96,27 @@ If you suspect the Miren server itself is having problems:
 
 For systemd installations:
 
+<CliCommand context="server">
 ```bash
 sudo journalctl -u miren -f
 ```
+</CliCommand>
 
 For Docker installations:
 
+<CliCommand context="server">
 ```bash
 docker logs -f miren
 ```
+</CliCommand>
 
 **2. Test connectivity**
 
-```bash
+<CliCommand context="client">
+```miren
 miren debug connection
 ```
+</CliCommand>
 
 This tests RPC and HTTP connectivity to the server and reports the server version and auth status.
 
@@ -103,9 +124,11 @@ This tests RPC and HTTP connectivity to the server and reports the server versio
 
 If you've worked through the steps above and need further help, collect a debug bundle to share:
 
-```bash
+<CliCommand context="both">
+```miren
 sudo miren debug bundle
 ```
+</CliCommand>
 
 This creates a `miren-debug.tar.gz` archive containing system info, container state, process lists, and server logs.
 
@@ -133,13 +156,15 @@ Without sudo, the command still runs but produces a partial bundle. Root access 
 | `-s, --since` | Include logs since this time | `1 day ago` |
 | `-d, --docker-container` | Docker container name | `miren` |
 
-```bash
+<CliCommand context="both">
+```miren
 # Include logs from the last week
 sudo miren debug bundle --since "7 days ago"
 
 # Save to a specific path
 sudo miren debug bundle -o /tmp/miren-debug.tar.gz
 ```
+</CliCommand>
 
 ## Getting help
 

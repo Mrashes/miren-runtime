@@ -1,3 +1,4 @@
+import CliCommand from '@site/src/components/CliCommand';
 
 # TLS Certificates
 
@@ -49,9 +50,11 @@ DNSIMPLE_OAUTH_TOKEN=your-token-here
 
 Then update the systemd service to load the environment file and config:
 
+<CliCommand context="server">
 ```bash
 sudo systemctl edit miren --force
 ```
+</CliCommand>
 
 Add the environment file:
 
@@ -62,9 +65,11 @@ EnvironmentFile=/var/lib/miren/server/env
 
 Restart to pick up the changes:
 
+<CliCommand context="server">
 ```bash
 sudo systemctl restart miren
 ```
+</CliCommand>
 
 #### Provider Examples
 
@@ -114,24 +119,30 @@ All TLS settings live under the `[tls]` section of the server config file (typic
 
 Check the server logs for ACME errors:
 
+<CliCommand context="server">
 ```bash
 sudo journalctl -u miren | grep -i acme
 ```
+</CliCommand>
 
 **HTTP-01 challenges:** Ensure ports 80 and 443 are reachable from the public internet. See [Firewall Configuration](/firewall) for cloud provider-specific guidance.
 
 **DNS-01 challenges:** Verify your DNS provider credentials are correct and the environment file is loaded:
 
+<CliCommand context="server">
 ```bash
 sudo systemctl show miren | grep EnvironmentFile
 ```
+</CliCommand>
 
 ### Wrong Certificate / Self-Signed Warning
 
 If you're seeing a self-signed certificate warning for a domain that should have a real certificate, check that a route is configured for that hostname:
 
-```bash
+<CliCommand context="client">
+```miren
 miren route
 ```
+</CliCommand>
 
 Miren only provisions ACME certificates for hostnames with explicitly configured routes. All other hostnames get the self-signed fallback.

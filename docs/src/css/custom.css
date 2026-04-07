@@ -524,6 +524,186 @@ a:hover {
 }
 
 /* ========================================
+ * CLI Command Context Badges
+ * ======================================== */
+
+.cli-command {
+  margin-bottom: var(--ifm-leading);
+}
+
+.cli-command__body .theme-code-block {
+  margin-bottom: 0;
+}
+
+.cli-command__footer {
+  display: flex;
+  gap: 0.375rem;
+  justify-content: flex-end;
+  margin-right: 0.75rem;
+  margin-top: -1px;
+}
+
+.cli-command__badge {
+  display: inline-block;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  line-height: 1;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0 0 0.25rem 0.25rem;
+  user-select: none;
+}
+
+.cli-command__badge--server {
+  background-color: var(--miren-vanilla-100);
+  color: var(--miren-slate-600);
+}
+
+.cli-command__badge--client {
+  background-color: var(--miren-topaz-100);
+  color: var(--miren-topaz-800);
+}
+
+[data-theme='dark'] .cli-command__badge--server {
+  background-color: rgba(235, 222, 183, 0.15);
+  color: var(--miren-vanilla-300);
+}
+
+[data-theme='dark'] .cli-command__badge--client {
+  background-color: rgba(72, 131, 255, 0.15);
+  color: var(--miren-topaz-300);
+}
+
+/* ========================================
+ * Miren CLI Syntax Highlighting (Brand)
+ * ======================================== */
+
+/* miren / m binary: topaz, bold */
+.prism-code.language-miren .token.function {
+  color: var(--miren-topaz-700);
+  font-weight: 500;
+}
+
+/* Command (section): e.g. app, sandbox, cluster */
+.prism-code.language-miren .token.builtin {
+  color: var(--miren-topaz-800);
+}
+
+/* Subcommand (verb): e.g. list, add, delete */
+.prism-code.language-miren .token.property {
+  color: var(--miren-topaz-600);
+}
+
+/* Flags: muted slate */
+.prism-code.language-miren .token.parameter {
+  color: var(--miren-slate-500);
+}
+
+/* sudo, table headers, selector */
+.prism-code.language-miren .token.keyword {
+  color: var(--miren-terra-500);
+  font-weight: 500;
+}
+
+/* Table column headers: underlined like real terminal output */
+.prism-code.language-miren .token.tag {
+  color: var(--miren-slate-500);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+/* Strings and URLs */
+.prism-code.language-miren .token.string {
+  color: var(--miren-terra-600);
+}
+
+/* Variables */
+.prism-code.language-miren .token.variable {
+  color: var(--miren-topaz-500);
+}
+
+/* Comments */
+.prism-code.language-miren .token.comment {
+  color: var(--miren-slate-400);
+  font-style: italic;
+}
+
+/* Pipes, redirects */
+.prism-code.language-miren .token.operator {
+  color: var(--miren-slate-400);
+}
+
+/* IP addresses, port numbers, percentages, data sizes */
+.prism-code.language-miren .token.number {
+  color: var(--miren-topaz-600);
+}
+
+/* Success lines: ✓ completed steps */
+.prism-code.language-miren .token.inserted {
+  color: #22863a;
+}
+
+/* Version IDs */
+.prism-code.language-miren .token.constant {
+  color: var(--miren-slate-500);
+}
+
+/* Dark mode */
+[data-theme='dark'] .prism-code.language-miren .token.function {
+  color: var(--miren-topaz-300);
+}
+
+[data-theme='dark'] .prism-code.language-miren .token.builtin {
+  color: var(--miren-topaz-200);
+}
+
+[data-theme='dark'] .prism-code.language-miren .token.property {
+  color: var(--miren-topaz-300);
+}
+
+[data-theme='dark'] .prism-code.language-miren .token.parameter {
+  color: var(--miren-slate-400);
+}
+
+[data-theme='dark'] .prism-code.language-miren .token.keyword {
+  color: var(--miren-terra-400);
+}
+
+[data-theme='dark'] .prism-code.language-miren .token.string {
+  color: var(--miren-terra-300);
+}
+
+[data-theme='dark'] .prism-code.language-miren .token.variable {
+  color: var(--miren-topaz-200);
+}
+
+[data-theme='dark'] .prism-code.language-miren .token.comment {
+  color: var(--miren-slate-500);
+}
+
+[data-theme='dark'] .prism-code.language-miren .token.operator {
+  color: var(--miren-slate-500);
+}
+
+[data-theme='dark'] .prism-code.language-miren .token.number {
+  color: var(--miren-topaz-300);
+}
+
+[data-theme='dark'] .prism-code.language-miren .token.tag {
+  color: var(--miren-slate-400);
+}
+
+[data-theme='dark'] .prism-code.language-miren .token.inserted {
+  color: #85e89d;
+}
+
+[data-theme='dark'] .prism-code.language-miren .token.constant {
+  color: var(--miren-slate-400);
+}
+
+/* ========================================
  * Accessibility & Motion
  * ======================================== */
 

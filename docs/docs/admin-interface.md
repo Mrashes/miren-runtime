@@ -1,3 +1,4 @@
+import CliCommand from '@site/src/components/CliCommand';
 
 # Admin Interface
 
@@ -379,7 +380,9 @@ def admin_endpoint():
 
 Once your app exposes the admin interface, use the CLI to call methods:
 
-```bash
+<CliCommand context="client">
+
+```miren
 # List available methods
 miren admin --list
 
@@ -392,6 +395,8 @@ miren admin update-config settings='{"debug": true}'
 # Output as JSON (for scripting)
 miren admin get-stats --json | jq '.total'
 ```
+
+</CliCommand>
 
 See [Admin Commands](/command/admin) for full CLI documentation.
 

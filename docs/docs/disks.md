@@ -1,3 +1,4 @@
+import CliCommand from '@site/src/components/CliCommand';
 
 # Persistent Storage
 
@@ -178,29 +179,37 @@ If you deploy an app with a `name` that matches an existing disk, Miren will att
 
 Disks are **not** automatically deleted when you delete an app. This is intentional - your data is precious. To delete a disk:
 
-```bash
+<CliCommand context="client">
+```miren
 miren debug disk delete -i <disk-id>
 ```
+</CliCommand>
 
 ### Inspecting Disks
 
 List all disks:
 
-```bash
+<CliCommand context="client">
+```miren
 miren debug disk list
 ```
+</CliCommand>
 
 Check a specific disk's status:
 
-```bash
+<CliCommand context="client">
+```miren
 miren debug disk status -i <disk-id>
 ```
+</CliCommand>
 
 View active disk leases:
 
-```bash
+<CliCommand context="client">
+```miren
 miren debug disk lease-list
 ```
+</CliCommand>
 
 See [CLI Reference - Disk Commands](/command/debug-disk) for complete command documentation.
 

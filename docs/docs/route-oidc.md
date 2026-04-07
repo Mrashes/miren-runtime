@@ -1,3 +1,4 @@
+import CliCommand from '@site/src/components/CliCommand';
 
 # Route OIDC Authentication
 
@@ -31,12 +32,14 @@ Your app does not need to verify signatures or validate tokens — it can treat 
 
 The `--claim-header` option maps JWT claims from the OIDC provider to HTTP headers that your app receives:
 
-```bash
+<CliCommand context="client">
+```miren
 miren route oidc enable myapp.example.com \
   --claim-header email:X-User-Email \
   --claim-header sub:X-User-ID \
   --claim-header name:X-User-Name
 ```
+</CliCommand>
 
 - Each `--claim-header` takes the form `CLAIM:HEADER`
 - Multiple mappings can be specified
@@ -49,7 +52,8 @@ miren route oidc enable myapp.example.com \
 
 Google's OIDC provider works well when you want to restrict access by email domain.
 
-```bash
+<CliCommand context="client">
+```miren
 miren route oidc enable myapp.example.com \
   --provider-url https://accounts.google.com \
   --client-id $GOOGLE_CLIENT_ID \
@@ -58,6 +62,7 @@ miren route oidc enable myapp.example.com \
   --claim-header email:X-User-Email \
   --claim-header name:X-User-Name
 ```
+</CliCommand>
 
 Your app can then check the `X-User-Email` header's domain for basic authorization (e.g., only allow `@yourcompany.com`).
 
@@ -69,7 +74,8 @@ GitHub doesn't expose a native OIDC provider endpoint. To use GitHub for authent
 
 GitLab has a built-in OIDC provider — no federation layer needed. Register an application in your GitLab instance and point directly at it.
 
-```bash
+<CliCommand context="client">
+```miren
 miren route oidc enable myapp.example.com \
   --provider-url https://gitlab.com \
   --client-id $GITLAB_CLIENT_ID \
@@ -78,12 +84,14 @@ miren route oidc enable myapp.example.com \
   --claim-header email:X-User-Email \
   --claim-header name:X-User-Name
 ```
+</CliCommand>
 
 ### Keycloak (self-hosted)
 
 [Keycloak](https://www.keycloak.org/) is an open-source identity provider you can run yourself. It supports user federation, identity brokering, and fine-grained claim configuration.
 
-```bash
+<CliCommand context="client">
+```miren
 miren route oidc enable myapp.example.com \
   --provider-url https://keycloak.example.com/realms/myrealm \
   --client-id $KEYCLOAK_CLIENT_ID \
@@ -92,16 +100,19 @@ miren route oidc enable myapp.example.com \
   --claim-header email:X-User-Email \
   --claim-header preferred_username:X-User-Name
 ```
+</CliCommand>
 
 ## Reusing Providers Across Routes
 
 The examples above create a new OIDC provider inline for each route. If you use the same provider for multiple routes, you can reference an existing provider by name instead of repeating the configuration:
 
-```bash
+<CliCommand context="client">
+```miren
 miren route oidc enable another-app.example.com \
   --provider google-oauth \
   --claim-header email:X-User-Email
 ```
+</CliCommand>
 
 Providers created inline are preserved when you disable OIDC on a route, so they can be reused later.
 
@@ -109,22 +120,26 @@ Providers created inline are preserved when you disable OIDC on a route, so they
 
 All `miren route oidc` commands support the `--default` flag for the default route (which has no static hostname). When used with the default route, the OAuth2 redirect URL is derived from the request's `Host` header at runtime.
 
-```bash
+<CliCommand context="client">
+```miren
 miren route oidc enable --default \
   --provider-url https://accounts.google.com \
   --client-id $GOOGLE_CLIENT_ID \
   --client-secret $GOOGLE_CLIENT_SECRET \
   --claim-header email:X-User-Email
 ```
+</CliCommand>
 
 ## Managing OIDC on Routes
 
-```bash
+<CliCommand context="client">
+```miren
 # Show current OIDC configuration for a route
 miren route oidc show myapp.example.com
 
 # Disable OIDC on a route (provider is preserved for reuse)
 miren route oidc disable myapp.example.com
 ```
+</CliCommand>
 
 See the [CLI reference](/command/route-oidc-enable) for the full list of options.
