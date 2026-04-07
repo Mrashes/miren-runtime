@@ -452,7 +452,7 @@ func (s *RegistrationServer) RemoveRunner(ctx context.Context, req *runner_v1alp
 	node, nodeID, err := s.findNodeByQuery(ctx, query)
 	if err != nil {
 		s.Log.Error("Failed to find runner", "query", query, "error", err)
-		results.SetError("failed to find runner")
+		results.SetError(err.Error())
 		return nil
 	}
 	if node == nil {
@@ -526,6 +526,8 @@ func (s *RegistrationServer) RemoveRunner(ctx context.Context, req *runner_v1alp
 }
 
 // findNodeByQuery looks up a node entity by name, runner ID, entity ID, or short ID prefix.
+// Exact matches (name, runner ID, entity ID) are returned immediately. Prefix
+// matches are collected and only returned when unambiguous.
 func (s *RegistrationServer) findNodeByQuery(ctx context.Context, query string) (*compute_v1alpha.Node, entity.Id, error) {
 	listResp, err := s.EAC.List(ctx, entity.Ref(entity.EntityKind, compute_v1alpha.KindNode))
 	if err != nil {
@@ -533,6 +535,12 @@ func (s *RegistrationServer) findNodeByQuery(ctx context.Context, query string) 
 	}
 
 	query = strings.TrimSpace(query)
+
+	type candidate struct {
+		node compute_v1alpha.Node
+		id   entity.Id
+	}
+	var prefixMatches []candidate
 
 	for _, e := range listResp.Values() {
 		var node compute_v1alpha.Node
@@ -544,16 +552,27 @@ func (s *RegistrationServer) findNodeByQuery(ctx context.Context, query string) 
 
 		id := entity.Id(e.Id())
 
-		// Match by entity ID, runner ID, name, or short ID prefix
+		// Exact match by entity ID, runner ID, or name
 		if string(id) == query ||
 			node.RunnerId == query ||
-			(node.Name != "" && node.Name == query) ||
-			strings.HasPrefix(string(id), query) {
+			(node.Name != "" && node.Name == query) {
 			return &node, id, nil
+		}
+
+		// Prefix match by entity ID
+		if strings.HasPrefix(string(id), query) {
+			prefixMatches = append(prefixMatches, candidate{node, id})
 		}
 	}
 
-	return nil, "", nil
+	switch len(prefixMatches) {
+	case 0:
+		return nil, "", nil
+	case 1:
+		return &prefixMatches[0].node, prefixMatches[0].id, nil
+	default:
+		return nil, "", fmt.Errorf("ambiguous query %q matches %d runners", query, len(prefixMatches))
+	}
 }
 
 func (s *RegistrationServer) countNodeSchedules(ctx context.Context, nodeID entity.Id) (int, error) {
