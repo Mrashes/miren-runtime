@@ -68,7 +68,7 @@ func Rollback(ctx *Context, opts struct {
 		items[i] = ui.TablePickerItem{
 			ItemID: dep.AppVersionId(),
 			Columns: []string{
-				dep.AppVersionId(),
+				ui.DisplayShortID(dep.AppVersionShortId(), dep.AppVersionId()),
 				dep.Status(),
 				formatDeploymentTime(dep),
 				gitSha,

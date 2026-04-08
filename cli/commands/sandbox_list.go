@@ -47,12 +47,30 @@ func SandboxList(ctx *Context, opts struct {
 		return err
 	}
 
-	// Create a map of pool ID -> service
+	// Create maps of pool ID -> service and pool ID -> short ID
 	poolServiceMap := make(map[string]string)
+	poolShortIdMap := make(map[string]string)
 	for _, e := range poolsRes.Values() {
 		var pool compute_v1alpha.SandboxPool
 		pool.Decode(e.Entity())
 		poolServiceMap[pool.ID.String()] = pool.Service
+		poolShortIdMap[pool.ID.String()] = ui.BriefId(e.Entity())
+	}
+
+	// Build a map of version ID -> short ID
+	versionKindRes, err := eac.LookupKind(ctx, "app_version")
+	if err != nil {
+		return err
+	}
+	versionsRes, err := eac.List(ctx, versionKindRes.Attr())
+	if err != nil {
+		return err
+	}
+	versionShortIdMap := make(map[string]string)
+	for _, e := range versionsRes.Values() {
+		var v core_v1alpha.AppVersion
+		v.Decode(e.Entity())
+		versionShortIdMap[v.ID.String()] = ui.BriefId(e.Entity())
 	}
 
 	// Build a map of node entity ID -> human-readable name
@@ -221,9 +239,20 @@ func SandboxList(ctx *Context, opts struct {
 			sandboxId = ui.BriefId(e.Entity())
 		}
 
+		// Resolve version display: prefer short ID
+		versionDisplay := ui.DisplayAppVersion(sandbox.Spec.Version.String())
+		if shortId, ok := versionShortIdMap[sandbox.Spec.Version.String()]; ok {
+			versionDisplay = shortId
+		}
+
+		// Resolve pool display: prefer short ID
+		if shortId, ok := poolShortIdMap[poolLabel]; ok {
+			poolLabelDisplay = shortId
+		}
+
 		rows = append(rows, ui.Row{
 			sandboxId,
-			ui.DisplayAppVersion(sandbox.Spec.Version.String()),
+			versionDisplay,
 			service,
 			poolLabelDisplay,
 			address,

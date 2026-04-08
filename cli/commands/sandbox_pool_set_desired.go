@@ -8,6 +8,7 @@ import (
 	"miren.dev/runtime/api/compute/compute_v1alpha"
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
 	"miren.dev/runtime/pkg/entity"
+	"miren.dev/runtime/pkg/ui"
 )
 
 func SandboxPoolSetDesired(ctx *Context, opts struct {
@@ -68,7 +69,7 @@ func SandboxPoolSetDesired(ctx *Context, opts struct {
 	// Check if there's actually a change
 	if newDesired == pool.DesiredInstances {
 		ctx.Printf("Pool %s (service=%s) already has desired_instances=%d\n",
-			pool.ID.String(), pool.Service, pool.DesiredInstances)
+			ui.BriefId(getRes.Entity().Entity()), pool.Service, pool.DesiredInstances)
 		return nil
 	}
 
@@ -91,7 +92,7 @@ func SandboxPoolSetDesired(ctx *Context, opts struct {
 	}
 
 	ctx.Printf("Successfully updated sandbox pool:\n")
-	ctx.Printf("  Pool ID: %s\n", pool.ID.String())
+	ctx.Printf("  Pool ID: %s\n", ui.BriefId(getRes.Entity().Entity()))
 	ctx.Printf("  Service: %s\n", pool.Service)
 	ctx.Printf("  Previous desired_instances: %d\n", pool.DesiredInstances)
 	ctx.Printf("  New desired_instances: %d\n", newDesired)
