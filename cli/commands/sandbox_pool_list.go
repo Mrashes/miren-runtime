@@ -49,7 +49,9 @@ func SandboxPoolList(ctx *Context, opts struct {
 	for _, e := range versionsRes.Values() {
 		v := new(core_v1alpha.AppVersion)
 		v.Decode(e.Entity())
-		versionShortIdMap[v.ID.String()] = ui.BriefId(e.Entity())
+		if sid := e.Entity().ShortId(); sid != "" {
+			versionShortIdMap[v.ID.String()] = sid
+		}
 		if resolvedCfg, err := coreutil.ResolveConfig(ctx, eac, v); err == nil {
 			specMap[v.ID.String()] = resolvedCfg
 		}

@@ -54,7 +54,9 @@ func SandboxList(ctx *Context, opts struct {
 		var pool compute_v1alpha.SandboxPool
 		pool.Decode(e.Entity())
 		poolServiceMap[pool.ID.String()] = pool.Service
-		poolShortIdMap[pool.ID.String()] = ui.BriefId(e.Entity())
+		if sid := e.Entity().ShortId(); sid != "" {
+			poolShortIdMap[pool.ID.String()] = sid
+		}
 	}
 
 	// Build a map of version ID -> short ID (best-effort for display)
@@ -64,7 +66,9 @@ func SandboxList(ctx *Context, opts struct {
 			for _, e := range versionsRes.Values() {
 				var v core_v1alpha.AppVersion
 				v.Decode(e.Entity())
-				versionShortIdMap[v.ID.String()] = ui.BriefId(e.Entity())
+				if sid := e.Entity().ShortId(); sid != "" {
+					versionShortIdMap[v.ID.String()] = sid
+				}
 			}
 		}
 	}
