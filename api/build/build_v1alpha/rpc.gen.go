@@ -1089,8 +1089,9 @@ func (v *BuilderBuildFromTarArgs) UnmarshalJSON(data []byte) error {
 }
 
 type builderBuildFromTarResultsData struct {
-	Version    *string      `cbor:"0,keyasint,omitempty" json:"version,omitempty"`
-	AccessInfo **AccessInfo `cbor:"1,keyasint,omitempty" json:"access_info,omitempty"`
+	Version        *string      `cbor:"0,keyasint,omitempty" json:"version,omitempty"`
+	AccessInfo     **AccessInfo `cbor:"1,keyasint,omitempty" json:"access_info,omitempty"`
+	VersionShortId *string      `cbor:"2,keyasint,omitempty" json:"version_short_id,omitempty"`
 }
 
 type BuilderBuildFromTarResults struct {
@@ -1104,6 +1105,10 @@ func (v *BuilderBuildFromTarResults) SetVersion(version string) {
 
 func (v *BuilderBuildFromTarResults) SetAccessInfo(access_info **AccessInfo) {
 	v.data.AccessInfo = access_info
+}
+
+func (v *BuilderBuildFromTarResults) SetVersionShortId(version_short_id string) {
+	v.data.VersionShortId = &version_short_id
 }
 
 func (v *BuilderBuildFromTarResults) MarshalCBOR() ([]byte, error) {
@@ -1337,8 +1342,9 @@ func (v *BuilderBuildFromPreparedArgs) UnmarshalJSON(data []byte) error {
 }
 
 type builderBuildFromPreparedResultsData struct {
-	Version    *string      `cbor:"0,keyasint,omitempty" json:"version,omitempty"`
-	AccessInfo **AccessInfo `cbor:"1,keyasint,omitempty" json:"access_info,omitempty"`
+	Version        *string      `cbor:"0,keyasint,omitempty" json:"version,omitempty"`
+	AccessInfo     **AccessInfo `cbor:"1,keyasint,omitempty" json:"access_info,omitempty"`
+	VersionShortId *string      `cbor:"2,keyasint,omitempty" json:"version_short_id,omitempty"`
 }
 
 type BuilderBuildFromPreparedResults struct {
@@ -1352,6 +1358,10 @@ func (v *BuilderBuildFromPreparedResults) SetVersion(version string) {
 
 func (v *BuilderBuildFromPreparedResults) SetAccessInfo(access_info **AccessInfo) {
 	v.data.AccessInfo = access_info
+}
+
+func (v *BuilderBuildFromPreparedResults) SetVersionShortId(version_short_id string) {
+	v.data.VersionShortId = &version_short_id
 }
 
 func (v *BuilderBuildFromPreparedResults) MarshalCBOR() ([]byte, error) {
@@ -1587,6 +1597,17 @@ func (v *BuilderClientBuildFromTarResults) AccessInfo() *AccessInfo {
 	return *v.data.AccessInfo
 }
 
+func (v *BuilderClientBuildFromTarResults) HasVersionShortId() bool {
+	return v.data.VersionShortId != nil
+}
+
+func (v *BuilderClientBuildFromTarResults) VersionShortId() string {
+	if v.data.VersionShortId == nil {
+		return ""
+	}
+	return *v.data.VersionShortId
+}
+
 func (v BuilderClient) BuildFromTar(ctx context.Context, application string, tardata stream.RecvStream[[]byte], status stream.SendStream[*Status], envVars []*EnvironmentVariable) (*BuilderClientBuildFromTarResults, error) {
 	args := BuilderBuildFromTarArgs{}
 	caps := map[rpc.OID]*rpc.InlineCapability{}
@@ -1704,6 +1725,17 @@ func (v *BuilderClientBuildFromPreparedResults) AccessInfo() *AccessInfo {
 		return nil
 	}
 	return *v.data.AccessInfo
+}
+
+func (v *BuilderClientBuildFromPreparedResults) HasVersionShortId() bool {
+	return v.data.VersionShortId != nil
+}
+
+func (v *BuilderClientBuildFromPreparedResults) VersionShortId() string {
+	if v.data.VersionShortId == nil {
+		return ""
+	}
+	return *v.data.VersionShortId
 }
 
 func (v BuilderClient) BuildFromPrepared(ctx context.Context, session_id string, tardata stream.RecvStream[[]byte], status stream.SendStream[*Status], envVars []*EnvironmentVariable) (*BuilderClientBuildFromPreparedResults, error) {

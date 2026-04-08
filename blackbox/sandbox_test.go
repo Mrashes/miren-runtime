@@ -16,8 +16,9 @@ func TestSandboxList(t *testing.T) {
 		Testdata: "go-server",
 	})
 
-	// List sandboxes — our app's sandbox should appear in the output
-	r := m.MustRun("sandbox", "list")
+	// List sandboxes — our app's sandbox should appear in the output.
+	// Use JSON format since the table view shows short IDs, not app names.
+	r := m.MustRun("sandbox", "list", "--format", "json")
 	r.RequireContains(t, name)
 }
 

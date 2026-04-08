@@ -43,11 +43,15 @@ func SandboxPoolList(ctx *Context, opts struct {
 		return err
 	}
 
-	// Build resolved config spec map for lookup
+	// Build resolved config spec map and version short ID map for lookup
 	specMap := make(map[string]*core_v1alpha.ConfigSpec)
+	versionShortIdMap := make(map[string]string)
 	for _, e := range versionsRes.Values() {
 		v := new(core_v1alpha.AppVersion)
 		v.Decode(e.Entity())
+		if sid := e.Entity().ShortId(); sid != "" {
+			versionShortIdMap[v.ID.String()] = sid
+		}
 		if resolvedCfg, err := coreutil.ResolveConfig(ctx, eac, v); err == nil {
 			specMap[v.ID.String()] = resolvedCfg
 		}
@@ -83,9 +87,14 @@ func SandboxPoolList(ctx *Context, opts struct {
 			}
 		}
 
+		versionDisplay := ui.DisplayAppVersion(pool.SandboxSpec.Version.String())
+		if shortId, ok := versionShortIdMap[pool.SandboxSpec.Version.String()]; ok {
+			versionDisplay = shortId
+		}
+
 		rows = append(rows, ui.Row{
 			ui.BriefId(e.Entity()),
-			ui.DisplayAppVersion(pool.SandboxSpec.Version.String()),
+			versionDisplay,
 			pool.Service,
 			mode,
 			fmt.Sprintf("%d", pool.DesiredInstances),
