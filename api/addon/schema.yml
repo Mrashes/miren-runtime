@@ -11,6 +11,8 @@ kinds:
       type: string
     default_variant:
       type: string
+    default_version:
+      type: string
     locality_mode:
       type: string
     variants:
@@ -40,6 +42,8 @@ kinds:
       indexed: true
     variant:
       type: string
+    version:
+      type: string
     status:
       type: string
       indexed: true
@@ -61,6 +65,8 @@ kinds:
       type: string
       indexed: true
     variant:
+      type: string
+    image:
       type: string
     sandbox_pool:
       type: ref
@@ -90,6 +96,8 @@ kinds:
       type: string
       indexed: true
     variant:
+      type: string
+    image:
       type: string
     sandbox_pool:
       type: ref

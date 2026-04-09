@@ -28,7 +28,8 @@ const (
 // --- EnsureSharedServerSaga Actions ---
 
 type CreateSharedServerEntityIn struct {
-	RootPassword string
+	RootPassword  string
+	VariantConfig map[string]string
 }
 
 type CreateSharedServerEntityOut struct {
@@ -41,6 +42,7 @@ func CreateSharedServerEntity(ctx context.Context, in CreateSharedServerEntityIn
 	server := &addon_v1alpha.MysqlServer{
 		AddonName:        AddonName,
 		Variant:          "shared",
+		Image:            in.VariantConfig[addon.ConfigImage],
 		Status:           "provisioning",
 		AssociationCount: 0,
 		RootPassword:     in.RootPassword,
@@ -60,7 +62,8 @@ func UndoCreateSharedServerEntity(ctx context.Context, in CreateSharedServerEnti
 }
 
 type CreateSharedPoolIn struct {
-	RootPassword string
+	RootPassword  string
+	VariantConfig map[string]string
 }
 
 type CreateSharedPoolOut struct {
@@ -89,9 +92,14 @@ func CreateSharedPool(ctx context.Context, in CreateSharedPoolIn) (CreateSharedP
 
 	diskName := sharedDiskNameForPassword(in.RootPassword)
 
+	image := in.VariantConfig[addon.ConfigImage]
+	if image == "" {
+		image = BaseImage + ":" + DefaultVersion
+	}
+
 	poolID, err := fw.CreateSandboxPool(ctx, addon.CreateSandboxPoolSpec{
 		Name:             sharedServerName,
-		Image:            DefaultImage,
+		Image:            image,
 		Env:              env,
 		Ports:            mysqlContainerPorts(),
 		DesiredInstances: 1,
@@ -178,7 +186,8 @@ func RegisterEnsureSharedServerSaga(registry *saga.Registry, fw *addon.ProviderF
 // --- Shared Provisioning Saga Actions ---
 
 type FindOrCreateSharedServerIn struct {
-	AppName string
+	AppName       string
+	VariantConfig map[string]string
 }
 
 type FindOrCreateSharedServerOut struct {
@@ -231,6 +240,12 @@ func FindOrCreateSharedServer(ctx context.Context, in FindOrCreateSharedServerIn
 				}
 				break
 			}
+			requestedImage := in.VariantConfig[addon.ConfigImage]
+			if server.Image != "" && requestedImage != "" && server.Image != requestedImage {
+				return FindOrCreateSharedServerOut{}, fmt.Errorf(
+					"shared MySQL server is running %s but version %s was requested; shared servers do not support mixed versions",
+					server.Image, requestedImage)
+			}
 			return FindOrCreateSharedServerOut{
 				ServerID:     server.ID,
 				RootPassword: server.RootPassword,
@@ -259,6 +274,7 @@ func FindOrCreateSharedServer(ctx context.Context, in FindOrCreateSharedServerIn
 
 	result, err := saga.RunNested(ctx, "ensure-shared-mysql-server",
 		saga.WithNestedInput("rootpassword", rootPassword),
+		saga.WithNestedInput("variantconfig", in.VariantConfig),
 	)
 	if err != nil {
 		return FindOrCreateSharedServerOut{}, fmt.Errorf("ensuring shared server: %w", err)
@@ -679,6 +695,7 @@ func (p *Provider) provisionShared(ctx context.Context, app addon.App, variant a
 
 	err := executor.Start("provision-shared-mysql").
 		Input("appname", app.Name).
+		Input("variantconfig", variant.Config).
 		Execute(ctx)
 	if err != nil {
 		return nil, err

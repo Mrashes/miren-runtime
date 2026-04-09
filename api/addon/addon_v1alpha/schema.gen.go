@@ -7,6 +7,7 @@ import (
 
 const (
 	AddonDefaultVariantId = entity.Id("dev.miren.addon/addon.default_variant")
+	AddonDefaultVersionId = entity.Id("dev.miren.addon/addon.default_version")
 	AddonDescriptionId    = entity.Id("dev.miren.addon/addon.description")
 	AddonDisplayNameId    = entity.Id("dev.miren.addon/addon.display_name")
 	AddonLocalityModeId   = entity.Id("dev.miren.addon/addon.locality_mode")
@@ -17,6 +18,7 @@ const (
 type Addon struct {
 	ID             entity.Id  `json:"id"`
 	DefaultVariant string     `cbor:"default_variant,omitempty" json:"default_variant,omitempty"`
+	DefaultVersion string     `cbor:"default_version,omitempty" json:"default_version,omitempty"`
 	Description    string     `cbor:"description,omitempty" json:"description,omitempty"`
 	DisplayName    string     `cbor:"display_name,omitempty" json:"display_name,omitempty"`
 	LocalityMode   string     `cbor:"locality_mode,omitempty" json:"locality_mode,omitempty"`
@@ -28,6 +30,9 @@ func (o *Addon) Decode(e entity.AttrGetter) {
 	o.ID = entity.MustGet(e, entity.DBId).Value.Id()
 	if a, ok := e.Get(AddonDefaultVariantId); ok && a.Value.Kind() == entity.KindString {
 		o.DefaultVariant = a.Value.String()
+	}
+	if a, ok := e.Get(AddonDefaultVersionId); ok && a.Value.Kind() == entity.KindString {
+		o.DefaultVersion = a.Value.String()
 	}
 	if a, ok := e.Get(AddonDescriptionId); ok && a.Value.Kind() == entity.KindString {
 		o.Description = a.Value.String()
@@ -70,6 +75,9 @@ func (o *Addon) Encode() (attrs []entity.Attr) {
 	if !entity.Empty(o.DefaultVariant) {
 		attrs = append(attrs, entity.String(AddonDefaultVariantId, o.DefaultVariant))
 	}
+	if !entity.Empty(o.DefaultVersion) {
+		attrs = append(attrs, entity.String(AddonDefaultVersionId, o.DefaultVersion))
+	}
 	if !entity.Empty(o.Description) {
 		attrs = append(attrs, entity.String(AddonDescriptionId, o.Description))
 	}
@@ -93,6 +101,9 @@ func (o *Addon) Empty() bool {
 	if !entity.Empty(o.DefaultVariant) {
 		return false
 	}
+	if !entity.Empty(o.DefaultVersion) {
+		return false
+	}
 	if !entity.Empty(o.Description) {
 		return false
 	}
@@ -113,6 +124,7 @@ func (o *Addon) Empty() bool {
 
 func (o *Addon) InitSchema(sb *schema.SchemaBuilder) {
 	sb.String("default_variant", "dev.miren.addon/addon.default_variant")
+	sb.String("default_version", "dev.miren.addon/addon.default_version")
 	sb.String("description", "dev.miren.addon/addon.description")
 	sb.String("display_name", "dev.miren.addon/addon.display_name")
 	sb.String("locality_mode", "dev.miren.addon/addon.locality_mode")
@@ -233,6 +245,7 @@ const (
 	AddonAssociationStatusId       = entity.Id("dev.miren.addon/addon_association.status")
 	AddonAssociationVariablesId    = entity.Id("dev.miren.addon/addon_association.variables")
 	AddonAssociationVariantId      = entity.Id("dev.miren.addon/addon_association.variant")
+	AddonAssociationVersionId      = entity.Id("dev.miren.addon/addon_association.version")
 )
 
 type AddonAssociation struct {
@@ -243,6 +256,7 @@ type AddonAssociation struct {
 	Status       string      `cbor:"status,omitempty" json:"status,omitempty"`
 	Variables    []Variables `cbor:"variables,omitempty" json:"variables,omitempty"`
 	Variant      string      `cbor:"variant,omitempty" json:"variant,omitempty"`
+	Version      string      `cbor:"version,omitempty" json:"version,omitempty"`
 }
 
 func (o *AddonAssociation) Decode(e entity.AttrGetter) {
@@ -268,6 +282,9 @@ func (o *AddonAssociation) Decode(e entity.AttrGetter) {
 	}
 	if a, ok := e.Get(AddonAssociationVariantId); ok && a.Value.Kind() == entity.KindString {
 		o.Variant = a.Value.String()
+	}
+	if a, ok := e.Get(AddonAssociationVersionId); ok && a.Value.Kind() == entity.KindString {
+		o.Version = a.Value.String()
 	}
 }
 
@@ -306,6 +323,9 @@ func (o *AddonAssociation) Encode() (attrs []entity.Attr) {
 	if !entity.Empty(o.Variant) {
 		attrs = append(attrs, entity.String(AddonAssociationVariantId, o.Variant))
 	}
+	if !entity.Empty(o.Version) {
+		attrs = append(attrs, entity.String(AddonAssociationVersionId, o.Version))
+	}
 	attrs = append(attrs, entity.Ref(entity.EntityKind, KindAddonAssociation))
 	return
 }
@@ -329,6 +349,9 @@ func (o *AddonAssociation) Empty() bool {
 	if !entity.Empty(o.Variant) {
 		return false
 	}
+	if !entity.Empty(o.Version) {
+		return false
+	}
 	return true
 }
 
@@ -340,6 +363,7 @@ func (o *AddonAssociation) InitSchema(sb *schema.SchemaBuilder) {
 	sb.Component("variables", "dev.miren.addon/addon_association.variables", schema.Many)
 	(&Variables{}).InitSchema(sb.Builder("addon_association.variables"))
 	sb.String("variant", "dev.miren.addon/addon_association.variant")
+	sb.String("version", "dev.miren.addon/addon_association.version")
 }
 
 const (
@@ -606,6 +630,7 @@ func (o *MysqlDedicatedData) InitSchema(sb *schema.SchemaBuilder) {
 const (
 	MysqlServerAddonNameId        = entity.Id("dev.miren.addon/mysql_server.addon_name")
 	MysqlServerAssociationCountId = entity.Id("dev.miren.addon/mysql_server.association_count")
+	MysqlServerImageId            = entity.Id("dev.miren.addon/mysql_server.image")
 	MysqlServerRootPasswordId     = entity.Id("dev.miren.addon/mysql_server.root_password")
 	MysqlServerSandboxPoolId      = entity.Id("dev.miren.addon/mysql_server.sandbox_pool")
 	MysqlServerServiceId          = entity.Id("dev.miren.addon/mysql_server.service")
@@ -617,6 +642,7 @@ type MysqlServer struct {
 	ID               entity.Id `json:"id"`
 	AddonName        string    `cbor:"addon_name,omitempty" json:"addon_name,omitempty"`
 	AssociationCount int64     `cbor:"association_count,omitempty" json:"association_count,omitempty"`
+	Image            string    `cbor:"image,omitempty" json:"image,omitempty"`
 	RootPassword     string    `cbor:"root_password,omitempty" json:"root_password,omitempty"`
 	SandboxPool      entity.Id `cbor:"sandbox_pool,omitempty" json:"sandbox_pool,omitempty"`
 	Service          entity.Id `cbor:"service,omitempty" json:"service,omitempty"`
@@ -631,6 +657,9 @@ func (o *MysqlServer) Decode(e entity.AttrGetter) {
 	}
 	if a, ok := e.Get(MysqlServerAssociationCountId); ok && a.Value.Kind() == entity.KindInt64 {
 		o.AssociationCount = a.Value.Int64()
+	}
+	if a, ok := e.Get(MysqlServerImageId); ok && a.Value.Kind() == entity.KindString {
+		o.Image = a.Value.String()
 	}
 	if a, ok := e.Get(MysqlServerRootPasswordId); ok && a.Value.Kind() == entity.KindString {
 		o.RootPassword = a.Value.String()
@@ -672,6 +701,9 @@ func (o *MysqlServer) Encode() (attrs []entity.Attr) {
 	if !entity.Empty(o.AssociationCount) {
 		attrs = append(attrs, entity.Int64(MysqlServerAssociationCountId, o.AssociationCount))
 	}
+	if !entity.Empty(o.Image) {
+		attrs = append(attrs, entity.String(MysqlServerImageId, o.Image))
+	}
 	if !entity.Empty(o.RootPassword) {
 		attrs = append(attrs, entity.String(MysqlServerRootPasswordId, o.RootPassword))
 	}
@@ -698,6 +730,9 @@ func (o *MysqlServer) Empty() bool {
 	if !entity.Empty(o.AssociationCount) {
 		return false
 	}
+	if !entity.Empty(o.Image) {
+		return false
+	}
 	if !entity.Empty(o.RootPassword) {
 		return false
 	}
@@ -719,6 +754,7 @@ func (o *MysqlServer) Empty() bool {
 func (o *MysqlServer) InitSchema(sb *schema.SchemaBuilder) {
 	sb.String("addon_name", "dev.miren.addon/mysql_server.addon_name", schema.Indexed)
 	sb.Int64("association_count", "dev.miren.addon/mysql_server.association_count")
+	sb.String("image", "dev.miren.addon/mysql_server.image")
 	sb.String("root_password", "dev.miren.addon/mysql_server.root_password")
 	sb.Ref("sandbox_pool", "dev.miren.addon/mysql_server.sandbox_pool")
 	sb.Ref("service", "dev.miren.addon/mysql_server.service")
@@ -804,6 +840,7 @@ func (o *MysqlSharedData) InitSchema(sb *schema.SchemaBuilder) {
 const (
 	PostgresServerAddonNameId         = entity.Id("dev.miren.addon/postgres_server.addon_name")
 	PostgresServerAssociationCountId  = entity.Id("dev.miren.addon/postgres_server.association_count")
+	PostgresServerImageId             = entity.Id("dev.miren.addon/postgres_server.image")
 	PostgresServerSandboxPoolId       = entity.Id("dev.miren.addon/postgres_server.sandbox_pool")
 	PostgresServerServiceId           = entity.Id("dev.miren.addon/postgres_server.service")
 	PostgresServerStatusId            = entity.Id("dev.miren.addon/postgres_server.status")
@@ -815,6 +852,7 @@ type PostgresServer struct {
 	ID                entity.Id `json:"id"`
 	AddonName         string    `cbor:"addon_name,omitempty" json:"addon_name,omitempty"`
 	AssociationCount  int64     `cbor:"association_count,omitempty" json:"association_count,omitempty"`
+	Image             string    `cbor:"image,omitempty" json:"image,omitempty"`
 	SandboxPool       entity.Id `cbor:"sandbox_pool,omitempty" json:"sandbox_pool,omitempty"`
 	Service           entity.Id `cbor:"service,omitempty" json:"service,omitempty"`
 	Status            string    `cbor:"status,omitempty" json:"status,omitempty"`
@@ -829,6 +867,9 @@ func (o *PostgresServer) Decode(e entity.AttrGetter) {
 	}
 	if a, ok := e.Get(PostgresServerAssociationCountId); ok && a.Value.Kind() == entity.KindInt64 {
 		o.AssociationCount = a.Value.Int64()
+	}
+	if a, ok := e.Get(PostgresServerImageId); ok && a.Value.Kind() == entity.KindString {
+		o.Image = a.Value.String()
 	}
 	if a, ok := e.Get(PostgresServerSandboxPoolId); ok && a.Value.Kind() == entity.KindId {
 		o.SandboxPool = a.Value.Id()
@@ -870,6 +911,9 @@ func (o *PostgresServer) Encode() (attrs []entity.Attr) {
 	if !entity.Empty(o.AssociationCount) {
 		attrs = append(attrs, entity.Int64(PostgresServerAssociationCountId, o.AssociationCount))
 	}
+	if !entity.Empty(o.Image) {
+		attrs = append(attrs, entity.String(PostgresServerImageId, o.Image))
+	}
 	if !entity.Empty(o.SandboxPool) {
 		attrs = append(attrs, entity.Ref(PostgresServerSandboxPoolId, o.SandboxPool))
 	}
@@ -896,6 +940,9 @@ func (o *PostgresServer) Empty() bool {
 	if !entity.Empty(o.AssociationCount) {
 		return false
 	}
+	if !entity.Empty(o.Image) {
+		return false
+	}
 	if !entity.Empty(o.SandboxPool) {
 		return false
 	}
@@ -917,6 +964,7 @@ func (o *PostgresServer) Empty() bool {
 func (o *PostgresServer) InitSchema(sb *schema.SchemaBuilder) {
 	sb.String("addon_name", "dev.miren.addon/postgres_server.addon_name", schema.Indexed)
 	sb.Int64("association_count", "dev.miren.addon/postgres_server.association_count")
+	sb.String("image", "dev.miren.addon/postgres_server.image")
 	sb.Ref("sandbox_pool", "dev.miren.addon/postgres_server.sandbox_pool")
 	sb.Ref("service", "dev.miren.addon/postgres_server.service")
 	sb.String("status", "dev.miren.addon/postgres_server.status")
@@ -1424,5 +1472,5 @@ func init() {
 		(&ValkeyDedicatedData{}).InitSchema(sb)
 		(&ValkeyServer{}).InitSchema(sb)
 	})
-	schema.RegisterEncodedSchema("dev.miren.addon", "v1alpha", []byte("\x1f\x8b\b\x00\x00\x00\x00\x00\x00\xff\xac\x99\xd9\xce\xeb&\x10ǟ\xa3\xfb\xbeW9:mժOc\x11C\x12\x1a\xdb\xf8\x03\xe2\xf3岭\xd4>H\x97˾]{]\x19\x92\x18fX\xeds\x139#\xf8\x19\x86\xff\f0\xfe\x93\x0e\xa4g\x82\xb2i\xd7sɆ\x1d\xa1T\f\xec\xcc\a\xaa\xfey~\x13\xd8_\xccv\xfb\xf8\xb7\xe9x\x81\r\x9c\xee\xff\x1d\xa8\xe8\t\x1f \xfcpଣ\xea\xb7?\xf6\x9c>\x7f\x12\x04\xec(;\x90K\xa7\x9b\x89HN\x06}\x1f\xa4o\xd4ב\x1d\x94\x96|8\x1a\xd6\a1\x96j%\x1f5\x17\x83\xe1\x9c]\x03d|\x18ap5v\xe4\xda\xcc\xfd\r\xa4\xf3,\x90\xf2Q\x98҉\x96t\\_\x9b^P\x8b\xe9}\x13\xe4 \xff[\xcec\x14\x14\xbe\xfd\xaf\xb9\u05fb\xe1^7\xb7)ړ\xe1\xfa\xaf\xe9zz\xd8f\x06oE?\x8a\x81\rzy\xb2ˌ\x90;\x1fY\xb4࿚)}\f\awg\x14\xaf\x93\x99\xe3\xfb\t\x8c&\xbcsgy\xbc\x9b2\x93\xfc4=\xc9;\xb9h\xb2\xbf\x98ɾ\x05GyC\xec\xce\xecj\xde\xd9\xce\x0fp\xd5߉\xf5\x9aHw\xb1k\xce\xec\xa3\xd3\xf381\xa9\xb8\x18\x8e\xd3Kҍ'ҍ\x92\xf7D^\x9by\xb4w\x0f\x84\xf1\x8f\t\xc6u\x95\xa4?T\x94l\xc5\xcc\xcbp\x90\x9a\x94\xd2_\xd5S\xd7(&'&o\xab\xf16l\xe8\xb6)Z\x83\xdf\xcdt?Kq\xaci\t럜\xffpYvi\x90R\xa2\xe5d\x16kӊ\xcb-g=a\xf3\x8cm\xf9\xa0\r\xf3\xcb$S\n\xa1\x9b\x91(\xf5JHj\xf3\x85o\x82C\xfc\"\x89Sd\xa0{\xf1܌Bt6\x89y\x96\x19\xb6\xe74\x1c\xa5>\x88ɉ\xb7\xd6c\xc7\xfb\x1f\xb7;\xca\x7f~wM\xf4E\x99އ\xdb3\x9cH\xfa\xfd\xee\xaep\f\xec\x06I\x1dv.\n\xe7{#ǉtgv\xf5\xf5\x18\b\x1b\xa7Q\x85 ?O\x82j\x14\xf9\"CZ%I\x98\x05\x01ԓ\xe3)\xaaD$l\x9fR!EtB\x00\xa4\x9c\x16\x03\x1b\x8e\xd7?/\xc6\xcc\b6\xa9\xb1\xf7Xx\xb06;\xb2\xbe%\xed\x89\xf9\x82|\x0fň߬\xe2\x14\x86Ӑ\x8f\xaa\x11\xe5\xcb,k\x95,\xbf\xcea+$\x85\xb7\x04\xc8ʉ\n\x05\t\"\xe4e\x95\x1d\xc5&a\t@\x8bHk\x14J\x1f%S\x19i\x81f\x15\xd9\x0eI\v\xa06I\v\xb1^\x8f\xb4 v\x8b\xb4\x10\xabZZ\x88\x90\x97\xd67Y\xc6ed\xf2\xa2\x98\xf4\x8f\x172`\xcf\xca\x16\xb2\xb7\xc9\x16\xd0\"\xb2\x95d\xbf\xe7\xba\x7f\xca\xc8\x164\xdb\"[\x80\xda$[\xc4Z%[t\x8e\x80\xd8\u00ad\x1a\xc9\x1fr\xb6\xc8\x1f\xb1\xaa\xe5\x8f\b+2+dl\x93(\xa0\xe1!/U\x92\xc6YÛH\xc3U\n\xb7a\xc5ƍf\x8a`\xd6n/\x8d\xf61y\xb8\n\xf4\x1fG{U\x9d\x1fܾ\xe8\xf4\x89\xfb2)\x85lz\xa6\x149\xde\n\x1e\xbe\t\xae\x1c\xd24f\xa6\xd7\xdf\x14\a\xbe\xcaS̢\xef;\xe6\xd6\t\xf8b\xccT\n\xe0\v\xf0b//\xa8\xa8\x8d\x84o\xe63$]0@\u05ed\xa5\x9fb\x83\xe2\x9aO\xd6\xfb|\xf9;3\xe8^\x88\xce\x10P\xe6\\\b\xab\x8b\x0e\x8b;\xc3wӈ\xcfֆ\xe5\x13\xe2E\x02\xf3v\xff;\x11\xc9hC\x89&\xb1\xc0D\r+\x96\x12\x05\a\x82\xed\xe6\x9f=Ql\xd9Dz\xdfTZ\x80p\x98\xee\xdd֦j\xcf\xe2\x86o\xac\xf4\xe0\xd0\xe6\x83\xc0cp\xa7ǿ\xe2\x15AD,\x02gE(\xa3\xbc%\xda_\x94H!\xc0o[\xb4.?Gn'\x01^\xa1\x1b\x93\x93\xd7!0v\xba[n\b: v\xf9\\\xed\x81o\x8b\x80~\tĪ\xd37\x958\xe1\x12d\xe3\xfc\xec]E\x82\xc1\x19=\x15\xaf\x8e\xd0\xefʈ\xf5a\xfa}!\x18\x9ct\xed7\x0ehLn\xb8\x11\xf0ư\x9d\xc2X|N\xf4k\x13A\xf5\xc6︫\xf5\xfbC!\x12VM\xac\x7f\xa1\xb1Dů\"o\x88x\xe4q<,\xf3H\xa4\xf9\x16\x8fD\x90\xf0\xd6d=\x02\x8dE\x1e\x89\xbc\x01oQ0\xb2\x83>A\xbbB\xb4C\x85W~,\x86VEb\xd2/\xcfoD_\x02\xfb\x9d\xd5IH\xdd\xd8\x0f\xad\xb7o#\x89ϭ~\xd5:\xff\x11\x05\xd4\x15\v\xca܅\x05#Ъ\xf0\xbe\x0eZ\xa1+T\xd1-\xbf\xf8\x84\x87\xda\x05N\"\x85g\xc3\xf06^~\x8c\x89\xec\x80\x15\xe7\x80X:\xae\xd9D+3X\xa4u4\xea\xab\xf2`\"Fj\xd3\xc7\xff\x00\x00\x00\xff\xff\x01\x00\x00\xff\xff\x94\x7f:8\xbd \x00\x00"))
+	schema.RegisterEncodedSchema("dev.miren.addon", "v1alpha", []byte("\x1f\x8b\b\x00\x00\x00\x00\x00\x00\xff\xa4\x99\xd9\xce\xeb&\x10ǟ\xa3\xfb\xbeW9:mժOc\x11C\x1c\x1a\xdb\xf8\x03\xe2\xf3岭\xd4\xf6=\xba\\\xf6\xed\xda\xeb#\x1b'\x86\x19V\xfb&rF\xf030\xff\x19`\xfc\x17\xedI\xc7\x04e\xe3\xa1\xe3\x92\xf5\aB\xa9\xe8م\xf7T\xfd\xfb\xfc&\xb0\xbf\x98\xec\xe6\xf1\x9f\xb9\xe3\x156\xb0\xba\xff\x7f\xa2\xa2#\xbc\x87\xf0Ӊ\xb3\x96\xaa\xdf\xff<r\xfa\xfc\x89\x17p\xa0\xecD\xae\xad\xaeF\"9\xe9\xf5}\x90\xaeQ\xdf\x06vRZ\xf2\xbe\xc9b1\xa9\xb8\xe8\x01k1B\xd6\a!\x96\xaa%\x1f\xf4\x9ds\xb1\r\x90\xf1a\x80\xc1\xd5В[5\xf5\x9f!\xadc\x81\x94\x8f\xfc\x94VԤ\xe5\xfaVu\x82\x1aL\xe7\x9a \a\xf9\xd2p\x1e\xa3\xa0\xf0\xed\x7fO\xbd\xde\xf5\xf7Z\\\xa0hG\xfa\xdb\x7fs\xd7\xf3\xc361x-\xbaA\xf4\xac\xd7듑\fB\x1e\\d\x96x~\x9d\xa7\xf41\x1cܝ\x91\xed\xa7y\x8e\xefG0\x9a\xf0֞es7%&\xf9i|\x92wr\xd6d\x7f\x99'\xfb\x16\x1c\xe5\x828\\\xd8m~g==@\xaf\xbf\x13\xea5\x92\xf6j|\xcẹճY\xa2\xa2\x19_\x92v8\x93v\x90\xbc#\xf2VM\xa3\xbd\xaf\x80\x1f\xff\x98`XWQ\xfaCE\xd1Vl~\x19\x0e\xd29=u7\xf5\xd4V\x8aɑ\xc9\xc5\x1boÆv\x9b,\x1f\xfc1O\xf7\xb3\x18ǘְ\xfe\xc9\xfa\x0f\xddr\x88\x83\x94\x125'\x93X\xabZ\\\x97\xfc\xf7\x84\xcd\x13\xb6\xe6\xbd\xf6\xa7\x1b\x87\xc9;\xd2,\xfe6\x8fpH_F\xbbK!t5\x10\xa5^\tIM\xbaqM\x10\xf7E\x14\xa7HO\x8f\xe2\xb9\x1a\x84hM\x0et,\x13\xecȩ?\xc8]\x10\x93#\xaf\xcdĚ\xfb\x1f\xbb;J\x9fnwM\xf4UͽO\xcb3\x9cH\xfc\xfd\xf6\x06\xd5x6\xa6\xa8\x8c[\x1b\x85\xfd7\xaby$\xed\x85\xdd\\9{\xa2\xcejT\xb0\xfb~\x1e\x05\x95\b\xfaE\x82\xb4I\xd10\x89\x02\xa8#\xc7sP\x89H\xd8.\xa5@\x8a\xe8\x80\x01H)-z\xf6+\xa7\x7fZ\x8c\x89\x11\xecRc\xe7\xb0\xf0`Mre]M\xea3s\x05\xf9\x1e\x8a\x11\xb7Y\x96$\x7f\v\xa4!\x17U\"ʗI\xd6&Y~\x9d\xc2\x16H\n\xef(\x90\x95\x12\x15\n\x12DH\xcb*9\x8a]\xc2\x12\x80\x16\x90\xd6 \x94n$S\ti\x81f\x05\xbb7\x92\x16@\xed\x92\x16bm\x92\x16\x8ao\x88Mn\xe3H\x9c\x90\xb0G\x9c\x88U,NDH\x8b\xf3\x9b$\xe3:0yUL\xba\a\x14\xe9\xb1'\x85\x0f\xd9\xfb\x84\x0fh\x01\xe1Kr<r\xdd=%\x84\x0f\x9a\x15l\xf3H\xf8\x00\xb5K\xf8\x88\xb5I\xf8\xe8$\x02\xb1\x99\x9b=\x92?\xe4\xec\x91?b\x15\xcb\x1f\x116\xe4f\xc8\xd8'Q@\xc3C^K>\x95\xe5\xc3E\xa4\xfe2\x89ݰ@\xa6h\xa6\bf\xec&\xfd\x99\xc7\xe8\xf1\xcc\xd3\x7f\x18\xcc]yz\xb0\xfb\xa2\xf3+\xeeˤ\x14\xb2\xea\x98R\xf7\x14ܹ&\xe89\xa4ǐ\xfb\x7f\xaeN|\x95\xa6\xccN?\xb6\xcc.T\xf0\u0558(U\xc0\x17`g\xaf/((\xce\xf8K\x03\x13$^\xb1@\x17\xb6\xb5\x9fb\xbd⚏f\xf5\xf9\xfawbУ\x10\xedL@\x99s%l\xaez\xac\xcb\xe9\xbf\xdd\x06\xd6,\x12\x96\xd9\x1c\xabl\xd9xʕ\xd1a?!^ \xc0\x97\x9b\xe8\x99HF+J4\t\x058jX \t\x14d\bv\x98~\x8eD\xb1u3\xea\\Sn%\xc5bڷl\x93\xf2\x1d\x8b\x9d\x06BE\x10\x8b6\x1d(\x1e\x83;?\xfee{\x04\x11\xb1\b,\x8fPFyM\xb4\xeb\x94@I\xc2m\x9b嗟\x03\xf7$\x0f/s\x19\xa3\x93\xd7>0^t\xbb\xf0\xe1]\x80\xd05x\xf3\n|\x9b\x05t\x8b1F\x9d\xae)g\x11\xae^6\xce\xf3Υ\xc8\x1b\x9c\xc1\xd3\xf5\xe6\b\xfd.\x8fX\x1e\xa6\xdfg\x82\xc1\x89\xd9|\xac\x81\xc6\xe8\xc6\x1d\x00\xef\f\xdbя\xc5\xe7M\xb7J\xe2Uo\xf8\xb6\xbdY\xbf?d\"a\xfdƬ/4\xe6\xa8\xf8U\xe0\r\x81\x15y\x1c3\xf3V$\xd0|ϊ\x04\x90\xf0\xf6eV\x04\x1a\xb3V$\xf0\x06\xbcE\xc1\xc8\xf6\xae\t\xda\x15\x82\x1d\nV\xe5\xc7lhQ$F\xd7\xe5\xf9\x8d\xe0K`\xbf\x8b:\v\xa9+\xf3\xf5y\xf9\xc8\x13\xf9\x06\xed\xd6\xcf\xd3_\x83@\x853\xa3\xe0\x9eY\xba\x02\xad2\xef\xfd\xa0\x15\xba\x8aeU\v\xb2Ox\xa8\x9d\xe7$\x92y6\xf4o\xe3\xf9ǘ\xc0\x0eXp\x0e\b\xa5\xe3\x92M\xb40\x83\x05Z\a\xa3\xbe(\x0fFb\xa44}\xbc\x06\x00\x00\xff\xff\x01\x00\x00\xff\xffY\xa6,A\xd2!\x00\x00"))
 }

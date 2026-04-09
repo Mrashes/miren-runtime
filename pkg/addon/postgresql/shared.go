@@ -40,6 +40,7 @@ const (
 
 type CreateSharedServerEntityIn struct {
 	SuperuserPassword string
+	VariantConfig     map[string]string
 }
 
 type CreateSharedServerEntityOut struct {
@@ -52,6 +53,7 @@ func CreateSharedServerEntity(ctx context.Context, in CreateSharedServerEntityIn
 	server := &addon_v1alpha.PostgresServer{
 		AddonName:         AddonName,
 		Variant:           "shared",
+		Image:             in.VariantConfig[addon.ConfigImage],
 		Status:            "provisioning",
 		AssociationCount:  0,
 		SuperuserPassword: in.SuperuserPassword,
@@ -72,6 +74,7 @@ func UndoCreateSharedServerEntity(ctx context.Context, in CreateSharedServerEnti
 
 type CreateSharedPoolIn struct {
 	SuperuserPassword string
+	VariantConfig     map[string]string
 }
 
 type CreateSharedPoolOut struct {
@@ -105,9 +108,14 @@ func CreateSharedPool(ctx context.Context, in CreateSharedPoolIn) (CreateSharedP
 
 	diskName := sharedDiskNameForPassword(in.SuperuserPassword)
 
+	image := in.VariantConfig[addon.ConfigImage]
+	if image == "" {
+		image = BaseImage + ":" + DefaultVersion
+	}
+
 	poolID, err := fw.CreateSandboxPool(ctx, addon.CreateSandboxPoolSpec{
 		Name:             sharedServerName,
-		Image:            DefaultImage,
+		Image:            image,
 		Env:              env,
 		Ports:            postgresContainerPorts(),
 		DesiredInstances: 1,
@@ -200,7 +208,8 @@ func RegisterEnsureSharedServerSaga(registry *saga.Registry, fw *addon.ProviderF
 // as a nested saga to create the server entity, sandbox pool, and service.
 
 type FindOrCreateSharedServerIn struct {
-	AppName string
+	AppName       string
+	VariantConfig map[string]string
 }
 
 type FindOrCreateSharedServerOut struct {
@@ -263,6 +272,12 @@ func FindOrCreateSharedServer(ctx context.Context, in FindOrCreateSharedServerIn
 				}
 				break
 			}
+			requestedImage := in.VariantConfig[addon.ConfigImage]
+			if server.Image != "" && requestedImage != "" && server.Image != requestedImage {
+				return FindOrCreateSharedServerOut{}, fmt.Errorf(
+					"shared PostgreSQL server is running %s but version %s was requested; shared servers do not support mixed versions",
+					server.Image, requestedImage)
+			}
 			return FindOrCreateSharedServerOut{
 				ServerID:          server.ID,
 				SuperuserPassword: server.SuperuserPassword,
@@ -295,6 +310,7 @@ func FindOrCreateSharedServer(ctx context.Context, in FindOrCreateSharedServerIn
 
 	result, err := saga.RunNested(ctx, "ensure-shared-server",
 		saga.WithNestedInput("superuserpassword", superuserPassword),
+		saga.WithNestedInput("variantconfig", in.VariantConfig),
 	)
 	if err != nil {
 		return FindOrCreateSharedServerOut{}, fmt.Errorf("ensuring shared server: %w", err)
@@ -734,6 +750,7 @@ func (p *Provider) provisionShared(ctx context.Context, app addon.App, variant a
 
 	err := executor.Start("provision-shared-postgresql").
 		Input("appname", app.Name).
+		Input("variantconfig", variant.Config).
 		Execute(ctx)
 	if err != nil {
 		return nil, err
