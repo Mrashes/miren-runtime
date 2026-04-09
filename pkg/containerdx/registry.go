@@ -7,7 +7,7 @@ import (
 )
 
 // DefaultRegistryHost returns the docker.RegistryHost config for a given
-// host using HTTPS, anonymous Docker auth, and pull+resolve capabilities.
+// host using HTTPS, anonymous Docker auth, and pull+resolve+push capabilities.
 // Docker Hub is rewritten to registry-1.docker.io.
 func DefaultRegistryHost(host string) docker.RegistryHost {
 	headers := make(http.Header)
