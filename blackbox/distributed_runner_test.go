@@ -4,6 +4,7 @@ package blackbox
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -22,25 +23,33 @@ func TestDistributedRunnerList(t *testing.T) {
 	skipIfNotDistributed(t, c)
 	m := harness.NewMiren(t, c)
 
-	r := m.MustRun("runner", "list", "--format", "json")
+	harness.Poll(t, "at least 2 ready runners", 30*time.Second, 3*time.Second,
+		func() (bool, string) {
+			r := m.Run("runner", "list", "--format", "json")
+			if !r.Success() {
+				return false, "runner list failed"
+			}
 
-	var runners []struct {
-		Name   string `json:"name"`
-		Status string `json:"status"`
-	}
-	if err := json.Unmarshal([]byte(r.Stdout), &runners); err != nil {
-		t.Fatalf("failed to parse runner list JSON: %v", err)
-	}
+			var runners []struct {
+				Name   string `json:"name"`
+				Status string `json:"status"`
+			}
+			if err := json.Unmarshal([]byte(r.Stdout), &runners); err != nil {
+				return false, "failed to parse runner list JSON"
+			}
 
-	readyCount := 0
-	for _, runner := range runners {
-		if runner.Status == "ready" || runner.Status == "status.ready" {
-			readyCount++
-		}
-	}
-	if readyCount < 2 {
-		t.Fatalf("expected at least 2 ready runners, got %d (runners: %s)", readyCount, r.Stdout)
-	}
+			readyCount := 0
+			for _, runner := range runners {
+				if runner.Status == "ready" || runner.Status == "status.ready" {
+					readyCount++
+				}
+			}
+			if readyCount < 2 {
+				return false, fmt.Sprintf("only %d ready runners", readyCount)
+			}
+			return true, ""
+		},
+	)
 }
 
 func TestDistributedRunnerMetrics(t *testing.T) {

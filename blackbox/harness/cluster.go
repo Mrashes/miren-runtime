@@ -40,7 +40,7 @@ func NewCluster(t *testing.T) *Cluster {
 		case ModeDev, ModeLocal, ModePeers:
 			mode = Mode(m)
 		default:
-			t.Fatalf("invalid BLACKBOX_MODE %q (expected %q or %q)", m, ModeDev, ModeLocal)
+			t.Fatalf("invalid BLACKBOX_MODE %q (expected %q, %q, or %q)", m, ModeDev, ModeLocal, ModePeers)
 		}
 	}
 
