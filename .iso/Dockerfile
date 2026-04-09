@@ -18,6 +18,8 @@ RUN apt-get update && apt-get install -y \
     file \
     htop \
     sudo \
+    postgresql-client \
+    openssl \
     && rm -rf /var/lib/apt/lists/*
 
 RUN if [ "$(uname -m)" = "aarch64" ]; then \

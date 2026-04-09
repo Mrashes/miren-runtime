@@ -238,6 +238,12 @@ jobs:
       if: steps.docker-image-cache.outputs.cache-hit == 'true'
       run: docker load < /tmp/iso-image.tar
 
+    - name: Checkout cloud repo
+      uses: actions/checkout@v5
+      with:
+        repository: mirendev/cloud
+        path: cloud
+
     - name: Start dev environment
       run: ISO_CACHE_DIR=/tmp/iso-cache make dev-start
 
@@ -245,11 +251,19 @@ jobs:
       run: make dev-server-start
 
     - name: Run blackbox tests
-      run: go test -tags blackbox -timeout 10m -v -count=1 -p 1 ./blackbox/...
+      env:
+        BLACKBOX_CLOUD_REPO: ${{ github.workspace }}/cloud
+      run: go test -tags blackbox -timeout 15m -v -count=1 -p 1 ./blackbox/...
 
     - name: Server logs on failure
       if: failure()
-      run: ./hack/dev-exec --root cat /tmp/miren-server.log 2>&1 | tail -200 || true
+      run: |
+        echo "=== Miren server logs ==="
+        ./hack/dev-exec --root cat /tmp/miren-server.log 2>&1 | tail -200 || true
+        echo "=== Cloud server logs ==="
+        ./hack/dev-exec --root bash -c 'cat /tmp/bb-bb-cloud-*.log 2>/dev/null | tail -100' || true
+        echo "=== POP server logs ==="
+        ./hack/dev-exec --root bash -c 'cat /tmp/bb-bb-pop-*.log 2>/dev/null | tail -100' || true
 
     - name: Save Docker image to cache
       if: steps.docker-image-cache.outputs.cache-hit != 'true'

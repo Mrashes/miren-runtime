@@ -157,7 +157,19 @@ update-test-groups: ## Measure new packages and rebuild hack/test-groups.json
 test-blackbox: ## Run blackbox tests (requires `make dev` running)
 	go test -tags blackbox -timeout 10m -v -count=1 -p 1 ./blackbox/...
 
-.PHONY: test test-shell test-blackbox test-coverage test-coverage-ci coverage-report coverage-percent coverage-by-package coverage-pr test-groups update-test-groups
+build-cloud-test: ## Build cloud and POP binaries for POP blackbox tests
+	@CLOUD_REPO=$${BLACKBOX_CLOUD_REPO:-$$(cd .. && pwd)/cloud}; \
+	if [ ! -f "$$CLOUD_REPO/go.mod" ]; then echo "Error: Cloud repo not found at $$CLOUD_REPO. Set BLACKBOX_CLOUD_REPO."; exit 1; fi; \
+	echo "Building cloud binary from $$CLOUD_REPO..."; \
+	cd "$$CLOUD_REPO" && CGO_ENABLED=0 GOOS=linux go build -o $(CURDIR)/bin/bb-cloud ./cmd/cloud && \
+	echo "Building POP binary from $$CLOUD_REPO..."; \
+	cd "$$CLOUD_REPO" && CGO_ENABLED=0 GOOS=linux go build -o $(CURDIR)/bin/bb-pop ./cmd/pop && \
+	echo "Done: bin/bb-cloud, bin/bb-pop"
+
+test-blackbox-pop: ## Run POP blackbox tests (requires `make dev` and cloud repo)
+	go test -tags blackbox -timeout 15m -v -count=1 -p 1 -run TestPOP ./blackbox/...
+
+.PHONY: test test-shell test-blackbox test-blackbox-pop build-cloud-test test-coverage test-coverage-ci coverage-report coverage-percent coverage-by-package coverage-pr test-groups update-test-groups
 
 #
 # Building
