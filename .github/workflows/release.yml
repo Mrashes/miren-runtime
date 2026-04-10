@@ -47,6 +47,7 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       ref: ${{ needs.init.outputs.ref }}
+    secrets: inherit
 
   package:
     needs: [init, test]
