@@ -21,6 +21,7 @@ const (
 	defaultCloudPort     = "18080"
 	defaultPopListenPort = "18443"
 	defaultPopH3Port     = "19443"
+	defaultPopAdminPort  = "19090"
 	adminToken           = "test-admin-token-for-pop"
 	certEncKey           = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	dbURL                = "postgres://cloud:cloud@postgres:5432/cloud?sslmode=disable"
@@ -357,9 +358,9 @@ func (env *CloudEnv) registerCluster(t *testing.T) {
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	env.clusterName = "bb-cluster-" + suffix
 	result, err := env.adminCall("cluster.register", map[string]string{
-		"cluster_name":   env.clusterName,
-		"org_name":       "bb-org-" + suffix,
-		"public_key_pem": env.publicKeyPEM,
+		"cluster_name": env.clusterName,
+		"org_name":     "bb-org-" + suffix,
+		"public_key":   env.publicKeyPEM,
 	})
 	if err != nil {
 		t.Fatalf("cluster.register failed: %v", err)
@@ -414,21 +415,31 @@ func (env *CloudEnv) startPOP(t *testing.T) {
 		"CLOUD_API_URL":      env.CloudURL,
 		"POP_LISTEN_ADDR":    ":" + env.PopListenPort,
 		"POP_H3_LISTEN_ADDR": ":" + env.PopH3Port,
+		"POP_ADMIN_ADDR":     ":" + defaultPopAdminPort,
 		"POP_H3_CERT_FILE":   "/tmp/bb-h3.crt",
 		"POP_H3_KEY_FILE":    "/tmp/bb-h3.key",
 		"POP_EXTERNAL_ADDR":  "localhost:" + env.PopH3Port,
 		"POP_POLL_INTERVAL":  "2s",
 	}, "/src/bin/bb-pop")
 
-	// Wait for POP to start and verify it's alive
-	time.Sleep(2 * time.Second)
-	alive := env.m.RunCmdAsRoot("bash", "-c", fmt.Sprintf("kill -0 %s 2>/dev/null && echo alive", env.popProc.PID))
-	if !strings.Contains(alive.Stdout, "alive") {
-		logs := env.popProc.Logs()
-		t.Fatalf("POP process died (PID %s). Logs:\n%s", env.popProc.PID, logs)
-	}
+	// Poll for POP readiness via its admin /health endpoint
+	Poll(t, "POP server ready", 30*time.Second, 500*time.Millisecond, func() (bool, string) {
+		alive := env.m.RunCmdAsRoot("bash", "-c", fmt.Sprintf("kill -0 %s 2>/dev/null && echo alive", env.popProc.PID))
+		if !strings.Contains(alive.Stdout, "alive") {
+			logs := env.popProc.Logs()
+			t.Fatalf("POP process died (PID %s). Logs:\n%s", env.popProc.PID, logs)
+		}
 
-	t.Log("POP server started")
+		r := env.m.RunCmd("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+			fmt.Sprintf("http://localhost:%s/health", defaultPopAdminPort))
+		code := strings.TrimSpace(r.Stdout)
+		if code == "200" {
+			return true, ""
+		}
+		return false, fmt.Sprintf("POP not ready (status: %s)", code)
+	})
+
+	t.Log("POP server ready")
 }
 
 func (env *CloudEnv) restartServerWithGlobalRouter(t *testing.T) {
@@ -461,13 +472,22 @@ func (env *CloudEnv) waitForConnection(t *testing.T) {
 	t.Helper()
 	t.Log("waiting for global router to connect to cloud...")
 
-	Poll(t, "global router connected", 30*time.Second, 2*time.Second, func() (bool, string) {
-		r := env.m.RunCmdAsRoot("bash", "-c", "grep -c 'cluster-channel.*connected\\|global router.*starting\\|websocket.*connected' /tmp/miren-server.log 2>/dev/null || echo 0")
-		count := strings.TrimSpace(r.Stdout)
-		if count != "0" && count != "" {
+	// Look for the definitive "connected to cloud" log line emitted by
+	// pkg/globalrouter/client.go:163 after the WebSocket dial succeeds.
+	const readyMarker = "connected to cloud"
+
+	Poll(t, "global router connected", 60*time.Second, 2*time.Second, func() (bool, string) {
+		r := env.m.RunCmdAsRoot("bash", "-c",
+			fmt.Sprintf("grep -F %q /tmp/miren-server.log 2>/dev/null | head -1", readyMarker))
+		if strings.Contains(r.Stdout, readyMarker) {
 			return true, ""
 		}
-		return false, "no cluster-channel connection in server logs yet"
+
+		// Surface recent log lines mentioning the router for faster diagnosis
+		// when the marker is missing.
+		tail := env.m.RunCmdAsRoot("bash", "-c",
+			"grep -i 'global.router\\|cluster.channel\\|cloud' /tmp/miren-server.log 2>/dev/null | tail -5")
+		return false, fmt.Sprintf("no %q marker yet; recent router logs:\n%s", readyMarker, tail.Stdout)
 	})
 
 	t.Log("global router connected")

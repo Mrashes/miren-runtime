@@ -4,70 +4,70 @@ package blackbox
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"miren.dev/runtime/blackbox/harness"
 )
 
-// TestPOPHTTPForwarding exercises the full global router path:
-//
-//	client → POP TLS → cloud coordination → QUIC H3 → miren cluster → app → response
-func TestPOPHTTPForwarding(t *testing.T) {
+// TestPOP exercises the global router end-to-end. The expensive cloud+POP
+// setup (binary builds, migrations, server restart) happens once in the
+// parent test; each subtest only deploys its own app, binds a hostname, and
+// sends traffic.
+func TestPOP(t *testing.T) {
 	c := harness.NewCluster(t)
 	m := harness.NewMiren(t, c)
-
-	// Set up cloud + POP environment (skips if cloud repo unavailable)
 	env := harness.NewCloudEnv(t, m)
 
-	// Deploy an app and set up a route
-	appName := harness.DeployApp(t, m, harness.AppOptions{Testdata: "go-server"})
-	hostname := appName + ".test.pop"
-	m.MustRun("route", "set", hostname, appName)
+	// TestHTTPForwarding: full HTTP path through POP to go-server app.
+	//
+	//	client → POP TLS → cloud coordination → QUIC H3 → cluster → app → response
+	t.Run("HTTPForwarding", func(t *testing.T) {
+		appName := harness.DeployApp(t, m, harness.AppOptions{Testdata: "go-server"})
+		hostname := appName + ".test.pop"
+		m.MustRun("route", "set", hostname, appName)
+		env.BindAppHostname(t, hostname)
 
-	// Bind the hostname in the POP so it routes to our cluster
-	env.BindAppHostname(t, hostname)
-
-	// Send an HTTP request through the POP and verify it reaches the app
-	harness.Poll(t, "HTTP via POP", 90*time.Second, 3*time.Second, func() (bool, string) {
-		code, body, err := harness.HTTPGetViaPOP(m, env.PopListenPort, hostname, "/")
-		if err != nil {
-			return false, fmt.Sprintf("curl error: %v", err)
-		}
-		if code != 200 {
-			return false, fmt.Sprintf("status %d, body: %s", code, body)
-		}
-		return true, ""
+		// Assert on the response body to confirm the request actually
+		// traversed the full tunnel (not just a 200 from a proxy error page).
+		harness.Poll(t, "HTTP via POP", 90*time.Second, 3*time.Second, func() (bool, string) {
+			code, body, err := harness.HTTPGetViaPOP(m, env.PopListenPort, hostname, "/")
+			if err != nil {
+				return false, fmt.Sprintf("curl error: %v", err)
+			}
+			if code != 200 {
+				return false, fmt.Sprintf("status %d, body: %s", code, body)
+			}
+			if !strings.Contains(body, "Hello from Go!") {
+				return false, fmt.Sprintf("unexpected body (not from go-server): %q", body)
+			}
+			return true, ""
+		})
 	})
-}
 
-// TestPOPWebSocketTunnel exercises the WebSocket tunnel path:
-//
-//	client WS → POP TLS → tunnel frames over H3 → miren cluster → websocket-echo app
-func TestPOPWebSocketTunnel(t *testing.T) {
-	c := harness.NewCluster(t)
-	m := harness.NewMiren(t, c)
+	// HTTPHealthCheckWebSocketApp: verifies a WS-capable app's HTTP /health
+	// endpoint is reachable via POP. This only exercises the HTTP path
+	// through the POP (not the WS tunnel frame path). Kept separate from
+	// HTTPForwarding because it confirms POP routing works even for apps
+	// that primarily serve WebSockets.
+	// TODO: exercise the actual WS tunnel frame path once we have a WS
+	// client available in the test environment.
+	t.Run("HTTPHealthCheckWebSocketApp", func(t *testing.T) {
+		appName := harness.DeployApp(t, m, harness.AppOptions{Testdata: "websocket-echo"})
+		hostname := appName + ".test.pop"
+		m.MustRun("route", "set", hostname, appName)
+		env.BindAppHostname(t, hostname)
 
-	env := harness.NewCloudEnv(t, m)
-
-	appName := harness.DeployApp(t, m, harness.AppOptions{Testdata: "websocket-echo"})
-	hostname := appName + ".test.pop"
-	m.MustRun("route", "set", hostname, appName)
-	env.BindAppHostname(t, hostname)
-
-	// Test WebSocket echo through the POP tunnel.
-	// We use curl's websocket support (--no-buffer) to send a message and read the echo.
-	// If curl doesn't support websockets, fall back to a simple HTTP health check
-	// to at least verify POP connectivity works.
-	harness.Poll(t, "WS echo via POP", 90*time.Second, 3*time.Second, func() (bool, string) {
-		// First verify the app is reachable via POP (health endpoint)
-		code, _, err := harness.HTTPGetViaPOP(m, env.PopListenPort, hostname, "/health")
-		if err != nil {
-			return false, fmt.Sprintf("health check error: %v", err)
-		}
-		if code != 200 {
-			return false, fmt.Sprintf("health check status %d", code)
-		}
-		return true, ""
+		harness.Poll(t, "health via POP", 90*time.Second, 3*time.Second, func() (bool, string) {
+			code, _, err := harness.HTTPGetViaPOP(m, env.PopListenPort, hostname, "/health")
+			if err != nil {
+				return false, fmt.Sprintf("health check error: %v", err)
+			}
+			if code != 200 {
+				return false, fmt.Sprintf("health check status %d", code)
+			}
+			return true, ""
+		})
 	})
 }
