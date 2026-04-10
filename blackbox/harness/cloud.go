@@ -449,6 +449,10 @@ func (env *CloudEnv) restartServerWithGlobalRouter(t *testing.T) {
 	// Stop current server
 	env.m.RunCmdAsRoot("bash", "-c", "hack/dev-server stop")
 
+	// Truncate the log file so `dev-server wait-ready` doesn't match the
+	// old "Miren server started" line from the previous startup.
+	env.m.RunCmdAsRoot("bash", "-c", ": > /tmp/miren-server.log")
+
 	// Start with globalrouter lab flag
 	env.m.RunCmdAsRoot("bash", "-c", "DEV_SERVER_FLAGS='--labs globalrouter' hack/dev-server start")
 
@@ -458,9 +462,21 @@ func (env *CloudEnv) restartServerWithGlobalRouter(t *testing.T) {
 		t.Fatalf("server failed to start with globalrouter: %s", r.Stderr)
 	}
 
+	// Also wait for buildkit's hosts file to be updated with the registry IP,
+	// otherwise cluster.local resolution will fail during deploys.
+	Poll(t, "buildkit registry hosts updated", 30*time.Second, 500*time.Millisecond, func() (bool, string) {
+		r := env.m.RunCmdAsRoot("bash", "-c",
+			"grep -F 'updated buildkit hosts file with registry IP' /tmp/miren-server.log 2>/dev/null | head -1")
+		if strings.Contains(r.Stdout, "registry IP") {
+			return true, ""
+		}
+		return false, "buildkit hosts file not yet updated"
+	})
+
 	t.Cleanup(func() {
 		// Restart server without globalrouter to restore original state
 		env.m.RunCmdAsRoot("bash", "-c", "hack/dev-server stop")
+		env.m.RunCmdAsRoot("bash", "-c", ": > /tmp/miren-server.log")
 		env.m.RunCmdAsRoot("bash", "-c", "hack/dev-server start")
 		env.m.RunCmdAsRoot("hack/dev-server", "wait-ready", "30")
 	})
