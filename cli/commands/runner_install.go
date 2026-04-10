@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/term"
@@ -69,6 +70,9 @@ func RunnerInstall(ctx *Context, opts struct {
 	// Download release bundle if not present
 	mirenPath := "/var/lib/miren/release/miren"
 	if _, err := os.Stat(mirenPath); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to inspect %s: %w", mirenPath, err)
+		}
 		ctx.Info("Miren release not found at %s, downloading...", mirenPath)
 
 		if err := PerformDownloadRelease(ctx, DownloadReleaseOptions{
@@ -338,11 +342,15 @@ func RunnerUninstall(ctx *Context, opts struct {
 	ctx.Completed("Miren runner service uninstalled")
 
 	if opts.RemoveData {
-		if _, err := os.Stat(opts.DataPath); os.IsNotExist(err) {
-			ctx.Info("Data directory %s does not exist, skipping removal", opts.DataPath)
+		cleanPath := filepath.Clean(opts.DataPath)
+		if cleanPath == "/" || cleanPath == "." || cleanPath == "" {
+			return fmt.Errorf("refusing to remove unsafe data path %q", opts.DataPath)
+		}
+		if _, err := os.Stat(cleanPath); os.IsNotExist(err) {
+			ctx.Info("Data directory %s does not exist, skipping removal", cleanPath)
 		} else {
-			ctx.Info("Removing %s...", opts.DataPath)
-			if err := os.RemoveAll(opts.DataPath); err != nil {
+			ctx.Info("Removing %s...", cleanPath)
+			if err := os.RemoveAll(cleanPath); err != nil {
 				return fmt.Errorf("failed to remove data directory: %w", err)
 			}
 			ctx.Completed("Data directory removed")
