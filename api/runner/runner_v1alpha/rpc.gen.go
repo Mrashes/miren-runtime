@@ -20,7 +20,7 @@ type inviteInfoData struct {
 	ClaimedAt       *standard.Timestamp `cbor:"6,keyasint,omitempty" json:"claimed_at,omitempty"`
 	Name            *string             `cbor:"7,keyasint,omitempty" json:"name,omitempty"`
 	Reusable        *bool               `cbor:"8,keyasint,omitempty" json:"reusable,omitempty"`
-	EnrollmentCount *int32              `cbor:"9,keyasint,omitempty" json:"enrollment_count,omitempty"`
+	EnrollmentCount *int64              `cbor:"9,keyasint,omitempty" json:"enrollment_count,omitempty"`
 }
 
 type InviteInfo struct {
@@ -158,14 +158,14 @@ func (v *InviteInfo) HasEnrollmentCount() bool {
 	return v.data.EnrollmentCount != nil
 }
 
-func (v *InviteInfo) EnrollmentCount() int32 {
+func (v *InviteInfo) EnrollmentCount() int64 {
 	if v.data.EnrollmentCount == nil {
 		return 0
 	}
 	return *v.data.EnrollmentCount
 }
 
-func (v *InviteInfo) SetEnrollmentCount(enrollment_count int32) {
+func (v *InviteInfo) SetEnrollmentCount(enrollment_count int64) {
 	v.data.EnrollmentCount = &enrollment_count
 }
 

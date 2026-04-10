@@ -65,16 +65,28 @@ func (s *RegistrationServer) CreateInvite(ctx context.Context, req *runner_v1alp
 	now := time.Now()
 	var expiresAt time.Time
 
-	if args.HasTtlSeconds() && args.TtlSeconds() == 0 && reusable {
-		// TTL 0 on a reusable invite means no expiry
+	// The generated client always sends ttl_seconds, so we use a negative
+	// sentinel (-1) to mean "not specified." The CLI sends -1 when --ttl
+	// is omitted, 0 for --ttl 0 (no expiry), and >0 for an explicit TTL.
+	ttl := int64(-1)
+	if args.HasTtlSeconds() {
+		ttl = args.TtlSeconds()
+	}
+
+	switch {
+	case ttl < -1:
+		return cond.ValidationFailure("invalid-ttl", "TTL must be non-negative (use 0 for no expiry)")
+	case ttl == 0 && reusable:
+		// --ttl 0 on a reusable token means no expiry
 		expiresAt = time.Time{}
-	} else if args.HasTtlSeconds() && args.TtlSeconds() > 0 {
-		ttl := args.TtlSeconds()
+	case ttl > 0:
 		if !reusable && ttl > int64(MaxInviteExpiryHours)*3600 {
-			return cond.ValidationFailure("invalid-ttl", fmt.Sprintf("TTL cannot exceed %d hours for one-time invites", MaxInviteExpiryHours))
+			return cond.ValidationFailure("invalid-ttl", fmt.Sprintf("TTL cannot exceed %d hours for one-time tokens", MaxInviteExpiryHours))
 		}
 		expiresAt = now.Add(time.Duration(ttl) * time.Second)
-	} else {
+	default:
+		// ttl == -1 (not specified) or ttl == 0 on a non-reusable token:
+		// fall through to expires_in_hours
 		expiryHours := int32(DefaultInviteExpiryHours)
 		if args.HasExpiresInHours() && args.ExpiresInHours() > 0 {
 			expiryHours = args.ExpiresInHours()
@@ -389,7 +401,7 @@ func (s *RegistrationServer) ListInvites(ctx context.Context, req *runner_v1alph
 		}
 		info.SetReusable(invite.Reusable)
 		if invite.EnrollmentCount > 0 {
-			info.SetEnrollmentCount(int32(invite.EnrollmentCount))
+			info.SetEnrollmentCount(invite.EnrollmentCount)
 		}
 
 		invites = append(invites, info)
@@ -698,6 +710,15 @@ func (s *RegistrationServer) incrementEnrollmentCount(ctx context.Context, invit
 			}
 			invite = refreshed
 			revision = rev
+		}
+
+		// Re-check state in case the invite was revoked or expired
+		// between the initial check and this attempt
+		if invite.Status != runner_v1alpha.PENDING {
+			return fmt.Errorf("invite is no longer pending")
+		}
+		if !invite.ExpiresAt.IsZero() && time.Now().After(invite.ExpiresAt) {
+			return fmt.Errorf("invite has expired")
 		}
 
 		invite.EnrollmentCount++

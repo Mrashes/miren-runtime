@@ -24,7 +24,7 @@ func RunnerJoin(ctx *Context, opts struct {
 	ConfigPath  string   `long:"config" description:"Path to save runner config" default:"/var/lib/miren/runner/config.yaml"`
 	RunnerID    string   `long:"runner-id" description:"Specific runner ID to use (for reconnecting)"`
 
-	TokenArg string `position:"0" usage:"Enrollment token from 'miren runner invite'"`
+	TokenArg string `position:"0" usage:"Join token from 'miren runner token create'"`
 }) error {
 	if runnerconfig.Exists(opts.ConfigPath) {
 		return fmt.Errorf("runner config already exists at %s; remove it first to re-register", opts.ConfigPath)

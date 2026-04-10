@@ -154,11 +154,11 @@ func RunnerTokenList(ctx *Context, opts struct {
 			Status          string   `json:"status"`
 			Reusable        bool     `json:"reusable"`
 			Labels          []string `json:"labels,omitempty"`
-			ExpiresAt       string   `json:"expires_at"`
+			ExpiresAt       string   `json:"expires_at,omitempty"`
 			CreatedAt       string   `json:"created_at"`
 			ClaimedBy       string   `json:"claimed_by,omitempty"`
 			ClaimedAt       string   `json:"claimed_at,omitempty"`
-			EnrollmentCount int32    `json:"enrollment_count"`
+			EnrollmentCount int64    `json:"enrollment_count"`
 		}
 
 		var output []InviteJSON
@@ -169,7 +169,7 @@ func RunnerTokenList(ctx *Context, opts struct {
 				Status:          strings.TrimPrefix(inv.Status(), "status."),
 				Reusable:        inv.Reusable(),
 				Labels:          inv.Labels(),
-				ExpiresAt:       standard.FromTimestamp(inv.ExpiresAt()).Format(time.RFC3339),
+				ExpiresAt:       formatExpiresAt(inv),
 				CreatedAt:       standard.FromTimestamp(inv.CreatedAt()).Format(time.RFC3339),
 				EnrollmentCount: inv.EnrollmentCount(),
 			}
@@ -248,4 +248,15 @@ func RunnerTokenList(ctx *Context, opts struct {
 
 	ctx.Printf("%s\n", table.Render())
 	return nil
+}
+
+func formatExpiresAt(inv *runner_v1alpha.InviteInfo) string {
+	if !inv.HasExpiresAt() {
+		return ""
+	}
+	t := standard.FromTimestamp(inv.ExpiresAt())
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(time.RFC3339)
 }

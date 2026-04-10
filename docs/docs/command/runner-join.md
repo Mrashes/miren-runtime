@@ -20,7 +20,7 @@ miren runner join <tokenarg> [flags]
 
 ## Arguments
 
-- `tokenarg` — Enrollment token from 'miren runner invite'
+- `tokenarg` — Join token from 'miren runner token create'
 
 ## Flags
 

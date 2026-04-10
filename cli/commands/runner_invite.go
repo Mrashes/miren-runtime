@@ -29,7 +29,9 @@ func RunnerTokenCreate(ctx *Context, opts struct {
 
 	rc := runner_v1alpha.NewRunnerRegistrationClient(client)
 
-	var ttlSeconds int64
+	// Use -1 as sentinel for "not specified" since the generated client
+	// always sends the field (making 0 indistinguishable from omitted).
+	ttlSeconds := int64(-1)
 	if opts.TTL != "" {
 		d, err := parseTTL(opts.TTL)
 		if err != nil {
