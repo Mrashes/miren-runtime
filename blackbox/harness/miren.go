@@ -2,10 +2,13 @@ package harness
 
 import (
 	"bytes"
+	"fmt"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Miren wraps CLI execution against a target cluster.
@@ -192,6 +195,146 @@ func (m *Miren) PeerExec(peer string, args ...string) *Result {
 	}
 
 	return r
+}
+
+// BackgroundProcess represents a process running in the dev container.
+type BackgroundProcess struct {
+	PID     string
+	LogFile string
+	m       *Miren
+}
+
+// Stop sends SIGTERM to the background process (runs as root since
+// background processes are started as root).
+func (p *BackgroundProcess) Stop() {
+	if p.PID == "" {
+		return
+	}
+	p.m.RunCmdAsRoot("bash", "-c", "kill "+p.PID+" 2>/dev/null || true")
+}
+
+// Logs returns the contents of the background process log file.
+func (p *BackgroundProcess) Logs() string {
+	r := p.m.RunCmd("cat", p.LogFile)
+	return r.Stdout
+}
+
+// RunCmdBackground starts a command in the dev container as a background
+// process using nohup. Output is captured to a log file. The process is
+// killed via t.Cleanup. Must be called in dev mode.
+func (m *Miren) RunCmdBackground(t *testing.T, env map[string]string, args ...string) *BackgroundProcess {
+	t.Helper()
+	if m.cluster.Mode != ModeDev {
+		t.Fatal("RunCmdBackground only supported in dev mode")
+	}
+
+	// Generate a unique log file path
+	name := filepath.Base(args[0])
+	logFile := fmt.Sprintf("/tmp/bb-%s-%d.log", name, time.Now().UnixNano())
+
+	// Build the shell command: export env vars, then nohup the binary
+	var exports []string
+	for k, v := range env {
+		exports = append(exports, fmt.Sprintf("export %s=%s", k, shellQuote(v)))
+	}
+	sort.Strings(exports) // deterministic order
+
+	var cmdParts []string
+	for _, a := range args {
+		cmdParts = append(cmdParts, shellQuote(a))
+	}
+
+	cmdStr := strings.Join(cmdParts, " ")
+	var shellCmd string
+	if len(exports) > 0 {
+		shellCmd = fmt.Sprintf("%s; nohup %s >%s 2>&1 </dev/null & echo $!",
+			strings.Join(exports, "; "), cmdStr, logFile)
+	} else {
+		shellCmd = fmt.Sprintf("nohup %s >%s 2>&1 </dev/null & echo $!",
+			cmdStr, logFile)
+	}
+
+	devExec := filepath.Join(m.cluster.RepoRoot, "hack", "dev-exec")
+	cmd := exec.Command(devExec, "--root", "bash", "-c", shellCmd)
+	cmd.Dir = m.cluster.RepoRoot
+	cmd.Env = append(cmd.Environ(), "TERM=dumb")
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("RunCmdBackground failed: %v\nstderr: %s", err, stderr.String())
+	}
+
+	pid := strings.TrimSpace(stdout.String())
+	if pid == "" {
+		t.Fatalf("RunCmdBackground: no PID returned\nstderr: %s", stderr.String())
+	}
+
+	t.Logf("background %s started (PID %s, log %s)", name, pid, logFile)
+
+	proc := &BackgroundProcess{
+		PID:     pid,
+		LogFile: logFile,
+		m:       m,
+	}
+
+	t.Cleanup(func() {
+		proc.Stop()
+	})
+
+	return proc
+}
+
+// RunCmdAsRoot executes a command in the dev container as root.
+func (m *Miren) RunCmdAsRoot(args ...string) *Result {
+	m.t.Helper()
+	if m.cluster.Mode != ModeDev {
+		m.t.Fatal("RunCmdAsRoot only supported in dev mode")
+		return nil
+	}
+
+	devExec := filepath.Join(m.cluster.RepoRoot, "hack", "dev-exec")
+	execArgs := append([]string{"--root"}, args...)
+	cmd := exec.Command(devExec, execArgs...)
+	cmd.Dir = m.cluster.RepoRoot
+	cmd.Env = append(cmd.Environ(), "TERM=dumb")
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			m.t.Fatalf("failed to execute command: %v", err)
+		}
+	}
+
+	r := &Result{
+		ExitCode: exitCode,
+		Stdout:   stdout.String(),
+		Stderr:   stderr.String(),
+	}
+
+	m.t.Logf("root-cmd %s → exit %d", strings.Join(args, " "), exitCode)
+	if r.Stdout != "" {
+		m.t.Logf("stdout: %s", r.Stdout)
+	}
+	if r.Stderr != "" {
+		m.t.Logf("stderr: %s", r.Stderr)
+	}
+
+	return r
+}
+
+// shellQuote wraps a string in single quotes for safe shell interpolation.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
 // ContainerPath translates a host-side path to a container-internal path.

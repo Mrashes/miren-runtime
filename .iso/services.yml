@@ -1,4 +1,16 @@
 services:
+  postgres:
+    image: docker.io/library/postgres:16-alpine
+    port: 5432
+    environment:
+      POSTGRES_USER: cloud
+      POSTGRES_PASSWORD: cloud
+      POSTGRES_DB: cloud
+
+  valkey:
+    image: docker.io/valkey/valkey:8-alpine
+    port: 6379
+
   etcd:
     image: oci.miren.cloud/etcd:v1
     port: 2379
