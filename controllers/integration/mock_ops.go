@@ -103,6 +103,14 @@ func (m *mockDiskMountOps) FindLoopByBacking(imagePath string) (string, error) {
 	return "", nil
 }
 
+func (m *mockDiskMountOps) FindAllLoopBackings() (map[string]string, error) {
+	result := make(map[string]string, len(m.loopDevices))
+	for img, dev := range m.loopDevices {
+		result[dev] = img
+	}
+	return result, nil
+}
+
 func (m *mockDiskMountOps) LbdAttach(_ context.Context, imagePath, _ string) (string, error) {
 	devPath := "/dev/lbd" + string(rune('0'+m.nextLoopIndex))
 	m.nextLoopIndex++

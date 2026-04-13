@@ -33,6 +33,10 @@ type DiskMountOps interface {
 	// backing the given image file, or "" if no loop device is attached to it.
 	// Used to detect stale/double attachments of the same disk image.
 	FindLoopByBacking(imagePath string) (devicePath string, err error)
+	// FindAllLoopBackings returns a map of loop device path to the backing
+	// file currently attached to it, for every loop device in the kernel.
+	// Used by boot-time orphan reconciliation to find stale attachments.
+	FindAllLoopBackings() (map[string]string, error)
 	LbdAttach(ctx context.Context, imagePath, logDir string) (devicePath string, err error)
 	LbdDetach(ctx context.Context, devicePath string) error
 	LbdAvailable() bool

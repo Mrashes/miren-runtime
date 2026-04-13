@@ -193,6 +193,17 @@ func (m *mockDiskMountOps) FindLoopByBacking(imagePath string) (string, error) {
 	return m.loopBacking[imagePath], nil
 }
 
+func (m *mockDiskMountOps) FindAllLoopBackings() (map[string]string, error) {
+	if m.loopBacking == nil {
+		return map[string]string{}, nil
+	}
+	result := make(map[string]string, len(m.loopBacking))
+	for imagePath, dev := range m.loopBacking {
+		result[dev] = imagePath
+	}
+	return result, nil
+}
+
 func (m *mockDiskMountOps) LbdAttach(_ context.Context, imagePath, logDir string) (string, error) {
 	if m.lbdAttachErr != nil {
 		return "", m.lbdAttachErr

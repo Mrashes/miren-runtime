@@ -186,11 +186,28 @@ func (r *realDiskMountOps) FindLoopByBacking(imagePath string) (string, error) {
 		return "", fmt.Errorf("failed to resolve absolute path for %s: %w", imagePath, err)
 	}
 
+	all, err := r.FindAllLoopBackings()
+	if err != nil {
+		return "", err
+	}
+	for dev, backing := range all {
+		if backing == absPath {
+			return dev, nil
+		}
+	}
+	return "", nil
+}
+
+// FindAllLoopBackings walks /sys/block/loop*/loop/backing_file and returns
+// a map of loop device path → backing file path for every loop device in
+// the kernel. Devices that race with a concurrent detach are skipped.
+func (r *realDiskMountOps) FindAllLoopBackings() (map[string]string, error) {
 	entries, err := filepath.Glob("/sys/block/loop*/loop/backing_file")
 	if err != nil {
-		return "", fmt.Errorf("failed to glob loop backing files: %w", err)
+		return nil, fmt.Errorf("failed to glob loop backing files: %w", err)
 	}
 
+	result := make(map[string]string, len(entries))
 	for _, entry := range entries {
 		data, err := os.ReadFile(entry)
 		if err != nil {
@@ -198,24 +215,20 @@ func (r *realDiskMountOps) FindLoopByBacking(imagePath string) (string, error) {
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
-			return "", fmt.Errorf("failed to read %s: %w", entry, err)
+			return nil, fmt.Errorf("failed to read %s: %w", entry, err)
 		}
 
 		backing := strings.TrimSpace(string(data))
-		// The kernel appends " (deleted)" when the backing inode is unlinked;
-		// strip it so we compare against the path we were asked about.
+		// The kernel appends " (deleted)" when the backing inode is
+		// unlinked; strip it so callers can compare against a live path.
 		backing = strings.TrimSuffix(backing, " (deleted)")
-
-		if backing != absPath {
-			continue
-		}
 
 		// entry is /sys/block/loopN/loop/backing_file — extract loopN.
 		loopName := filepath.Base(filepath.Dir(filepath.Dir(entry)))
-		return "/dev/" + loopName, nil
+		result["/dev/"+loopName] = backing
 	}
 
-	return "", nil
+	return result, nil
 }
 
 func (r *realDiskMountOps) LbdAttach(ctx context.Context, imagePath, logDir string) (string, error) {

@@ -36,6 +36,10 @@ type DiskVolumeController struct {
 	// keepMounts, when true, causes Shutdown to skip unmounting volumes.
 	// Set during reload (SIGUSR2) so the new process can pick them up.
 	keepMounts bool
+
+	// orphanSweepDone ensures the boot-time orphan kernel state
+	// reconciliation runs at most once per controller lifetime.
+	orphanSweepDone bool
 }
 
 func NewDiskVolumeController(log *slog.Logger, dataPath, nodeId string, state *State, ops DiskVolumeOps, mntOps DiskMountOps) *DiskVolumeController {
@@ -1115,6 +1119,86 @@ func (c *DiskVolumeController) Shutdown() {
 	}
 }
 
+// reconcileOrphanKernelState runs once at boot and tears down any kernel
+// loop devices or mounts that are rooted in miren's volumes directory but
+// that no longer correspond to a known volume in local state.
+//
+// This is a belt-and-suspenders complement to the adopt-existing-loop
+// logic in ensureVolumeMount. Adoption catches loops we want to reuse;
+// this sweep catches the opposite case — a stale loop (or mount) left in
+// the kernel after an unclean shutdown, whose volume is no longer present
+// or has been deleted. Without it, such loops leak forever and pin
+// kernel state that should have been cleaned up.
+//
+// Must run AFTER the entity walk and restart-recovery mount step in
+// ReconcileWithEntities, so that every legitimate loop device has
+// already been adopted into some volState.DevicePath and will not be
+// mistaken for an orphan.
+func (c *DiskVolumeController) reconcileOrphanKernelState() {
+	volumesDir := filepath.Join(c.dataPath, "volumes")
+
+	// Build the set of loop devices we legitimately own.
+	known := make(map[string]struct{})
+	for _, vol := range c.state.ListVolumes() {
+		if vol.DevicePath != "" {
+			known[vol.DevicePath] = struct{}{}
+		}
+	}
+
+	backings, err := c.mntOps.FindAllLoopBackings()
+	if err != nil {
+		c.log.Warn("orphan sweep: FindAllLoopBackings failed", "error", err)
+		return
+	}
+
+	for dev, backing := range backings {
+		if _, ok := known[dev]; ok {
+			continue
+		}
+		// Only touch loops backing files inside miren's volumes dir.
+		// Anything else is not ours to manage.
+		if !strings.HasPrefix(backing, volumesDir+string(filepath.Separator)) &&
+			!strings.HasPrefix(backing, volumesDir+"/") {
+			continue
+		}
+
+		c.log.Warn("orphan sweep: detaching stale loop device",
+			"device", dev,
+			"backing_file", backing,
+		)
+		if err := c.mntOps.LoopDetach(dev); err != nil {
+			c.log.Warn("orphan sweep: LoopDetach failed",
+				"device", dev,
+				"backing_file", backing,
+				"error", err)
+		}
+	}
+
+	// Also unmount any active mount rooted under diskMountBasePath that
+	// doesn't correspond to a mounted volState. Orphan mounts are rare
+	// but they pin loop devices and mask the detach step above.
+	knownMounts := make(map[string]struct{})
+	for _, vol := range c.state.ListVolumes() {
+		if vol.Mounted && vol.MountPath != "" {
+			knownMounts[vol.MountPath] = struct{}{}
+		}
+	}
+	for _, am := range c.mntOps.FindMounts(diskMountBasePath) {
+		if _, ok := knownMounts[am.MountPath]; ok {
+			continue
+		}
+		c.log.Warn("orphan sweep: unmounting stale mount",
+			"mount_path", am.MountPath,
+			"device", am.Device,
+		)
+		if err := c.mntOps.Unmount(am.MountPath); err != nil {
+			c.log.Warn("orphan sweep: Unmount failed",
+				"mount_path", am.MountPath,
+				"error", err)
+		}
+	}
+}
+
 func isAllZeros(data, zeros []byte) bool {
 	for i := range data {
 		if data[i] != zeros[i] {
@@ -1205,6 +1289,17 @@ func (c *DiskVolumeController) ReconcileWithEntities(ctx context.Context) error 
 				c.log.Warn("failed to re-mount volume", "entity_id", volState.EntityId, "error", err)
 			}
 		}
+	}
+
+	// Boot-time orphan sweep: runs once per controller lifetime, after
+	// every legitimate volume has had a chance to adopt its existing
+	// kernel state. Anything left over in /proc/mounts or /sys/block/loop*
+	// that points at our volumes dir but no known volume is stale and
+	// gets torn down. Without this, loops from uncleanly-shut-down volumes
+	// leak forever.
+	if !c.orphanSweepDone {
+		c.reconcileOrphanKernelState()
+		c.orphanSweepDone = true
 	}
 
 	return nil

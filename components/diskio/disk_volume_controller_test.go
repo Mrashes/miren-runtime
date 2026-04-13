@@ -1404,6 +1404,54 @@ func TestDiskVolumeControllerUniversalAdoptsExistingLoopDevice(t *testing.T) {
 	assert.Equal(t, staleLoopDev, volState.DevicePath)
 }
 
+// TestDiskVolumeControllerOrphanLoopSweep verifies that at boot, a loop
+// device backing a file inside miren's volumes dir that has no
+// corresponding known volume gets torn down. This catches stale kernel
+// state from uncleanly-shut-down volumes that would otherwise leak
+// forever.
+func TestDiskVolumeControllerOrphanLoopSweep(t *testing.T) {
+	ctx := t.Context()
+	log := testutils.TestLogger(t)
+
+	es, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	dataPath := t.TempDir()
+	nodeId := "test-node-1"
+	state := NewState()
+	volOps := newMockDiskVolumeOps()
+	mntOps := newMockDiskMountOps()
+
+	// A stale loop device backing a file inside our volumes dir, with
+	// no corresponding volume entity in state.
+	orphanImage := filepath.Join(dataPath, "volumes", "vol-dead", "disk.img")
+	const orphanLoopDev = "/dev/loop9"
+	mntOps.loopBacking = map[string]string{orphanImage: orphanLoopDev}
+
+	// Also a loop backing a file OUTSIDE our volumes dir — the sweep
+	// must leave this alone.
+	const foreignLoopDev = "/dev/loop10"
+	foreignImage := "/some/other/place/disk.img"
+	mntOps.loopBacking[foreignImage] = foreignLoopDev
+
+	vc := NewDiskVolumeController(log, dataPath, nodeId, state, volOps, mntOps)
+	vc.SetEAC(es.EAC)
+
+	err := vc.ReconcileWithEntities(ctx)
+	require.NoError(t, err)
+
+	// Orphan must be detached.
+	assert.Contains(t, mntOps.detachedLoops, orphanLoopDev, "orphan loop backing a miren volume file should be detached")
+	// Foreign loop must be left alone.
+	assert.NotContains(t, mntOps.detachedLoops, foreignLoopDev, "loop backing a file outside miren's volumes dir must not be touched")
+
+	// Running reconcile again should not re-sweep (once per lifetime).
+	before := len(mntOps.detachedLoops)
+	err = vc.ReconcileWithEntities(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, before, len(mntOps.detachedLoops), "orphan sweep must run at most once per controller lifetime")
+}
+
 func TestDiskVolumeControllerUniversalUnmountOnDelete(t *testing.T) {
 	ctx := t.Context()
 	log := testutils.TestLogger(t)
