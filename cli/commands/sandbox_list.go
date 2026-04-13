@@ -71,7 +71,7 @@ func SandboxList(ctx *Context, opts struct {
 					versionShortIdMap[v.ID.String()] = sid
 				}
 				if !entity.Empty(v.App) {
-					versionAppMap[v.ID.String()] = ui.CleanEntityID(v.App.String())
+					versionAppMap[v.ID.String()] = v.App.String()
 				}
 			}
 		}
@@ -266,7 +266,7 @@ func SandboxList(ctx *Context, opts struct {
 		// Resolve app name from version
 		appName := "-"
 		if name, ok := versionAppMap[sandbox.Spec.Version.String()]; ok {
-			appName = name
+			appName = ui.CleanEntityID(name)
 		}
 
 		rows = append(rows, ui.Row{
