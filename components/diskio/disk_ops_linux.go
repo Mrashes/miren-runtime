@@ -123,15 +123,35 @@ func (r *realDiskMountOps) LoopAttach(imagePath string) (string, error) {
 	}
 	defer backingFile.Close()
 
-	// Use LOOP_CONFIGURE to attach with 4K sector size in a single ioctl
+	// Use LOOP_CONFIGURE to attach with 4K sector size in a single ioctl.
+	//
+	// LO_FLAGS_DIRECT_IO tells the kernel to bypass the loop device's own
+	// page cache and read/write the backing file via O_DIRECT. Without
+	// this flag the loop device keeps an independent page cache layered
+	// on top of the backing filesystem's page cache, and the two can
+	// diverge across an unclean shutdown, losing writes the filesystem
+	// believed had been flushed. Direct I/O also avoids the
+	// double-buffer overhead. Every filesystem miren runs on (ext4,
+	// xfs, btrfs) supports O_DIRECT on regular files, so this is safe;
+	// if the backing file ever lives on a filesystem that doesn't, the
+	// ioctl will fail loudly at attach time.
 	config := unix.LoopConfig{
 		Fd:   uint32(backingFile.Fd()),
 		Size: 4096, // 4K logical block size
+		Info: unix.LoopInfo64{
+			Flags: unix.LO_FLAGS_DIRECT_IO,
+		},
 	}
 
 	if err := unix.IoctlLoopConfigure(int(loopDev.Fd()), &config); err != nil {
 		return "", fmt.Errorf("LOOP_CONFIGURE failed for %s: %w", devicePath, err)
 	}
+
+	r.log.Info("attached loop device",
+		"device", devicePath,
+		"image_path", imagePath,
+		"direct_io", true,
+	)
 
 	return devicePath, nil
 }
