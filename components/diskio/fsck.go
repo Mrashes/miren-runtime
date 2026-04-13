@@ -2,28 +2,25 @@ package diskio
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
-	"syscall"
 )
 
 // isDirtyFilesystemErr reports whether err indicates that the kernel
 // rejected a mount because the filesystem's on-disk state was not
-// clean — i.e. "Structure needs cleaning". An unclean shutdown left
-// the journal in a state that needs fsck repair before the filesystem
-// can be mounted again.
+// clean — i.e. "Structure needs cleaning" (Linux EUCLEAN / errno 117).
+// An unclean shutdown left the journal in a state that needs fsck
+// repair before the filesystem can be mounted again. The match is
+// done by string because the named EUCLEAN constant only exists in
+// the Linux syscall package, and a case-insensitive substring search
+// on the wrapped errno's message is portable and robust to any error
+// wrapping that breaks errors.Is unwrapping.
 func isDirtyFilesystemErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, syscall.EUCLEAN) {
-		return true
-	}
-	// Defensive string match for environments where the errno has been
-	// wrapped in a way that breaks errors.Is unwrapping.
-	return strings.Contains(err.Error(), "Structure needs cleaning")
+	return strings.Contains(strings.ToLower(err.Error()), "structure needs cleaning")
 }
 
 // mountWithFsckRetry wraps a mount call so that a dirty-filesystem

@@ -2,7 +2,6 @@ package diskio
 
 import (
 	"errors"
-	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,7 +11,7 @@ import (
 
 func TestIsDirtyFilesystemErr(t *testing.T) {
 	assert.False(t, isDirtyFilesystemErr(nil))
-	assert.True(t, isDirtyFilesystemErr(syscall.EUCLEAN))
+	assert.True(t, isDirtyFilesystemErr(errors.New("mount /dev/loop0 failed: structure needs cleaning")))
 	assert.True(t, isDirtyFilesystemErr(errors.New("mount /dev/loop0 failed: Structure needs cleaning")))
 	assert.False(t, isDirtyFilesystemErr(errors.New("permission denied")))
 }
@@ -30,7 +29,7 @@ func TestMountWithFsckRetryRecoversFromDirtyFs(t *testing.T) {
 	// Mount function doesn't have per-call behavior, so use the fsckFn
 	// hook to clear mountErr after fsck runs, allowing the retry to
 	// proceed.
-	ops.mountErr = syscall.EUCLEAN
+	ops.mountErr = errors.New("mount /dev/loop0 failed: structure needs cleaning")
 	ops.fsckFn = func(_, _ string) error {
 		ops.mountErr = nil
 		return nil
@@ -56,7 +55,7 @@ func TestMountWithFsckRetryPropagatesFsckFailure(t *testing.T) {
 	ctx := t.Context()
 
 	ops := newMockDiskMountOps()
-	ops.mountErr = syscall.EUCLEAN
+	ops.mountErr = errors.New("mount /dev/loop0 failed: structure needs cleaning")
 	ops.fsckErr = errors.New("fsck exploded")
 
 	err := mountWithFsckRetry(ctx, log, ops, "/dev/loop0", "/mnt/data", "ext4", false)
@@ -77,7 +76,7 @@ func TestMountWithFsckRetryRefusesWhenDeviceStillMounted(t *testing.T) {
 	ctx := t.Context()
 
 	ops := newMockDiskMountOps()
-	ops.mountErr = syscall.EUCLEAN
+	ops.mountErr = errors.New("mount /dev/loop0 failed: structure needs cleaning")
 
 	// Simulate the device being mounted at some OTHER path. The mock
 	// tracks device↔path in mountDevices/mountedPaths; populate both so
