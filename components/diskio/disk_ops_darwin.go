@@ -64,6 +64,10 @@ func (s *stubDiskMountOps) LoopDetach(_ string) error {
 	return fmt.Errorf("loop devices not supported on darwin")
 }
 
+func (s *stubDiskMountOps) FindLoopByBacking(_ string) (string, error) {
+	return "", nil
+}
+
 func (s *stubDiskMountOps) LbdAttach(_ context.Context, _, _ string) (string, error) {
 	return "", fmt.Errorf("lbd not supported on darwin")
 }

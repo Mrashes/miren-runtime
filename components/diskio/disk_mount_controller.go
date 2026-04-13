@@ -262,17 +262,6 @@ func (c *DiskMountController) attachAndMount(ctx context.Context, mount *storage
 
 	imagePath := filepath.Join(volState.DiskPath, "disk.img")
 
-	// Detach any stale device before re-attaching. After a restart the old
-	// device may already be gone, so errors are ignored.
-	if ms := c.state.GetMount(entityId); ms != nil && ms.DevicePath != "" {
-		c.log.Info("detaching stale device before re-attach", "entity_id", entityId, "device", ms.DevicePath)
-		if strings.HasPrefix(ms.DevicePath, "/dev/lbd") {
-			_ = c.ops.LbdDetach(ctx, ms.DevicePath)
-		} else if strings.HasPrefix(ms.DevicePath, "/dev/loop") {
-			_ = c.ops.LoopDetach(ms.DevicePath)
-		}
-	}
-
 	// Attach device based on volume mode
 	var devicePath string
 	var err error
@@ -291,10 +280,32 @@ func (c *DiskMountController) attachAndMount(ctx context.Context, mount *storage
 			return fmt.Errorf("failed to attach lbd device: %w", err)
 		}
 	} else {
-		devicePath, err = c.ops.LoopAttach(imagePath)
-		if err != nil {
-			c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to attach loop device: %v", err))
-			return fmt.Errorf("failed to attach loop device: %w", err)
+		// If the backing file is already attached to a loop device in the
+		// kernel — e.g. left over from a SIGKILL'd miren whose container
+		// kept holding the old loop open — adopt that device rather than
+		// create a second one. Attaching the same backing file to two
+		// loop devices gives each one its own incoherent page cache and
+		// corrupts the filesystem.
+		existing, findErr := c.ops.FindLoopByBacking(imagePath)
+		if findErr != nil {
+			c.log.Warn("FindLoopByBacking failed, falling back to fresh attach",
+				"entity_id", entityId,
+				"image_path", imagePath,
+				"error", findErr)
+		}
+		if existing != "" {
+			c.log.Info("adopting existing loop device for backing file",
+				"entity_id", entityId,
+				"image_path", imagePath,
+				"device", existing,
+			)
+			devicePath = existing
+		} else {
+			devicePath, err = c.ops.LoopAttach(imagePath)
+			if err != nil {
+				c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to attach loop device: %v", err))
+				return fmt.Errorf("failed to attach loop device: %w", err)
+			}
 		}
 	}
 

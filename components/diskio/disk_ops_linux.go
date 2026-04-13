@@ -151,6 +151,53 @@ func (r *realDiskMountOps) LoopDetach(devicePath string) error {
 	return nil
 }
 
+// FindLoopByBacking walks /sys/block/loop*/loop/backing_file and returns the
+// loop device path currently backing imagePath, or "" if none is attached.
+//
+// The kernel never deletes a stale loop device just because miren restarted,
+// so finding a match here means a previous miren (or an uncleanly shut down
+// container) already attached this image. Attaching it a second time would
+// produce two loop devices with independent, incoherent page caches and
+// corrupt the filesystem. Callers should reuse the returned device, fail
+// loudly, or detach it explicitly.
+func (r *realDiskMountOps) FindLoopByBacking(imagePath string) (string, error) {
+	absPath, err := filepath.Abs(imagePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve absolute path for %s: %w", imagePath, err)
+	}
+
+	entries, err := filepath.Glob("/sys/block/loop*/loop/backing_file")
+	if err != nil {
+		return "", fmt.Errorf("failed to glob loop backing files: %w", err)
+	}
+
+	for _, entry := range entries {
+		data, err := os.ReadFile(entry)
+		if err != nil {
+			// Loop device may have been detached between glob and read — skip.
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return "", fmt.Errorf("failed to read %s: %w", entry, err)
+		}
+
+		backing := strings.TrimSpace(string(data))
+		// The kernel appends " (deleted)" when the backing inode is unlinked;
+		// strip it so we compare against the path we were asked about.
+		backing = strings.TrimSuffix(backing, " (deleted)")
+
+		if backing != absPath {
+			continue
+		}
+
+		// entry is /sys/block/loopN/loop/backing_file — extract loopN.
+		loopName := filepath.Base(filepath.Dir(filepath.Dir(entry)))
+		return "/dev/" + loopName, nil
+	}
+
+	return "", nil
+}
+
 func (r *realDiskMountOps) LbdAttach(ctx context.Context, imagePath, logDir string) (string, error) {
 	cmd := exec.CommandContext(ctx, "lbdctl", "add", "--json", imagePath, "--log-dir", logDir)
 	output, err := cmd.CombinedOutput()

@@ -29,6 +29,10 @@ type DiskMountOps interface {
 	RemoveFile(path string) error
 	LoopAttach(imagePath string) (devicePath string, err error)
 	LoopDetach(devicePath string) error
+	// FindLoopByBacking returns the loop device path (e.g. /dev/loop3) currently
+	// backing the given image file, or "" if no loop device is attached to it.
+	// Used to detect stale/double attachments of the same disk image.
+	FindLoopByBacking(imagePath string) (devicePath string, err error)
 	LbdAttach(ctx context.Context, imagePath, logDir string) (devicePath string, err error)
 	LbdDetach(ctx context.Context, devicePath string) error
 	LbdAvailable() bool

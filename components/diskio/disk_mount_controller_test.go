@@ -97,6 +97,80 @@ func TestDiskMountControllerReconcileMountMounted(t *testing.T) {
 	assert.Equal(t, "/dev/loop0", updated.LoopDevice)
 }
 
+// TestDiskMountControllerAdoptsExistingLoopDevice verifies that when a disk
+// image is already attached to a loop device in the kernel (e.g. left over
+// from a SIGKILL'd miren process whose container kept running), the
+// controller adopts that existing device rather than allocating a second
+// loop for the same backing file. Double-attach would produce two
+// incoherent page caches and corrupt the filesystem.
+func TestDiskMountControllerAdoptsExistingLoopDevice(t *testing.T) {
+	ctx := t.Context()
+	log := testutils.TestLogger(t)
+
+	es, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	dataPath := t.TempDir()
+	nodeId := "test-node-1"
+	state := NewState()
+	ops := newMockDiskMountOps()
+
+	state.SetVolume("disk_volume/vol-972", &VolumeState{
+		EntityId:   "disk_volume/vol-972",
+		VolumeId:   "vol-972",
+		DiskPath:   "/data/volumes/vol-972",
+		SizeBytes:  10 * 1024 * 1024 * 1024,
+		Filesystem: "ext4",
+	})
+
+	// Simulate a stale loop device backed by the disk image. This mimics
+	// the kernel state after an unclean miren shutdown: the old loop
+	// device is still present in the kernel, the filesystem has already
+	// been formatted, but the volume is not currently mounted at our
+	// target path.
+	imagePath := "/data/volumes/vol-972/disk.img"
+	const staleLoopDev = "/dev/loop7"
+	ops.loopBacking = map[string]string{imagePath: staleLoopDev}
+	ops.formattedDevs[staleLoopDev] = "ext4"
+
+	mc := newTestDiskMountController(log, dataPath, nodeId, es.EAC, state, ops)
+
+	mount := &storage_v1alpha.DiskMount{
+		ID:           "disk_mount/mnt-972",
+		NodeId:       entity.Id("node/" + nodeId),
+		VolumeId:     "disk_volume/vol-972",
+		MountPath:    "/mnt/data",
+		ReadOnly:     false,
+		DesiredState: storage_v1alpha.DM_WANT_MOUNTED,
+		ActualState:  storage_v1alpha.DM_PENDING,
+	}
+	createDiskMountEntity(ctx, t, es, mount)
+
+	err := mc.ReconcileWithEntities(ctx)
+	require.NoError(t, err)
+
+	// Critically: LoopAttach must NOT have been called. A second loop
+	// backing the same file would be a double-attach.
+	assert.Empty(t, ops.attachedLoops, "LoopAttach must not be called when backing file is already attached")
+
+	// The existing device should have been adopted and mounted at the
+	// requested mount path.
+	require.Len(t, ops.mounts, 1)
+	assert.Equal(t, staleLoopDev, ops.mounts[0].device)
+	assert.Equal(t, "/mnt/data", ops.mounts[0].mountPath)
+
+	// It was already formatted, so FormatDevice must not be called.
+	assert.Empty(t, ops.formatCalls, "pre-formatted adopted device must not be re-formatted")
+
+	// Entity should report MOUNTED with the adopted device path.
+	resp, err := es.EAC.Get(ctx, "disk_mount/mnt-972")
+	require.NoError(t, err)
+	var updated storage_v1alpha.DiskMount
+	updated.Decode(resp.Entity().Entity())
+	assert.Equal(t, storage_v1alpha.DM_MOUNTED, updated.ActualState)
+	assert.Equal(t, staleLoopDev, updated.DevicePath)
+}
+
 func TestDiskMountControllerReconcileMountUnmounted(t *testing.T) {
 	ctx := t.Context()
 	log := testutils.TestLogger(t)

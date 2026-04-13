@@ -1325,6 +1325,85 @@ func TestDiskVolumeControllerUniversalRemountOnReconcile(t *testing.T) {
 	assert.True(t, volState.Mounted)
 }
 
+// TestDiskVolumeControllerUniversalAdoptsExistingLoopDevice verifies that
+// when the backing disk image is already attached to a loop device in the
+// kernel (e.g. left over from a SIGKILL'd miren whose container kept
+// holding the old loop open), the universal-mode remount path adopts that
+// existing device rather than allocating a second loop for the same file.
+// Double-attach would produce two incoherent page caches and corrupt the
+// filesystem.
+func TestDiskVolumeControllerUniversalAdoptsExistingLoopDevice(t *testing.T) {
+	ctx := t.Context()
+	log := testutils.TestLogger(t)
+
+	es, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	dataPath := t.TempDir()
+	nodeId := "test-node-1"
+	state := NewState()
+	volOps := newMockDiskVolumeOps()
+	mntOps := newMockDiskMountOps()
+
+	volPath := filepath.Join(dataPath, "volumes", "vol-972")
+	mountPath := filepath.Join(dataPath, "vol-972")
+	imagePath := filepath.Join(volPath, "disk.img")
+
+	// Pre-populate state: volume is ready but NOT mounted (simulating
+	// restart after SIGKILL). The local state may have a stale DevicePath
+	// or none at all — either way, we should adopt the kernel's loop.
+	state.SetVolume("disk_volume/vol-972", &VolumeState{
+		EntityId:   "disk_volume/vol-972",
+		VolumeId:   "vol-972",
+		DiskPath:   volPath,
+		SizeBytes:  10 * 1024 * 1024 * 1024,
+		Filesystem: "ext4",
+		Mode:       storage_v1alpha.VM_UNIVERSAL,
+		Mounted:    false,
+		MountPath:  mountPath,
+	})
+	volOps.existingPaths[volPath] = true
+
+	// Simulate the kernel still holding a loop device for this image,
+	// pre-formatted so the adoption path doesn't try to mkfs over it.
+	const staleLoopDev = "/dev/loop7"
+	mntOps.loopBacking = map[string]string{imagePath: staleLoopDev}
+	mntOps.formattedDevs[staleLoopDev] = "ext4"
+
+	vc := NewDiskVolumeController(log, dataPath, nodeId, state, volOps, mntOps)
+	vc.SetEAC(es.EAC)
+
+	vol := &storage_v1alpha.DiskVolume{
+		ID:           "disk_volume/vol-972",
+		NodeId:       entity.Id("node/" + nodeId),
+		SizeGb:       10,
+		Filesystem:   "ext4",
+		VolumeMode:   storage_v1alpha.VM_UNIVERSAL,
+		DesiredState: storage_v1alpha.DV_PRESENT,
+		ActualState:  storage_v1alpha.DV_READY,
+	}
+	createDiskVolumeEntity(ctx, t, es, vol)
+
+	err := vc.ReconcileWithEntities(ctx)
+	require.NoError(t, err)
+
+	// Critically: LoopAttach must NOT have been called. A second loop
+	// device backing the same file would be a double-attach.
+	assert.Empty(t, mntOps.attachedLoops, "LoopAttach must not be called when backing file is already attached")
+
+	// The existing device should have been adopted and mounted.
+	require.Len(t, mntOps.mounts, 1)
+	assert.Equal(t, staleLoopDev, mntOps.mounts[0].device)
+
+	// Pre-formatted, so FormatDevice must not be called.
+	assert.Empty(t, mntOps.formatCalls, "adopted pre-formatted device must not be re-formatted")
+
+	volState := state.GetVolume("disk_volume/vol-972")
+	require.NotNil(t, volState)
+	assert.True(t, volState.Mounted)
+	assert.Equal(t, staleLoopDev, volState.DevicePath)
+}
+
 func TestDiskVolumeControllerUniversalUnmountOnDelete(t *testing.T) {
 	ctx := t.Context()
 	log := testutils.TestLogger(t)

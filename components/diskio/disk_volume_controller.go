@@ -927,16 +927,43 @@ func (c *DiskVolumeController) ensureVolumeMount(ctx context.Context, entityId s
 		"mount_path", mountPath,
 	)
 
-	// If we had a previous loop device recorded, try to detach it first.
-	// After a restart the device is already gone, so ignore errors.
-	if volState.DevicePath != "" {
-		_ = c.mntOps.LoopDetach(volState.DevicePath)
-		volState.DevicePath = ""
+	// Check whether this backing file is already attached to a loop device
+	// in the kernel. If it is — e.g. left over from a SIGKILL'd miren whose
+	// container kept holding the old loop open — adopt that device rather
+	// than detach and re-attach. Detaching a live loop device and then
+	// attaching the same backing file to a new one produces two loop
+	// devices with incoherent page caches, which corrupts the filesystem.
+	// Adopting the existing device sidesteps the problem entirely: the
+	// kernel state is already consistent, we just need to (re)mount on
+	// our target path. We now own it — rollback cleanup on failure will
+	// detach it like any other device we created.
+	var devicePath string
+	existing, findErr := c.mntOps.FindLoopByBacking(imagePath)
+	if findErr != nil {
+		c.log.Warn("FindLoopByBacking failed, falling back to fresh attach",
+			"entity_id", entityId,
+			"image_path", imagePath,
+			"error", findErr)
 	}
+	if existing != "" {
+		c.log.Info("adopting existing loop device for backing file",
+			"entity_id", entityId,
+			"image_path", imagePath,
+			"device", existing,
+		)
+		devicePath = existing
+	} else {
+		// No existing loop. Any stale volState.DevicePath is meaningless
+		// (the kernel has no loop backing this image), so we don't touch
+		// it — the loop index it names may have been reallocated to some
+		// other volume in the meantime.
+		volState.DevicePath = ""
 
-	devicePath, err := c.mntOps.LoopAttach(imagePath)
-	if err != nil {
-		return fmt.Errorf("failed to attach loop device: %w", err)
+		var err error
+		devicePath, err = c.mntOps.LoopAttach(imagePath)
+		if err != nil {
+			return fmt.Errorf("failed to attach loop device: %w", err)
+		}
 	}
 
 	filesystem := volState.Filesystem

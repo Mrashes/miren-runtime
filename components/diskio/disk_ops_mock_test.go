@@ -102,6 +102,9 @@ type mockDiskMountOps struct {
 	mountDevices  map[string]string // mount path → device, for FindMounts
 	formattedDevs map[string]string
 	formatCalls   []diskMockFormat
+	// loopBacking maps imagePath → existing loop device, for FindLoopByBacking.
+	// Tests populate this to simulate a pre-existing attachment.
+	loopBacking map[string]string
 
 	createDirErr  error
 	attachErr     error
@@ -163,6 +166,10 @@ func (m *mockDiskMountOps) LoopAttach(imagePath string) (string, error) {
 		return "", m.attachErr
 	}
 	m.attachedLoops = append(m.attachedLoops, imagePath)
+	if m.loopBacking == nil {
+		m.loopBacking = make(map[string]string)
+	}
+	m.loopBacking[imagePath] = m.nextLoopDevice
 	return m.nextLoopDevice, nil
 }
 
@@ -171,7 +178,19 @@ func (m *mockDiskMountOps) LoopDetach(devicePath string) error {
 		return m.detachErr
 	}
 	m.detachedLoops = append(m.detachedLoops, devicePath)
+	for imagePath, dev := range m.loopBacking {
+		if dev == devicePath {
+			delete(m.loopBacking, imagePath)
+		}
+	}
 	return nil
+}
+
+func (m *mockDiskMountOps) FindLoopByBacking(imagePath string) (string, error) {
+	if m.loopBacking == nil {
+		return "", nil
+	}
+	return m.loopBacking[imagePath], nil
 }
 
 func (m *mockDiskMountOps) LbdAttach(_ context.Context, imagePath, logDir string) (string, error) {
