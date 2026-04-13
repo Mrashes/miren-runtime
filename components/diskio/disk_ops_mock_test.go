@@ -259,6 +259,18 @@ func (m *mockDiskMountOps) IsMounted(path string) bool {
 	return m.mountedPaths[path]
 }
 
+func (m *mockDiskMountOps) IsDeviceMounted(device string) bool {
+	for path, mounted := range m.mountedPaths {
+		if !mounted {
+			continue
+		}
+		if m.mountDevices[path] == device {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *mockDiskMountOps) FindMounts(pathPrefix string) []ActiveMount {
 	var result []ActiveMount
 	for path := range m.mountedPaths {

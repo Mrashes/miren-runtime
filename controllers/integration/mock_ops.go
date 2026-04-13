@@ -146,6 +146,10 @@ func (m *mockDiskMountOps) IsMounted(path string) bool {
 	return m.existingMounts[path]
 }
 
+func (m *mockDiskMountOps) IsDeviceMounted(_ string) bool {
+	return false
+}
+
 func (m *mockDiskMountOps) IsFormatted(_ context.Context, device, _ string) (bool, error) {
 	_, ok := m.formattedDisks[device]
 	return ok, nil

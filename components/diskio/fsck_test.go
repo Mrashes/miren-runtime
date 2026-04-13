@@ -68,6 +68,33 @@ func TestMountWithFsckRetryPropagatesFsckFailure(t *testing.T) {
 	assert.Empty(t, ops.mounts)
 }
 
+// TestMountWithFsckRetryRefusesWhenDeviceStillMounted verifies that the
+// safety check rejects fsck if the device is mounted anywhere in the
+// kernel mount table — even at a path other than the one we're trying
+// to mount at. fsck on a live filesystem corrupts it.
+func TestMountWithFsckRetryRefusesWhenDeviceStillMounted(t *testing.T) {
+	log := testutils.TestLogger(t)
+	ctx := t.Context()
+
+	ops := newMockDiskMountOps()
+	ops.mountErr = syscall.EUCLEAN
+
+	// Simulate the device being mounted at some OTHER path. The mock
+	// tracks device↔path in mountDevices/mountedPaths; populate both so
+	// IsDeviceMounted returns true even though IsMounted(targetPath)
+	// returns false.
+	ops.mountedPaths["/mnt/other"] = true
+	ops.mountDevices["/mnt/other"] = "/dev/loop0"
+
+	err := mountWithFsckRetry(ctx, log, ops, "/dev/loop0", "/mnt/data", "ext4", false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "/dev/loop0")
+	assert.Contains(t, err.Error(), "mounted elsewhere")
+
+	// Fsck must not have been called.
+	assert.Empty(t, ops.fsckCalls)
+}
+
 // TestMountWithFsckRetrySkipsNonDirtyErrors verifies that non-EUCLEAN
 // mount errors are returned immediately without running fsck.
 func TestMountWithFsckRetrySkipsNonDirtyErrors(t *testing.T) {

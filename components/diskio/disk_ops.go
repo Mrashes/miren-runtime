@@ -43,6 +43,10 @@ type DiskMountOps interface {
 	Mount(device, mountPath, filesystem string, readOnly bool) error
 	Unmount(path string) error
 	IsMounted(path string) bool
+	// IsDeviceMounted reports whether device is currently mounted at any
+	// path in the kernel mount table. Used as a safety check before
+	// running fsck, which must never run against a live filesystem.
+	IsDeviceMounted(device string) bool
 	IsFormatted(ctx context.Context, device, filesystem string) (bool, error)
 	FormatDevice(ctx context.Context, device, filesystem string) error
 	// Fsck runs a filesystem check-and-repair on device. The device must

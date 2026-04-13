@@ -306,6 +306,23 @@ func (r *realDiskMountOps) IsMounted(path string) bool {
 	return false
 }
 
+func (r *realDiskMountOps) IsDeviceMounted(device string) bool {
+	f, err := os.Open("/proc/mounts")
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) >= 1 && fields[0] == device {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *realDiskMountOps) FindMounts(pathPrefix string) []ActiveMount {
 	f, err := os.Open("/proc/mounts")
 	if err != nil {

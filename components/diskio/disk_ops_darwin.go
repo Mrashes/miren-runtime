@@ -96,6 +96,10 @@ func (s *stubDiskMountOps) IsMounted(_ string) bool {
 	return false
 }
 
+func (s *stubDiskMountOps) IsDeviceMounted(_ string) bool {
+	return false
+}
+
 func (s *stubDiskMountOps) FindMounts(_ string) []ActiveMount {
 	return nil
 }
