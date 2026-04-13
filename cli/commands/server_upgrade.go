@@ -33,12 +33,13 @@ func ServerUpgrade(ctx *Context, opts struct {
 	version := opts.Version
 	channel := opts.Channel
 
-	// If neither specified, default to latest channel
+	if version != "" && channel != "" {
+		return fmt.Errorf("--version and --channel are mutually exclusive")
+	}
+
 	if version == "" && channel == "" {
 		channel = "latest"
 	}
-
-	// If channel specified, use it as version
 	if channel != "" {
 		version = channel
 	}

@@ -31,6 +31,10 @@ func RunnerUpgrade(ctx *Context, opts struct {
 	version := opts.Version
 	channel := opts.Channel
 
+	if version != "" && channel != "" {
+		return fmt.Errorf("--version and --channel are mutually exclusive")
+	}
+
 	if version == "" && channel == "" {
 		channel = "latest"
 	}
