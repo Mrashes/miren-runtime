@@ -108,6 +108,9 @@ type mockDiskMountOps struct {
 	// findLoopErr, when non-nil, is returned from FindLoopByBacking and
 	// FindAllLoopBackings. Used to simulate a sysfs-degraded environment.
 	findLoopErr error
+	// opsLog records the relative order of Unmount and LoopDetach
+	// calls, so tests can assert ordering without parallel slices.
+	opsLog []string
 
 	createDirErr  error
 	attachErr     error
@@ -189,6 +192,7 @@ func (m *mockDiskMountOps) LoopDetach(devicePath string) error {
 		return m.detachErr
 	}
 	m.detachedLoops = append(m.detachedLoops, devicePath)
+	m.opsLog = append(m.opsLog, "LoopDetach:"+devicePath)
 	for imagePath, dev := range m.loopBacking {
 		if dev == devicePath {
 			delete(m.loopBacking, imagePath)
@@ -260,6 +264,7 @@ func (m *mockDiskMountOps) Unmount(path string) error {
 		return m.unmountErr
 	}
 	m.unmounts = append(m.unmounts, path)
+	m.opsLog = append(m.opsLog, "Unmount:"+path)
 	delete(m.mountedPaths, path)
 	return nil
 }

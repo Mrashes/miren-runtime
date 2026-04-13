@@ -1518,6 +1518,63 @@ func TestDiskVolumeControllerOrphanLoopSweep(t *testing.T) {
 	assert.Equal(t, before, len(mntOps.detachedLoops), "orphan sweep must run at most once per controller lifetime")
 }
 
+// TestDiskVolumeControllerOrphanSweepUnmountsBeforeDetach verifies that
+// when an orphan loop device is also backing an orphan mount, the sweep
+// unmounts the filesystem before detaching the loop. Detaching a loop
+// that still has a mounted filesystem returns EBUSY and leaves both
+// the mount and the device behind.
+func TestDiskVolumeControllerOrphanSweepUnmountsBeforeDetach(t *testing.T) {
+	ctx := t.Context()
+	log := testutils.TestLogger(t)
+
+	es, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	dataPath := t.TempDir()
+	nodeId := "test-node-1"
+	state := NewState()
+	volOps := newMockDiskVolumeOps()
+	mntOps := newMockDiskMountOps()
+
+	orphanImage := filepath.Join(dataPath, "volumes", "vol-wedged", "disk.img")
+	const orphanLoopDev = "/dev/loop9"
+	orphanMountPath := "/var/lib/miren/disks/vol-wedged"
+
+	// The kernel state: an orphan loop device backs a file under
+	// miren's volumes dir, and an orphan mount under diskMountBasePath
+	// is using that same device.
+	mntOps.loopBacking = map[string]string{orphanImage: orphanLoopDev}
+	mntOps.mountedPaths[orphanMountPath] = true
+	mntOps.mountDevices[orphanMountPath] = orphanLoopDev
+
+	vc := NewDiskVolumeController(log, dataPath, nodeId, state, volOps, mntOps)
+	vc.SetEAC(es.EAC)
+
+	err := vc.ReconcileWithEntities(ctx)
+	require.NoError(t, err)
+
+	// Both cleanups happened.
+	assert.Contains(t, mntOps.unmounts, orphanMountPath, "orphan mount should have been unmounted")
+	assert.Contains(t, mntOps.detachedLoops, orphanLoopDev, "orphan loop should have been detached")
+
+	// Critically: the unmount happened BEFORE the detach. If the
+	// order flips, a real kernel would reject the detach with EBUSY.
+	unmountIdx := -1
+	detachIdx := -1
+	for i, op := range mntOps.opsLog {
+		if op == "Unmount:"+orphanMountPath {
+			unmountIdx = i
+		}
+		if op == "LoopDetach:"+orphanLoopDev {
+			detachIdx = i
+		}
+	}
+	require.NotEqual(t, -1, unmountIdx, "Unmount missing from opsLog")
+	require.NotEqual(t, -1, detachIdx, "LoopDetach missing from opsLog")
+	assert.Less(t, unmountIdx, detachIdx,
+		"orphan sweep must unmount the filesystem before detaching its loop device")
+}
+
 func TestDiskVolumeControllerUniversalUnmountOnDelete(t *testing.T) {
 	ctx := t.Context()
 	log := testutils.TestLogger(t)

@@ -1138,6 +1138,32 @@ func (c *DiskVolumeController) Shutdown() {
 func (c *DiskVolumeController) reconcileOrphanKernelState() {
 	volumesDir := filepath.Join(c.dataPath, "volumes")
 
+	// First, unmount any active mount rooted under diskMountBasePath
+	// that doesn't correspond to a mounted volState. This has to happen
+	// BEFORE the loop detach step below: an orphan mount backed by an
+	// orphan loop device pins the loop, so detaching the loop first
+	// returns EBUSY and leaves both the mount and the device behind.
+	knownMounts := make(map[string]struct{})
+	for _, vol := range c.state.ListVolumes() {
+		if vol.Mounted && vol.MountPath != "" {
+			knownMounts[vol.MountPath] = struct{}{}
+		}
+	}
+	for _, am := range c.mntOps.FindMounts(diskMountBasePath) {
+		if _, ok := knownMounts[am.MountPath]; ok {
+			continue
+		}
+		c.log.Warn("orphan sweep: unmounting stale mount",
+			"mount_path", am.MountPath,
+			"device", am.Device,
+		)
+		if err := c.mntOps.Unmount(am.MountPath); err != nil {
+			c.log.Warn("orphan sweep: Unmount failed",
+				"mount_path", am.MountPath,
+				"error", err)
+		}
+	}
+
 	// Build the set of loop devices we legitimately own.
 	known := make(map[string]struct{})
 	for _, vol := range c.state.ListVolumes() {
@@ -1171,30 +1197,6 @@ func (c *DiskVolumeController) reconcileOrphanKernelState() {
 			c.log.Warn("orphan sweep: LoopDetach failed",
 				"device", dev,
 				"backing_file", backing,
-				"error", err)
-		}
-	}
-
-	// Also unmount any active mount rooted under diskMountBasePath that
-	// doesn't correspond to a mounted volState. Orphan mounts are rare
-	// but they pin loop devices and mask the detach step above.
-	knownMounts := make(map[string]struct{})
-	for _, vol := range c.state.ListVolumes() {
-		if vol.Mounted && vol.MountPath != "" {
-			knownMounts[vol.MountPath] = struct{}{}
-		}
-	}
-	for _, am := range c.mntOps.FindMounts(diskMountBasePath) {
-		if _, ok := knownMounts[am.MountPath]; ok {
-			continue
-		}
-		c.log.Warn("orphan sweep: unmounting stale mount",
-			"mount_path", am.MountPath,
-			"device", am.Device,
-		)
-		if err := c.mntOps.Unmount(am.MountPath); err != nil {
-			c.log.Warn("orphan sweep: Unmount failed",
-				"mount_path", am.MountPath,
 				"error", err)
 		}
 	}
