@@ -9,11 +9,6 @@ features:
     description: Schedule jobs across multiple runner nodes
     default: false
 
-  - name: usersubdomains
-    predicate: UserSubdomains
-    description: Allow claiming custom subdomains
-    default: false
-
   - name: adminapi
     predicate: AdminAPI
     description: Enable the admin API for application management functions

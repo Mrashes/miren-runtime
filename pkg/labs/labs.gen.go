@@ -12,7 +12,6 @@ import (
 const (
 	FeatureGlobalRouter       = "globalrouter"
 	FeatureDistributedRunners = "distributedrunners"
-	FeatureUserSubdomains     = "usersubdomains"
 	FeatureAdminAPI           = "adminapi"
 	FeatureRouteOIDC          = "routeoidc"
 	FeatureAddons             = "addons"
@@ -24,7 +23,6 @@ func AllFeatures() []string {
 	return []string{
 		FeatureGlobalRouter,
 		FeatureDistributedRunners,
-		FeatureUserSubdomains,
 		FeatureAdminAPI,
 		FeatureRouteOIDC,
 		FeatureAddons,
@@ -37,7 +35,6 @@ func FeatureDescriptions() map[string]string {
 	return map[string]string{
 		FeatureGlobalRouter:       "Use global NAT traversal router for connectivity",
 		FeatureDistributedRunners: "Schedule jobs across multiple runner nodes",
-		FeatureUserSubdomains:     "Allow claiming custom subdomains",
 		FeatureAdminAPI:           "Enable the admin API for application management functions",
 		FeatureRouteOIDC:          "Enable OIDC authentication for HTTP routes",
 		FeatureAddons:             "Enable the addon system for managed backing services",
@@ -54,7 +51,6 @@ var (
 var featureDefaults = map[string]bool{
 	FeatureGlobalRouter:       false,
 	FeatureDistributedRunners: false,
-	FeatureUserSubdomains:     false,
 	FeatureAdminAPI:           false,
 	FeatureRouteOIDC:          false,
 	FeatureAddons:             true,
@@ -156,12 +152,6 @@ func GlobalRouter() bool {
 // Schedule jobs across multiple runner nodes
 func DistributedRunners() bool {
 	return IsEnabled(FeatureDistributedRunners)
-}
-
-// UserSubdomains returns whether the usersubdomains feature is enabled.
-// Allow claiming custom subdomains
-func UserSubdomains() bool {
-	return IsEnabled(FeatureUserSubdomains)
 }
 
 // AdminAPI returns whether the adminapi feature is enabled.
