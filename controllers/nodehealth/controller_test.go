@@ -242,6 +242,56 @@ func TestSkipsAlreadyDeadAndStoppedSandboxes(t *testing.T) {
 		"RUNNING sandbox should be marked DEAD")
 }
 
+func TestDisabledNodeSkipsGracePeriod(t *testing.T) {
+	ctx := context.Background()
+	server, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	// Create a DISABLED node (simulating Drain in progress)
+	nodeID := createReadyNode(t, ctx, server.Client, "draining-node", &compute_v1alpha.Node{
+		Status: compute_v1alpha.DISABLED,
+	})
+
+	sbID := createScheduledSandbox(t, ctx, server, "test-sandbox", nodeID, compute_v1alpha.RUNNING)
+
+	ctrl := NewController(testutils.TestLogger(t), server.EAC)
+	ctrl.gracePeriod = 0 // would fire immediately if not skipped
+	require.NoError(t, ctrl.Init(ctx))
+
+	reconcileNode(t, ctx, server, ctrl)
+
+	assert.Equal(t, compute_v1alpha.RUNNING, getSandboxStatus(t, ctx, server, sbID),
+		"sandbox on DISABLED node should remain RUNNING (drain handles cleanup)")
+}
+
+func TestHandledNodeNotRescanned(t *testing.T) {
+	ctx := context.Background()
+	server, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	node := &compute_v1alpha.Node{ApiAddress: ":8444"}
+	nodeID, err := server.Client.Create(ctx, "test-node", node)
+	require.NoError(t, err)
+
+	sbID := createScheduledSandbox(t, ctx, server, "test-sandbox", nodeID, compute_v1alpha.RUNNING)
+
+	ctrl := NewController(testutils.TestLogger(t), server.EAC)
+	ctrl.gracePeriod = 0
+	require.NoError(t, ctrl.Init(ctx))
+
+	// First reconcile marks sandbox DEAD
+	reconcileNode(t, ctx, server, ctrl)
+	assert.Equal(t, compute_v1alpha.DEAD, getSandboxStatus(t, ctx, server, sbID))
+
+	// Create a new sandbox on the same dead node (simulating external creation)
+	sbNew := createScheduledSandbox(t, ctx, server, "new-sandbox", nodeID, compute_v1alpha.RUNNING)
+
+	// Second reconcile should skip (node already handled)
+	reconcileNode(t, ctx, server, ctrl)
+	assert.Equal(t, compute_v1alpha.RUNNING, getSandboxStatus(t, ctx, server, sbNew),
+		"new sandbox should not be marked DEAD because node was already handled")
+}
+
 func TestMultipleNodesIndependent(t *testing.T) {
 	ctx := context.Background()
 	server, cleanup := testutils.NewInMemEntityServer(t)

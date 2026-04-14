@@ -24,7 +24,12 @@ const DefaultGracePeriod = 5 * time.Minute
 // re-adopt its containers via reconcileSandboxesOnBoot(). We only want to
 // intervene when the runner is truly gone.
 //
+// Nodes with DISABLED status are intentionally excluded. DISABLED is set
+// by Drain() during graceful shutdown, which handles its own sandbox
+// cleanup. We don't want to race with that.
+//
 // Implements controller.ReconcileControllerI[*compute_v1alpha.Node]
+// Implements controller.DeletingReconcileController
 type Controller struct {
 	log         *slog.Logger
 	eac         *entityserver_v1alpha.EntityAccessClient
@@ -32,6 +37,7 @@ type Controller struct {
 
 	mu          sync.Mutex
 	unhealthyAt map[entity.Id]time.Time
+	handled     map[entity.Id]bool
 	now         func() time.Time // for testing
 }
 
@@ -44,6 +50,7 @@ func NewController(
 		eac:         eac,
 		gracePeriod: DefaultGracePeriod,
 		unhealthyAt: make(map[entity.Id]time.Time),
+		handled:     make(map[entity.Id]bool),
 		now:         time.Now,
 	}
 }
@@ -55,6 +62,13 @@ func (c *Controller) Init(ctx context.Context) error {
 
 func (c *Controller) Reconcile(ctx context.Context, node *compute_v1alpha.Node, meta *entity.Meta) error {
 	if node.Status == compute_v1alpha.READY {
+		c.clearTracking(node.ID)
+		return nil
+	}
+
+	// DISABLED is operator-initiated (Drain). The drain process handles
+	// its own sandbox cleanup, so we stay out of its way.
+	if node.Status == compute_v1alpha.DISABLED {
 		c.clearTracking(node.ID)
 		return nil
 	}
@@ -71,21 +85,45 @@ func (c *Controller) Reconcile(ctx context.Context, node *compute_v1alpha.Node, 
 		return nil
 	}
 
+	if c.isHandled(node.ID) {
+		return nil
+	}
+
 	c.log.Warn("node not ready, grace period expired, marking sandboxes dead",
 		"node", node.ID,
 		"status", node.Status,
 		"elapsed", elapsed.Round(time.Second))
 
-	return c.markNodeSandboxesDead(ctx, node.ID)
+	err := c.markNodeSandboxesDead(ctx, node.ID)
+	if err == nil {
+		c.setHandled(node.ID)
+	}
+	return err
 }
 
-// clearTracking removes a node from the unhealthy tracker (it recovered).
+// Delete cleans up tracking state when a node entity is removed
+// (e.g., via "miren runner remove").
+func (c *Controller) Delete(ctx context.Context, id entity.Id) error {
+	c.clearTracking(id)
+	return nil
+}
+
+// clearTracking removes a node from all tracking maps (it recovered,
+// was removed, or entered a managed state like DISABLED).
 func (c *Controller) clearTracking(nodeID entity.Id) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, was := c.unhealthyAt[nodeID]; was {
-		c.log.Info("node recovered, clearing grace period tracking", "node", nodeID)
+	wasTracked := false
+	if _, ok := c.unhealthyAt[nodeID]; ok {
 		delete(c.unhealthyAt, nodeID)
+		wasTracked = true
+	}
+	if c.handled[nodeID] {
+		delete(c.handled, nodeID)
+		wasTracked = true
+	}
+	if wasTracked {
+		c.log.Info("node recovered, clearing grace period tracking", "node", nodeID)
 	}
 }
 
@@ -100,6 +138,18 @@ func (c *Controller) trackUnhealthy(nodeID entity.Id) time.Time {
 	now := c.now()
 	c.unhealthyAt[nodeID] = now
 	return now
+}
+
+func (c *Controller) isHandled(nodeID entity.Id) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.handled[nodeID]
+}
+
+func (c *Controller) setHandled(nodeID entity.Id) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.handled[nodeID] = true
 }
 
 func (c *Controller) markNodeSandboxesDead(ctx context.Context, nodeID entity.Id) error {
