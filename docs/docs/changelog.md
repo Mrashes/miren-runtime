@@ -5,6 +5,11 @@ All notable changes to Miren Runtime will be documented in this file.
 ## Unreleased
 *main*
 
+---
+
+## v0.7.0
+*2026-04-14*
+
 **Features**
 - **Managed addons** - Miren now provisions and manages backing services alongside your apps. Add a database or cache with `miren addon add`, and Miren handles the container lifecycle, networking, and credential injection. Launch includes PostgreSQL, MySQL, Valkey, Memcache, and RabbitMQ, with version selection and custom OCI image support. ([#688](https://github.com/mirendev/runtime/pull/688), [#706](https://github.com/mirendev/runtime/pull/706), [#720](https://github.com/mirendev/runtime/pull/720), [#726](https://github.com/mirendev/runtime/pull/726), [#727](https://github.com/mirendev/runtime/pull/727), [#743](https://github.com/mirendev/runtime/pull/743), [#755](https://github.com/mirendev/runtime/pull/755), [#758](https://github.com/mirendev/runtime/pull/758), [#760](https://github.com/mirendev/runtime/pull/760))
 - **Short entity IDs** - Entities now get short 3-8 character identifiers that work anywhere a full ID does. CLI tables are easier to read and IDs are easy to type from memory. ([#696](https://github.com/mirendev/runtime/pull/696), [#721](https://github.com/mirendev/runtime/pull/721), [#741](https://github.com/mirendev/runtime/pull/741))
