@@ -96,6 +96,21 @@ func (m *mockDiskMountOps) LoopDetach(devicePath string) error {
 	return nil
 }
 
+func (m *mockDiskMountOps) FindLoopByBacking(imagePath string) (string, error) {
+	if dev, ok := m.loopDevices[imagePath]; ok {
+		return dev, nil
+	}
+	return "", nil
+}
+
+func (m *mockDiskMountOps) FindAllLoopBackings() (map[string]string, error) {
+	result := make(map[string]string, len(m.loopDevices))
+	for img, dev := range m.loopDevices {
+		result[dev] = img
+	}
+	return result, nil
+}
+
 func (m *mockDiskMountOps) LbdAttach(_ context.Context, imagePath, _ string) (string, error) {
 	devPath := "/dev/lbd" + string(rune('0'+m.nextLoopIndex))
 	m.nextLoopIndex++
@@ -131,6 +146,10 @@ func (m *mockDiskMountOps) IsMounted(path string) bool {
 	return m.existingMounts[path]
 }
 
+func (m *mockDiskMountOps) IsDeviceMounted(_ string) (bool, error) {
+	return false, nil
+}
+
 func (m *mockDiskMountOps) IsFormatted(_ context.Context, device, _ string) (bool, error) {
 	_, ok := m.formattedDisks[device]
 	return ok, nil
@@ -138,6 +157,10 @@ func (m *mockDiskMountOps) IsFormatted(_ context.Context, device, _ string) (boo
 
 func (m *mockDiskMountOps) FormatDevice(_ context.Context, device, filesystem string) error {
 	m.formattedDisks[device] = filesystem
+	return nil
+}
+
+func (m *mockDiskMountOps) Fsck(_ context.Context, _, _ string) error {
 	return nil
 }
 

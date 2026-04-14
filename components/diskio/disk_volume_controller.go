@@ -36,6 +36,10 @@ type DiskVolumeController struct {
 	// keepMounts, when true, causes Shutdown to skip unmounting volumes.
 	// Set during reload (SIGUSR2) so the new process can pick them up.
 	keepMounts bool
+
+	// orphanSweepDone ensures the boot-time orphan kernel state
+	// reconciliation runs at most once per controller lifetime.
+	orphanSweepDone bool
 }
 
 func NewDiskVolumeController(log *slog.Logger, dataPath, nodeId string, state *State, ops DiskVolumeOps, mntOps DiskMountOps) *DiskVolumeController {
@@ -927,16 +931,53 @@ func (c *DiskVolumeController) ensureVolumeMount(ctx context.Context, entityId s
 		"mount_path", mountPath,
 	)
 
-	// If we had a previous loop device recorded, try to detach it first.
-	// After a restart the device is already gone, so ignore errors.
-	if volState.DevicePath != "" {
-		_ = c.mntOps.LoopDetach(volState.DevicePath)
+	// Check whether this backing file is already attached to a loop device
+	// in the kernel. If it is — e.g. left over from a SIGKILL'd miren whose
+	// container kept holding the old loop open — adopt that device rather
+	// than detach and re-attach. Detaching a live loop device and then
+	// attaching the same backing file to a new one produces two loop
+	// devices with incoherent page caches, which corrupts the filesystem.
+	// Adopting the existing device sidesteps the problem entirely: the
+	// kernel state is already consistent, we just need to (re)mount on
+	// our target path. We now own it — rollback cleanup on failure will
+	// detach it like any other device we created.
+	var devicePath string
+	existing, findErr := c.mntOps.FindLoopByBacking(imagePath)
+	if findErr != nil {
+		// Fail closed: if we can't see the kernel's loop state, we
+		// can't tell whether attaching would double-attach. Return a
+		// retriable error so the next reconcile tick tries again once
+		// sysfs is healthy.
+		return fmt.Errorf("find loop device for backing file %s: %w", imagePath, findErr)
+	}
+	if existing != "" {
+		c.log.Info("adopting existing loop device for backing file",
+			"entity_id", entityId,
+			"image_path", imagePath,
+			"device", existing,
+		)
+		devicePath = existing
+	} else {
+		// No existing loop. Any stale volState.DevicePath is meaningless
+		// (the kernel has no loop backing this image), so we don't touch
+		// it — the loop index it names may have been reallocated to some
+		// other volume in the meantime.
 		volState.DevicePath = ""
+
+		var err error
+		devicePath, err = c.mntOps.LoopAttach(imagePath)
+		if err != nil {
+			return fmt.Errorf("failed to attach loop device: %w", err)
+		}
 	}
 
-	devicePath, err := c.mntOps.LoopAttach(imagePath)
-	if err != nil {
-		return fmt.Errorf("failed to attach loop device: %w", err)
+	// rollbackDetach releases the loop device, logging any failure
+	// rather than silently discarding it so unclean cleanup is visible.
+	rollbackDetach := func(reason string) {
+		if derr := c.mntOps.LoopDetach(devicePath); derr != nil {
+			c.log.Warn("rollback: failed to detach loop device",
+				"entity_id", entityId, "device", devicePath, "reason", reason, "error", derr)
+		}
 	}
 
 	filesystem := volState.Filesystem
@@ -946,7 +987,7 @@ func (c *DiskVolumeController) ensureVolumeMount(ctx context.Context, entityId s
 
 	formatted, err := c.mntOps.IsFormatted(ctx, devicePath, filesystem)
 	if err != nil {
-		c.mntOps.LoopDetach(devicePath)
+		rollbackDetach("IsFormatted failed")
 		return fmt.Errorf("failed to check if formatted: %w", err)
 	}
 
@@ -965,13 +1006,13 @@ func (c *DiskVolumeController) ensureVolumeMount(ctx context.Context, entityId s
 			c.log.Error("format device failed, will retry", "device", devicePath, "error", err)
 
 			if time.Now().After(formatDeadline) {
-				c.mntOps.LoopDetach(devicePath)
+				rollbackDetach("format device retries exhausted")
 				return fmt.Errorf("failed to format device after retries: %w", err)
 			}
 
 			select {
 			case <-ctx.Done():
-				c.mntOps.LoopDetach(devicePath)
+				rollbackDetach("context canceled during format")
 				return ctx.Err()
 			case <-time.After(backoff):
 			}
@@ -984,12 +1025,12 @@ func (c *DiskVolumeController) ensureVolumeMount(ctx context.Context, entityId s
 	}
 
 	if err := c.mntOps.CreateDir(mountPath, 0755); err != nil {
-		c.mntOps.LoopDetach(devicePath)
+		rollbackDetach("CreateDir failed")
 		return fmt.Errorf("failed to create mount point: %w", err)
 	}
 
-	if err := c.mntOps.Mount(devicePath, mountPath, filesystem, false); err != nil {
-		c.mntOps.LoopDetach(devicePath)
+	if err := mountWithFsckRetry(ctx, c.log, c.mntOps, devicePath, mountPath, filesystem, false); err != nil {
+		rollbackDetach("Mount failed")
 		return fmt.Errorf("failed to mount: %w", err)
 	}
 
@@ -1076,6 +1117,88 @@ func (c *DiskVolumeController) Shutdown() {
 
 	if err := c.state.Save(); err != nil {
 		c.log.Warn("failed to save state after shutdown", "error", err)
+	}
+}
+
+// reconcileOrphanKernelState runs once at boot and tears down any kernel
+// loop devices or mounts that are rooted in miren's volumes directory but
+// that no longer correspond to a known volume in local state.
+//
+// This is a belt-and-suspenders complement to the adopt-existing-loop
+// logic in ensureVolumeMount. Adoption catches loops we want to reuse;
+// this sweep catches the opposite case — a stale loop (or mount) left in
+// the kernel after an unclean shutdown, whose volume is no longer present
+// or has been deleted. Without it, such loops leak forever and pin
+// kernel state that should have been cleaned up.
+//
+// Must run AFTER the entity walk and restart-recovery mount step in
+// ReconcileWithEntities, so that every legitimate loop device has
+// already been adopted into some volState.DevicePath and will not be
+// mistaken for an orphan.
+func (c *DiskVolumeController) reconcileOrphanKernelState() {
+	volumesDir := filepath.Join(c.dataPath, "volumes")
+
+	// First, unmount any active mount rooted under diskMountBasePath
+	// that doesn't correspond to a mounted volState. This has to happen
+	// BEFORE the loop detach step below: an orphan mount backed by an
+	// orphan loop device pins the loop, so detaching the loop first
+	// returns EBUSY and leaves both the mount and the device behind.
+	knownMounts := make(map[string]struct{})
+	for _, vol := range c.state.ListVolumes() {
+		if vol.Mounted && vol.MountPath != "" {
+			knownMounts[vol.MountPath] = struct{}{}
+		}
+	}
+	for _, am := range c.mntOps.FindMounts(diskMountBasePath) {
+		if _, ok := knownMounts[am.MountPath]; ok {
+			continue
+		}
+		c.log.Warn("orphan sweep: unmounting stale mount",
+			"mount_path", am.MountPath,
+			"device", am.Device,
+		)
+		if err := c.mntOps.Unmount(am.MountPath); err != nil {
+			c.log.Warn("orphan sweep: Unmount failed",
+				"mount_path", am.MountPath,
+				"error", err)
+		}
+	}
+
+	// Build the set of loop devices we legitimately own.
+	known := make(map[string]struct{})
+	for _, vol := range c.state.ListVolumes() {
+		if vol.DevicePath != "" {
+			known[vol.DevicePath] = struct{}{}
+		}
+	}
+
+	backings, err := c.mntOps.FindAllLoopBackings()
+	if err != nil {
+		c.log.Warn("orphan sweep: FindAllLoopBackings failed", "error", err)
+		return
+	}
+
+	for dev, backing := range backings {
+		if _, ok := known[dev]; ok {
+			continue
+		}
+		// Only touch loops backing files inside miren's volumes dir.
+		// Anything else is not ours to manage.
+		if !strings.HasPrefix(backing, volumesDir+string(filepath.Separator)) &&
+			!strings.HasPrefix(backing, volumesDir+"/") {
+			continue
+		}
+
+		c.log.Warn("orphan sweep: detaching stale loop device",
+			"device", dev,
+			"backing_file", backing,
+		)
+		if err := c.mntOps.LoopDetach(dev); err != nil {
+			c.log.Warn("orphan sweep: LoopDetach failed",
+				"device", dev,
+				"backing_file", backing,
+				"error", err)
+		}
 	}
 }
 
@@ -1169,6 +1292,17 @@ func (c *DiskVolumeController) ReconcileWithEntities(ctx context.Context) error 
 				c.log.Warn("failed to re-mount volume", "entity_id", volState.EntityId, "error", err)
 			}
 		}
+	}
+
+	// Boot-time orphan sweep: runs once per controller lifetime, after
+	// every legitimate volume has had a chance to adopt its existing
+	// kernel state. Anything left over in /proc/mounts or /sys/block/loop*
+	// that points at our volumes dir but no known volume is stale and
+	// gets torn down. Without this, loops from uncleanly-shut-down volumes
+	// leak forever.
+	if !c.orphanSweepDone {
+		c.reconcileOrphanKernelState()
+		c.orphanSweepDone = true
 	}
 
 	return nil

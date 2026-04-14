@@ -262,17 +262,6 @@ func (c *DiskMountController) attachAndMount(ctx context.Context, mount *storage
 
 	imagePath := filepath.Join(volState.DiskPath, "disk.img")
 
-	// Detach any stale device before re-attaching. After a restart the old
-	// device may already be gone, so errors are ignored.
-	if ms := c.state.GetMount(entityId); ms != nil && ms.DevicePath != "" {
-		c.log.Info("detaching stale device before re-attach", "entity_id", entityId, "device", ms.DevicePath)
-		if strings.HasPrefix(ms.DevicePath, "/dev/lbd") {
-			_ = c.ops.LbdDetach(ctx, ms.DevicePath)
-		} else if strings.HasPrefix(ms.DevicePath, "/dev/loop") {
-			_ = c.ops.LoopDetach(ms.DevicePath)
-		}
-	}
-
 	// Attach device based on volume mode
 	var devicePath string
 	var err error
@@ -291,10 +280,35 @@ func (c *DiskMountController) attachAndMount(ctx context.Context, mount *storage
 			return fmt.Errorf("failed to attach lbd device: %w", err)
 		}
 	} else {
-		devicePath, err = c.ops.LoopAttach(imagePath)
-		if err != nil {
-			c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to attach loop device: %v", err))
-			return fmt.Errorf("failed to attach loop device: %w", err)
+		// If the backing file is already attached to a loop device in the
+		// kernel — e.g. left over from a SIGKILL'd miren whose container
+		// kept holding the old loop open — adopt that device rather than
+		// create a second one. Attaching the same backing file to two
+		// loop devices gives each one its own incoherent page cache and
+		// corrupts the filesystem.
+		existing, findErr := c.ops.FindLoopByBacking(imagePath)
+		if findErr != nil {
+			// Fail closed: if we can't see the kernel's loop state, we
+			// can't tell whether attaching would double-attach. Record
+			// the error and return a retriable reconcile error so the
+			// next tick tries again once sysfs is healthy.
+			msg := fmt.Sprintf("find loop device for backing file %s: %v", imagePath, findErr)
+			c.setMountError(ctx, mount.ID, msg)
+			return fmt.Errorf("find loop device for backing file %s: %w", imagePath, findErr)
+		}
+		if existing != "" {
+			c.log.Info("adopting existing loop device for backing file",
+				"entity_id", entityId,
+				"image_path", imagePath,
+				"device", existing,
+			)
+			devicePath = existing
+		} else {
+			devicePath, err = c.ops.LoopAttach(imagePath)
+			if err != nil {
+				c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to attach loop device: %v", err))
+				return fmt.Errorf("failed to attach loop device: %w", err)
+			}
 		}
 	}
 
@@ -432,7 +446,7 @@ func (c *DiskMountController) mountVolume(ctx context.Context, mount *storage_v1
 		}
 	}
 
-	if err := c.ops.Mount(mountState.DevicePath, mount.MountPath, filesystem, mount.ReadOnly); err != nil {
+	if err := mountWithFsckRetry(ctx, c.log, c.ops, mountState.DevicePath, mount.MountPath, filesystem, mount.ReadOnly); err != nil {
 		c.setMountError(ctx, mount.ID, fmt.Sprintf("failed to mount: %v", err))
 		return fmt.Errorf("failed to mount: %w", err)
 	}

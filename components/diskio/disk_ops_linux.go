@@ -123,15 +123,35 @@ func (r *realDiskMountOps) LoopAttach(imagePath string) (string, error) {
 	}
 	defer backingFile.Close()
 
-	// Use LOOP_CONFIGURE to attach with 4K sector size in a single ioctl
+	// Use LOOP_CONFIGURE to attach with 4K sector size in a single ioctl.
+	//
+	// LO_FLAGS_DIRECT_IO tells the kernel to bypass the loop device's own
+	// page cache and read/write the backing file via O_DIRECT. Without
+	// this flag the loop device keeps an independent page cache layered
+	// on top of the backing filesystem's page cache, and the two can
+	// diverge across an unclean shutdown, losing writes the filesystem
+	// believed had been flushed. Direct I/O also avoids the
+	// double-buffer overhead. Every filesystem miren runs on (ext4,
+	// xfs, btrfs) supports O_DIRECT on regular files, so this is safe;
+	// if the backing file ever lives on a filesystem that doesn't, the
+	// ioctl will fail loudly at attach time.
 	config := unix.LoopConfig{
 		Fd:   uint32(backingFile.Fd()),
 		Size: 4096, // 4K logical block size
+		Info: unix.LoopInfo64{
+			Flags: unix.LO_FLAGS_DIRECT_IO,
+		},
 	}
 
 	if err := unix.IoctlLoopConfigure(int(loopDev.Fd()), &config); err != nil {
 		return "", fmt.Errorf("LOOP_CONFIGURE failed for %s: %w", devicePath, err)
 	}
+
+	r.log.Info("attached loop device",
+		"device", devicePath,
+		"image_path", imagePath,
+		"direct_io", true,
+	)
 
 	return devicePath, nil
 }
@@ -149,6 +169,66 @@ func (r *realDiskMountOps) LoopDetach(devicePath string) error {
 	}
 
 	return nil
+}
+
+// FindLoopByBacking walks /sys/block/loop*/loop/backing_file and returns the
+// loop device path currently backing imagePath, or "" if none is attached.
+//
+// The kernel never deletes a stale loop device just because miren restarted,
+// so finding a match here means a previous miren (or an uncleanly shut down
+// container) already attached this image. Attaching it a second time would
+// produce two loop devices with independent, incoherent page caches and
+// corrupt the filesystem. Callers should reuse the returned device, fail
+// loudly, or detach it explicitly.
+func (r *realDiskMountOps) FindLoopByBacking(imagePath string) (string, error) {
+	absPath, err := filepath.Abs(imagePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve absolute path for %s: %w", imagePath, err)
+	}
+
+	all, err := r.FindAllLoopBackings()
+	if err != nil {
+		return "", err
+	}
+	for dev, backing := range all {
+		if backing == absPath {
+			return dev, nil
+		}
+	}
+	return "", nil
+}
+
+// FindAllLoopBackings walks /sys/block/loop*/loop/backing_file and returns
+// a map of loop device path → backing file path for every loop device in
+// the kernel. Devices that race with a concurrent detach are skipped.
+func (r *realDiskMountOps) FindAllLoopBackings() (map[string]string, error) {
+	entries, err := filepath.Glob("/sys/block/loop*/loop/backing_file")
+	if err != nil {
+		return nil, fmt.Errorf("failed to glob loop backing files: %w", err)
+	}
+
+	result := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		data, err := os.ReadFile(entry)
+		if err != nil {
+			// Loop device may have been detached between glob and read — skip.
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("failed to read %s: %w", entry, err)
+		}
+
+		backing := strings.TrimSpace(string(data))
+		// The kernel appends " (deleted)" when the backing inode is
+		// unlinked; strip it so callers can compare against a live path.
+		backing = strings.TrimSuffix(backing, " (deleted)")
+
+		// entry is /sys/block/loopN/loop/backing_file — extract loopN.
+		loopName := filepath.Base(filepath.Dir(filepath.Dir(entry)))
+		result["/dev/"+loopName] = backing
+	}
+
+	return result, nil
 }
 
 func (r *realDiskMountOps) LbdAttach(ctx context.Context, imagePath, logDir string) (string, error) {
@@ -226,6 +306,26 @@ func (r *realDiskMountOps) IsMounted(path string) bool {
 	return false
 }
 
+func (r *realDiskMountOps) IsDeviceMounted(device string) (bool, error) {
+	f, err := os.Open("/proc/mounts")
+	if err != nil {
+		return false, fmt.Errorf("open /proc/mounts: %w", err)
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) >= 1 && fields[0] == device {
+			return true, nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return false, fmt.Errorf("scan /proc/mounts: %w", err)
+	}
+	return false, nil
+}
+
 func (r *realDiskMountOps) FindMounts(pathPrefix string) []ActiveMount {
 	f, err := os.Open("/proc/mounts")
 	if err != nil {
@@ -261,6 +361,49 @@ func (r *realDiskMountOps) IsFormatted(ctx context.Context, device, filesystem s
 
 	detectedFS := strings.TrimSpace(string(output))
 	return detectedFS == filesystem, nil
+}
+
+// Fsck runs a filesystem check-and-repair on device. For ext4 we use
+// `fsck.ext4 -y -f` (answer yes to all questions, force even if the
+// journal looks clean). xfs uses `xfs_repair`. btrfs uses `btrfs check
+// --repair`. The caller is responsible for ensuring the device is
+// detached from any mountpoint before calling this.
+func (r *realDiskMountOps) Fsck(ctx context.Context, device, filesystem string) error {
+	filesystem = normalizeFilesystem(filesystem)
+	var cmd *exec.Cmd
+	switch filesystem {
+	case "ext4":
+		cmd = exec.CommandContext(ctx, "fsck.ext4", "-y", "-f", device)
+	case "xfs":
+		cmd = exec.CommandContext(ctx, "xfs_repair", device)
+	case "btrfs":
+		cmd = exec.CommandContext(ctx, "btrfs", "check", "--repair", device)
+	default:
+		return fmt.Errorf("unsupported filesystem for fsck: %s", filesystem)
+	}
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// fsck.ext4 exits non-zero for a variety of recoverable
+		// conditions (e.g. 1 = filesystem errors corrected). Treat the
+		// "corrected" exit code as success so we can retry the mount.
+		if filesystem == "ext4" {
+			if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+				r.log.Info("fsck.ext4 corrected filesystem errors",
+					"device", device,
+					"output", string(output),
+				)
+				return nil
+			}
+		}
+		return fmt.Errorf("fsck.%s failed: %w\noutput: %s", filesystem, err, string(output))
+	}
+
+	r.log.Info("fsck completed",
+		"device", device,
+		"filesystem", filesystem,
+	)
+	return nil
 }
 
 func (r *realDiskMountOps) FormatDevice(ctx context.Context, device, filesystem string) error {

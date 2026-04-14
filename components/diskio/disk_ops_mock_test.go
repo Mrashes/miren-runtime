@@ -102,17 +102,30 @@ type mockDiskMountOps struct {
 	mountDevices  map[string]string // mount path → device, for FindMounts
 	formattedDevs map[string]string
 	formatCalls   []diskMockFormat
+	// loopBacking maps imagePath → existing loop device, for FindLoopByBacking.
+	// Tests populate this to simulate a pre-existing attachment.
+	loopBacking map[string]string
+	// findLoopErr, when non-nil, is returned from FindLoopByBacking and
+	// FindAllLoopBackings. Used to simulate a sysfs-degraded environment.
+	findLoopErr error
+	// opsLog records the relative order of Unmount and LoopDetach
+	// calls, so tests can assert ordering without parallel slices.
+	opsLog []string
 
-	createDirErr  error
-	attachErr     error
-	detachErr     error
-	lbdAttachErr  error
-	lbdDetachErr  error
-	lbdAvailable  bool
-	mountErr      error
-	unmountErr    error
-	isFormattedFn func(device, filesystem string) (bool, error)
-	formatErr     error
+	createDirErr       error
+	attachErr          error
+	detachErr          error
+	isDeviceMountedErr error
+	lbdAttachErr       error
+	lbdDetachErr       error
+	lbdAvailable       bool
+	mountErr           error
+	unmountErr         error
+	isFormattedFn      func(device, filesystem string) (bool, error)
+	formatErr          error
+	fsckCalls          []diskMockFsck
+	fsckErr            error
+	fsckFn             func(device, filesystem string) error
 
 	nextLoopDevice string
 	nextLbdDevice  string
@@ -131,6 +144,11 @@ type diskMockMount struct {
 }
 
 type diskMockFormat struct {
+	device     string
+	filesystem string
+}
+
+type diskMockFsck struct {
 	device     string
 	filesystem string
 }
@@ -163,6 +181,10 @@ func (m *mockDiskMountOps) LoopAttach(imagePath string) (string, error) {
 		return "", m.attachErr
 	}
 	m.attachedLoops = append(m.attachedLoops, imagePath)
+	if m.loopBacking == nil {
+		m.loopBacking = make(map[string]string)
+	}
+	m.loopBacking[imagePath] = m.nextLoopDevice
 	return m.nextLoopDevice, nil
 }
 
@@ -171,7 +193,37 @@ func (m *mockDiskMountOps) LoopDetach(devicePath string) error {
 		return m.detachErr
 	}
 	m.detachedLoops = append(m.detachedLoops, devicePath)
+	m.opsLog = append(m.opsLog, "LoopDetach:"+devicePath)
+	for imagePath, dev := range m.loopBacking {
+		if dev == devicePath {
+			delete(m.loopBacking, imagePath)
+		}
+	}
 	return nil
+}
+
+func (m *mockDiskMountOps) FindLoopByBacking(imagePath string) (string, error) {
+	if m.findLoopErr != nil {
+		return "", m.findLoopErr
+	}
+	if m.loopBacking == nil {
+		return "", nil
+	}
+	return m.loopBacking[imagePath], nil
+}
+
+func (m *mockDiskMountOps) FindAllLoopBackings() (map[string]string, error) {
+	if m.findLoopErr != nil {
+		return nil, m.findLoopErr
+	}
+	if m.loopBacking == nil {
+		return map[string]string{}, nil
+	}
+	result := make(map[string]string, len(m.loopBacking))
+	for imagePath, dev := range m.loopBacking {
+		result[dev] = imagePath
+	}
+	return result, nil
 }
 
 func (m *mockDiskMountOps) LbdAttach(_ context.Context, imagePath, logDir string) (string, error) {
@@ -213,12 +265,28 @@ func (m *mockDiskMountOps) Unmount(path string) error {
 		return m.unmountErr
 	}
 	m.unmounts = append(m.unmounts, path)
+	m.opsLog = append(m.opsLog, "Unmount:"+path)
 	delete(m.mountedPaths, path)
 	return nil
 }
 
 func (m *mockDiskMountOps) IsMounted(path string) bool {
 	return m.mountedPaths[path]
+}
+
+func (m *mockDiskMountOps) IsDeviceMounted(device string) (bool, error) {
+	if m.isDeviceMountedErr != nil {
+		return false, m.isDeviceMountedErr
+	}
+	for path, mounted := range m.mountedPaths {
+		if !mounted {
+			continue
+		}
+		if m.mountDevices[path] == device {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (m *mockDiskMountOps) FindMounts(pathPrefix string) []ActiveMount {
@@ -251,4 +319,12 @@ func (m *mockDiskMountOps) FormatDevice(_ context.Context, device, filesystem st
 	m.formatCalls = append(m.formatCalls, diskMockFormat{device: device, filesystem: filesystem})
 	m.formattedDevs[device] = filesystem
 	return nil
+}
+
+func (m *mockDiskMountOps) Fsck(_ context.Context, device, filesystem string) error {
+	m.fsckCalls = append(m.fsckCalls, diskMockFsck{device: device, filesystem: filesystem})
+	if m.fsckFn != nil {
+		return m.fsckFn(device, filesystem)
+	}
+	return m.fsckErr
 }

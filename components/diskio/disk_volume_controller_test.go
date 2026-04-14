@@ -2,6 +2,7 @@ package diskio
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -1323,6 +1324,255 @@ func TestDiskVolumeControllerUniversalRemountOnReconcile(t *testing.T) {
 	volState := state.GetVolume("disk_volume/vol-remount")
 	require.NotNil(t, volState)
 	assert.True(t, volState.Mounted)
+}
+
+// TestDiskVolumeControllerUniversalAdoptsExistingLoopDevice verifies that
+// when the backing disk image is already attached to a loop device in the
+// kernel (e.g. left over from a SIGKILL'd miren whose container kept
+// holding the old loop open), the universal-mode remount path adopts that
+// existing device rather than allocating a second loop for the same file.
+// Double-attach would produce two incoherent page caches and corrupt the
+// filesystem.
+func TestDiskVolumeControllerUniversalAdoptsExistingLoopDevice(t *testing.T) {
+	ctx := t.Context()
+	log := testutils.TestLogger(t)
+
+	es, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	dataPath := t.TempDir()
+	nodeId := "test-node-1"
+	state := NewState()
+	volOps := newMockDiskVolumeOps()
+	mntOps := newMockDiskMountOps()
+
+	volPath := filepath.Join(dataPath, "volumes", "vol-972")
+	mountPath := filepath.Join(dataPath, "vol-972")
+	imagePath := filepath.Join(volPath, "disk.img")
+
+	// Pre-populate state: volume is ready but NOT mounted (simulating
+	// restart after SIGKILL). The local state may have a stale DevicePath
+	// or none at all — either way, we should adopt the kernel's loop.
+	state.SetVolume("disk_volume/vol-972", &VolumeState{
+		EntityId:   "disk_volume/vol-972",
+		VolumeId:   "vol-972",
+		DiskPath:   volPath,
+		SizeBytes:  10 * 1024 * 1024 * 1024,
+		Filesystem: "ext4",
+		Mode:       storage_v1alpha.VM_UNIVERSAL,
+		Mounted:    false,
+		MountPath:  mountPath,
+	})
+	volOps.existingPaths[volPath] = true
+
+	// Simulate the kernel still holding a loop device for this image,
+	// pre-formatted so the adoption path doesn't try to mkfs over it.
+	const staleLoopDev = "/dev/loop7"
+	mntOps.loopBacking = map[string]string{imagePath: staleLoopDev}
+	mntOps.formattedDevs[staleLoopDev] = "ext4"
+
+	vc := NewDiskVolumeController(log, dataPath, nodeId, state, volOps, mntOps)
+	vc.SetEAC(es.EAC)
+
+	vol := &storage_v1alpha.DiskVolume{
+		ID:           "disk_volume/vol-972",
+		NodeId:       entity.Id("node/" + nodeId),
+		SizeGb:       10,
+		Filesystem:   "ext4",
+		VolumeMode:   storage_v1alpha.VM_UNIVERSAL,
+		DesiredState: storage_v1alpha.DV_PRESENT,
+		ActualState:  storage_v1alpha.DV_READY,
+	}
+	createDiskVolumeEntity(ctx, t, es, vol)
+
+	err := vc.ReconcileWithEntities(ctx)
+	require.NoError(t, err)
+
+	// Critically: LoopAttach must NOT have been called. A second loop
+	// device backing the same file would be a double-attach.
+	assert.Empty(t, mntOps.attachedLoops, "LoopAttach must not be called when backing file is already attached")
+
+	// The existing device should have been adopted and mounted.
+	require.Len(t, mntOps.mounts, 1)
+	assert.Equal(t, staleLoopDev, mntOps.mounts[0].device)
+
+	// Pre-formatted, so FormatDevice must not be called.
+	assert.Empty(t, mntOps.formatCalls, "adopted pre-formatted device must not be re-formatted")
+
+	volState := state.GetVolume("disk_volume/vol-972")
+	require.NotNil(t, volState)
+	assert.True(t, volState.Mounted)
+	assert.Equal(t, staleLoopDev, volState.DevicePath)
+}
+
+// TestDiskVolumeControllerUniversalFailsClosedWhenFindLoopErrors verifies
+// that if the kernel's loop state cannot be read, ensureVolumeMount
+// refuses to allocate a fresh loop device. Without this guard, a sysfs
+// read failure would bypass the adoption check and could produce a
+// double-attach.
+func TestDiskVolumeControllerUniversalFailsClosedWhenFindLoopErrors(t *testing.T) {
+	ctx := t.Context()
+	log := testutils.TestLogger(t)
+
+	es, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	dataPath := t.TempDir()
+	nodeId := "test-node-1"
+	state := NewState()
+	volOps := newMockDiskVolumeOps()
+	mntOps := newMockDiskMountOps()
+
+	volPath := filepath.Join(dataPath, "volumes", "vol-fcl")
+	mountPath := filepath.Join(dataPath, "vol-fcl")
+
+	state.SetVolume("disk_volume/vol-fcl", &VolumeState{
+		EntityId:   "disk_volume/vol-fcl",
+		VolumeId:   "vol-fcl",
+		DiskPath:   volPath,
+		SizeBytes:  10 * 1024 * 1024 * 1024,
+		Filesystem: "ext4",
+		Mode:       storage_v1alpha.VM_UNIVERSAL,
+		Mounted:    false,
+		MountPath:  mountPath,
+	})
+	volOps.existingPaths[volPath] = true
+
+	// Simulate sysfs being unreadable.
+	mntOps.findLoopErr = errors.New("sysfs read error")
+
+	vc := NewDiskVolumeController(log, dataPath, nodeId, state, volOps, mntOps)
+	vc.SetEAC(es.EAC)
+
+	vol := &storage_v1alpha.DiskVolume{
+		ID:           "disk_volume/vol-fcl",
+		NodeId:       entity.Id("node/" + nodeId),
+		SizeGb:       10,
+		Filesystem:   "ext4",
+		VolumeMode:   storage_v1alpha.VM_UNIVERSAL,
+		DesiredState: storage_v1alpha.DV_PRESENT,
+		ActualState:  storage_v1alpha.DV_READY,
+	}
+	createDiskVolumeEntity(ctx, t, es, vol)
+
+	// Reconcile records per-volume errors internally and returns nil,
+	// but we verify the behavior via side effects.
+	err := vc.ReconcileWithEntities(ctx)
+	require.NoError(t, err)
+
+	// Critically: LoopAttach must NOT have been called. We failed
+	// closed rather than risking a double-attach.
+	assert.Empty(t, mntOps.attachedLoops, "LoopAttach must not be called when FindLoopByBacking fails")
+	assert.Empty(t, mntOps.mounts, "Mount must not happen when FindLoopByBacking fails")
+
+	volState := state.GetVolume("disk_volume/vol-fcl")
+	require.NotNil(t, volState)
+	assert.False(t, volState.Mounted)
+}
+
+// TestDiskVolumeControllerOrphanLoopSweep verifies that at boot, a loop
+// device backing a file inside miren's volumes dir that has no
+// corresponding known volume gets torn down. This catches stale kernel
+// state from uncleanly-shut-down volumes that would otherwise leak
+// forever.
+func TestDiskVolumeControllerOrphanLoopSweep(t *testing.T) {
+	ctx := t.Context()
+	log := testutils.TestLogger(t)
+
+	es, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	dataPath := t.TempDir()
+	nodeId := "test-node-1"
+	state := NewState()
+	volOps := newMockDiskVolumeOps()
+	mntOps := newMockDiskMountOps()
+
+	// A stale loop device backing a file inside our volumes dir, with
+	// no corresponding volume entity in state.
+	orphanImage := filepath.Join(dataPath, "volumes", "vol-dead", "disk.img")
+	const orphanLoopDev = "/dev/loop9"
+	mntOps.loopBacking = map[string]string{orphanImage: orphanLoopDev}
+
+	// Also a loop backing a file OUTSIDE our volumes dir — the sweep
+	// must leave this alone.
+	const foreignLoopDev = "/dev/loop10"
+	foreignImage := "/some/other/place/disk.img"
+	mntOps.loopBacking[foreignImage] = foreignLoopDev
+
+	vc := NewDiskVolumeController(log, dataPath, nodeId, state, volOps, mntOps)
+	vc.SetEAC(es.EAC)
+
+	err := vc.ReconcileWithEntities(ctx)
+	require.NoError(t, err)
+
+	// Orphan must be detached.
+	assert.Contains(t, mntOps.detachedLoops, orphanLoopDev, "orphan loop backing a miren volume file should be detached")
+	// Foreign loop must be left alone.
+	assert.NotContains(t, mntOps.detachedLoops, foreignLoopDev, "loop backing a file outside miren's volumes dir must not be touched")
+
+	// Running reconcile again should not re-sweep (once per lifetime).
+	before := len(mntOps.detachedLoops)
+	err = vc.ReconcileWithEntities(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, before, len(mntOps.detachedLoops), "orphan sweep must run at most once per controller lifetime")
+}
+
+// TestDiskVolumeControllerOrphanSweepUnmountsBeforeDetach verifies that
+// when an orphan loop device is also backing an orphan mount, the sweep
+// unmounts the filesystem before detaching the loop. Detaching a loop
+// that still has a mounted filesystem returns EBUSY and leaves both
+// the mount and the device behind.
+func TestDiskVolumeControllerOrphanSweepUnmountsBeforeDetach(t *testing.T) {
+	ctx := t.Context()
+	log := testutils.TestLogger(t)
+
+	es, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	dataPath := t.TempDir()
+	nodeId := "test-node-1"
+	state := NewState()
+	volOps := newMockDiskVolumeOps()
+	mntOps := newMockDiskMountOps()
+
+	orphanImage := filepath.Join(dataPath, "volumes", "vol-wedged", "disk.img")
+	const orphanLoopDev = "/dev/loop9"
+	orphanMountPath := "/var/lib/miren/disks/vol-wedged"
+
+	// The kernel state: an orphan loop device backs a file under
+	// miren's volumes dir, and an orphan mount under diskMountBasePath
+	// is using that same device.
+	mntOps.loopBacking = map[string]string{orphanImage: orphanLoopDev}
+	mntOps.mountedPaths[orphanMountPath] = true
+	mntOps.mountDevices[orphanMountPath] = orphanLoopDev
+
+	vc := NewDiskVolumeController(log, dataPath, nodeId, state, volOps, mntOps)
+	vc.SetEAC(es.EAC)
+
+	err := vc.ReconcileWithEntities(ctx)
+	require.NoError(t, err)
+
+	// Both cleanups happened.
+	assert.Contains(t, mntOps.unmounts, orphanMountPath, "orphan mount should have been unmounted")
+	assert.Contains(t, mntOps.detachedLoops, orphanLoopDev, "orphan loop should have been detached")
+
+	// Critically: the unmount happened BEFORE the detach. If the
+	// order flips, a real kernel would reject the detach with EBUSY.
+	unmountIdx := -1
+	detachIdx := -1
+	for i, op := range mntOps.opsLog {
+		if op == "Unmount:"+orphanMountPath {
+			unmountIdx = i
+		}
+		if op == "LoopDetach:"+orphanLoopDev {
+			detachIdx = i
+		}
+	}
+	require.NotEqual(t, -1, unmountIdx, "Unmount missing from opsLog")
+	require.NotEqual(t, -1, detachIdx, "LoopDetach missing from opsLog")
+	assert.Less(t, unmountIdx, detachIdx,
+		"orphan sweep must unmount the filesystem before detaching its loop device")
 }
 
 func TestDiskVolumeControllerUniversalUnmountOnDelete(t *testing.T) {
