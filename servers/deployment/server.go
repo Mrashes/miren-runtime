@@ -820,34 +820,31 @@ func (d *DeploymentServer) DeployVersion(ctx context.Context, req *deployment_v1
 			return nil
 		}
 
-		// Update the AppVersion entity with ephemeral fields
-		appVersion.EphemeralLabel = ephLabel
-		appVersion.EphemeralTtl = ephTTL
-		appVersion.EphemeralExpiresAt = time.Now().Add(ttlDuration)
+		// Clone the source AppVersion into a new entity with ephemeral fields.
+		// The original must remain unchanged — it may be the active version.
+		ephVersion := appVersion // shallow copy
+		ephVersion.ID = ""
+		ephVersion.EphemeralLabel = ephLabel
+		ephVersion.EphemeralTtl = ephTTL
+		ephVersion.EphemeralExpiresAt = time.Now().Add(ttlDuration)
 
-		updateEntity := &entityserver_v1alpha.Entity{}
-		updateEntity.SetId(string(appVersion.ID))
-		updateEntity.SetAttrs(appVersion.Encode())
-		current, getErr := d.EAC.Get(ctx, string(appVersion.ID))
-		if getErr != nil {
-			d.Log.Error("Failed to fetch app version for ephemeral update", "version_id", appVersion.ID, "error", getErr)
-			results.SetError(fmt.Sprintf("failed to fetch app version %s: %v", appVersion.ID, getErr))
-			return nil
-		}
-		updateEntity.SetRevision(current.Entity().Revision())
-		if _, putErr := d.EAC.Put(ctx, updateEntity); putErr != nil {
-			d.Log.Error("Failed to update version with ephemeral fields", "error", putErr)
-			results.SetError("failed to update version with ephemeral fields")
+		ephName := appName + "-eph-" + idgen.Gen("v")
+		ephVersion.Version = ephName
+
+		ephID, createErr := d.EC.Create(ctx, ephName, &ephVersion)
+		if createErr != nil {
+			d.Log.Error("Failed to create ephemeral version entity", "error", createErr)
+			results.SetError(fmt.Sprintf("failed to create ephemeral version: %v", createErr))
 			return nil
 		}
 
 		d.Log.Info("Created ephemeral version",
-			"app", appName, "version", appVersionId, "label", ephLabel,
-			"ttl", ephTTL, "expires_at", appVersion.EphemeralExpiresAt)
+			"app", appName, "version", ephName, "source_version", appVersionId,
+			"label", ephLabel, "ttl", ephTTL, "expires_at", ephVersion.EphemeralExpiresAt)
 
 		deploymentInfo := d.toDeploymentInfo(&core_v1alpha.Deployment{
 			AppName:    appName,
-			AppVersion: appVersionId,
+			AppVersion: string(ephID),
 			ClusterId:  clusterId,
 			Status:     "active",
 		})

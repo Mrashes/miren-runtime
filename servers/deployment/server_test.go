@@ -12,6 +12,7 @@ import (
 	deployment_v1alpha "miren.dev/runtime/api/deployment/deployment_v1alpha"
 	aes "miren.dev/runtime/api/entityserver"
 	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
+	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/entity/testutils"
 	"miren.dev/runtime/pkg/rpc"
 	"miren.dev/runtime/pkg/rpc/standard"
@@ -1197,21 +1198,35 @@ func TestDeployVersionEphemeral(t *testing.T) {
 			t.Errorf("Expected deployment status 'active', got %q", dep.Status())
 		}
 
-		// Verify the app version was updated with ephemeral fields
-		var updatedVersion core_v1alpha.AppVersion
-		err = inmem.Client.Get(ctx, "ephapp-v1abc", &updatedVersion)
-		if err != nil {
-			t.Fatalf("Failed to get updated version: %v", err)
+		// Verify a new ephemeral version entity was created (clone, not mutation)
+		ephVersionId := dep.AppVersionId()
+		if ephVersionId == "ephapp-v1abc" {
+			t.Fatal("Expected a new version entity, not the original")
 		}
 
-		if updatedVersion.EphemeralLabel != "feat-preview" {
-			t.Errorf("Expected ephemeral label 'feat-preview', got %q", updatedVersion.EphemeralLabel)
+		var ephVersion core_v1alpha.AppVersion
+		if err := inmem.Client.GetById(ctx, entity.Id(ephVersionId), &ephVersion); err != nil {
+			t.Fatalf("Failed to get ephemeral version entity: %v", err)
 		}
-		if updatedVersion.EphemeralTtl != "48h" {
-			t.Errorf("Expected ephemeral TTL '48h', got %q", updatedVersion.EphemeralTtl)
+
+		if ephVersion.EphemeralLabel != "feat-preview" {
+			t.Errorf("Expected ephemeral label 'feat-preview', got %q", ephVersion.EphemeralLabel)
 		}
-		if updatedVersion.EphemeralExpiresAt.IsZero() {
+		if ephVersion.EphemeralTtl != "48h" {
+			t.Errorf("Expected ephemeral TTL '48h', got %q", ephVersion.EphemeralTtl)
+		}
+		if ephVersion.EphemeralExpiresAt.IsZero() {
 			t.Error("Expected non-zero ephemeral expiry")
+		}
+
+		// Verify the original version was NOT mutated
+		var originalVersion core_v1alpha.AppVersion
+		err = inmem.Client.Get(ctx, "ephapp-v1abc", &originalVersion)
+		if err != nil {
+			t.Fatalf("Failed to get original version: %v", err)
+		}
+		if originalVersion.EphemeralLabel != "" {
+			t.Errorf("Original version should not have ephemeral label, got %q", originalVersion.EphemeralLabel)
 		}
 
 		// Verify the app's active version was NOT changed
@@ -1273,13 +1288,15 @@ func TestDeployVersionEphemeral(t *testing.T) {
 			t.Fatalf("DeployVersion returned error: %s", result.Error())
 		}
 
-		var updatedVersion core_v1alpha.AppVersion
-		err = inmem.Client.Get(ctx, "ephapp-default-v1", &updatedVersion)
-		if err != nil {
-			t.Fatalf("Failed to get version: %v", err)
+		dep := result.Deployment()
+		ephVersionId := dep.AppVersionId()
+
+		var ephVersion core_v1alpha.AppVersion
+		if err := inmem.Client.GetById(ctx, entity.Id(ephVersionId), &ephVersion); err != nil {
+			t.Fatalf("Failed to get ephemeral version: %v", err)
 		}
-		if updatedVersion.EphemeralTtl != "24h" {
-			t.Errorf("Expected default TTL '24h', got %q", updatedVersion.EphemeralTtl)
+		if ephVersion.EphemeralTtl != "24h" {
+			t.Errorf("Expected default TTL '24h', got %q", ephVersion.EphemeralTtl)
 		}
 	})
 }

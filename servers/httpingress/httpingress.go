@@ -631,12 +631,19 @@ func (h *Server) serveAuthenticatedRequest(w http.ResponseWriter, req *http.Requ
 		))
 	defer leaseSpan.End()
 
+	// Scope the lease cache key by ephemeral label so different versions
+	// (active vs ephemeral, or different ephemeral labels) never share leases.
+	leaseKey := targetAppId.String()
+	if ephemeralLabel != "" {
+		leaseKey = targetAppId.String() + ":eph:" + ephemeralLabel
+	}
+
 	// Retry loop: if a cached lease fails with a connection error (stale sandbox),
 	// invalidate all cached leases and retry once to acquire a fresh lease.
 	const maxRetries = 1
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		// Try to use a cached lease
-		curLease, err := h.useLease(ctx, targetAppId.String())
+		curLease, err := h.useLease(ctx, leaseKey)
 		if err != nil {
 			h.Log.Error("error taking lease", "error", err, "app", targetAppId)
 			http.Error(w, fmt.Sprintf("error taking lease: %s", targetAppId), http.StatusInternalServerError)
@@ -655,7 +662,7 @@ func (h *Server) serveAuthenticatedRequest(w http.ResponseWriter, req *http.Requ
 			if err != nil && isProxyConnectionError(err) {
 				// Cached lease pointed at a dead sandbox — invalidate all app
 				// leases (they likely all point to the same dead sandbox) and retry
-				h.invalidateAppLeases(context.Background(), targetAppId.String())
+				h.invalidateAppLeases(context.Background(), leaseKey)
 				h.Log.Warn("stale lease, retrying with fresh lease",
 					"stale_url", curLease.Lease.URL,
 					"attempt", attempt,
@@ -663,7 +670,7 @@ func (h *Server) serveAuthenticatedRequest(w http.ResponseWriter, req *http.Requ
 				continue
 			}
 			if err != nil {
-				h.invalidateLease(context.Background(), targetAppId.String(), curLease)
+				h.invalidateLease(context.Background(), leaseKey, curLease)
 			} else {
 				h.releaseLease(ctx, curLease)
 			}
@@ -740,7 +747,7 @@ func (h *Server) serveAuthenticatedRequest(w http.ResponseWriter, req *http.Requ
 
 		leaseSpan.SetAttributes(attribute.String("miren.lease.url", actLease.URL))
 
-		localLease := h.retainLease(ctx, targetAppId.String(), actLease)
+		localLease := h.retainLease(ctx, leaseKey, actLease)
 
 		req = req.WithContext(ctx)
 		// Fresh lease — always write error response (no retry on fresh lease failure)
@@ -748,7 +755,7 @@ func (h *Server) serveAuthenticatedRequest(w http.ResponseWriter, req *http.Requ
 		if err != nil {
 			// Connection error on a fresh lease - the sandbox may have died
 			// between lease acquisition and proxy. Invalidate immediately.
-			h.invalidateLease(context.Background(), targetAppId.String(), localLease)
+			h.invalidateLease(context.Background(), leaseKey, localLease)
 		} else {
 			h.releaseLease(ctx, localLease)
 		}
