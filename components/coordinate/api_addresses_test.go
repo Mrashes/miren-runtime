@@ -32,7 +32,11 @@ func TestApiAddresses(t *testing.T) {
 			wantContains:  append(localhost, "203.0.113.10:8443", "10.0.0.5:8443"),
 		},
 		{
-			name:          "netcheck ran but found nothing reachable",
+			// MIR-1018: when netcheck ran with a valid public source IP
+			// but every probed port failed, we now trust the negative
+			// result and drop global-unicast discovered IPs in that
+			// family. Private LAN IPs are still kept.
+			name:          "netcheck proved IPv4 unreachable drops public discovered IP",
 			discoveredIPs: []net.IP{publicIPv4, privateIP},
 			netcheckResult: &cloudauth.NetcheckDualStackResult{
 				IPv4: &cloudauth.NetcheckResponse{
@@ -42,7 +46,31 @@ func TestApiAddresses(t *testing.T) {
 					},
 				},
 			},
-			wantContains: append(localhost, "203.0.113.10:8443", "10.0.0.5:8443"),
+			wantContains: append(localhost, "10.0.0.5:8443"),
+			wantExcludes: []string{"203.0.113.10:8443"},
+		},
+		{
+			// Netcheck failing entirely (e.g. no cloud connectivity) still
+			// lets discovered public IPs pass through as a fallback.
+			name:           "netcheck not run keeps discovered public IPs",
+			discoveredIPs:  []net.IP{publicIPv4, privateIP},
+			netcheckResult: nil,
+			wantContains:   append(localhost, "203.0.113.10:8443", "10.0.0.5:8443"),
+		},
+		{
+			// MIR-1018: CGNAT addresses (tailscale tailnet / ISP CGNAT)
+			// are filtered out of the discovered list by default.
+			name:          "CGNAT discovered IP is filtered",
+			discoveredIPs: []net.IP{net.ParseIP("100.107.209.9"), privateIP},
+			wantContains:  append(localhost, "10.0.0.5:8443"),
+			wantExcludes:  []string{"100.107.209.9:8443"},
+		},
+		{
+			// Users who explicitly want a CGNAT address advertised can
+			// still set it as an AdditionalIP.
+			name:          "CGNAT AdditionalIP is kept",
+			additionalIPs: []net.IP{net.ParseIP("100.107.209.9")},
+			wantContains:  append(localhost, "100.107.209.9:8443"),
 		},
 		{
 			name:          "netcheck ran and found reachable addresses",
@@ -135,11 +163,12 @@ func TestApiAddresses(t *testing.T) {
 				},
 				IPv6: nil,
 			},
-			// IPv4 is replaced by netcheck, but discovered IPv6 is still public
-			// and gets dropped because netcheck had reachable results. This is
-			// acceptable: the IPv6 wasn't verified reachable, so we don't report it.
-			wantContains: append(localhost, "203.0.113.10:8443", "10.0.0.5:8443"),
-			wantExcludes: []string{"[2001:db8::10]:8443"},
+			// IPv4 discovered public IP is replaced by the netcheck-confirmed
+			// one. IPv6 netcheck didn't run, so we don't know whether the
+			// discovered IPv6 is reachable — keep it as a fallback on a
+			// per-family basis, same as we would if IPv4 netcheck had failed.
+			wantContains: append(localhost, "203.0.113.10:8443", "[2001:db8::10]:8443", "10.0.0.5:8443"),
+			wantExcludes: []string{},
 		},
 	}
 

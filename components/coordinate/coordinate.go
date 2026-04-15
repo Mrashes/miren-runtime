@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1270,43 +1269,6 @@ func (c *Coordinator) runNetcheck(ctx context.Context) {
 	}
 }
 
-// publicAddresses returns addresses derived from the cached dual-stack netcheck result.
-// Returns nil if no netcheck has been done or the cluster isn't publicly reachable.
-func (c *Coordinator) publicAddresses() []string {
-	c.netcheckMu.RLock()
-	result := c.netcheckResult
-	c.netcheckMu.RUnlock()
-
-	if result == nil {
-		return nil
-	}
-
-	seen := make(map[string]struct{})
-	var addrs []string
-
-	for _, resp := range []*cloudauth.NetcheckResponse{result.IPv4, result.IPv6} {
-		if resp == nil || resp.SourceAddress == "" {
-			continue
-		}
-		if net.ParseIP(resp.SourceAddress) == nil {
-			continue
-		}
-		for _, r := range resp.Results {
-			if !r.Reachable {
-				continue
-			}
-			hp := net.JoinHostPort(resp.SourceAddress, strconv.Itoa(r.Port))
-			if _, ok := seen[hp]; ok {
-				continue
-			}
-			seen[hp] = struct{}{}
-			addrs = append(addrs, hp)
-		}
-	}
-
-	return addrs
-}
-
 // PublicIPs returns the cluster's known public IP addresses from netcheck,
 // falling back to user-provided AdditionalIPs and auto-discovered IPs
 // (filtered to global unicast, non-private) if netcheck hasn't run yet.
@@ -1350,39 +1312,20 @@ func (c *Coordinator) PublicIPs() []net.IP {
 	return ips
 }
 
-// apiAddresses builds the list of API addresses for status reports.
-// User-provided AdditionalIPs are always included. For auto-discovered IPs,
-// netcheck results replace discovered public IPs when reachable addresses
-// are found. If netcheck ran but found nothing reachable, discovered public
-// IPs are kept as a fallback.
+// apiAddresses builds the list of API addresses the server should advertise.
+// The heavy lifting lives in ComputeAdvertise so the same rules can be
+// exercised by the 'miren debug advertise' command.
 func (c *Coordinator) apiAddresses() []string {
-	var addrs []string
+	c.netcheckMu.RLock()
+	netcheck := c.netcheckResult
+	c.netcheckMu.RUnlock()
 
-	// Only include c.Address if it contains a valid IP host.
-	if host, _, err := net.SplitHostPort(c.Address); err == nil && net.ParseIP(host) != nil {
-		addrs = append(addrs, c.Address)
-	}
-
-	// Add localhost addresses
-	addrs = append(addrs, "127.0.0.1:8443", "[::1]:8443")
-
-	// User-provided IPs are always included.
-	for _, ip := range c.AdditionalIPs {
-		addrs = append(addrs, net.JoinHostPort(ip.String(), "8443"))
-	}
-
-	// For discovered IPs, netcheck results replace discovered public IPs
-	// when netcheck found reachable addresses. If netcheck ran but found
-	// nothing reachable (e.g., firewalled), keep discovered public IPs
-	// as a fallback.
-	pubAddrs := c.publicAddresses()
-	for _, ip := range c.DiscoveredIPs {
-		if len(pubAddrs) > 0 && !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsLinkLocalUnicast() {
-			continue
-		}
-		addrs = append(addrs, net.JoinHostPort(ip.String(), "8443"))
-	}
-	addrs = append(addrs, pubAddrs...)
+	_, final := ComputeAdvertise(AdvertiseInput{
+		ListenAddr:    c.Address,
+		AdditionalIPs: c.AdditionalIPs,
+		DiscoveredIPs: c.DiscoveredIPs,
+		Netcheck:      netcheck,
+	})
 
 	c.logAddressesOnce.Do(func() {
 		additional := []string{}
@@ -1393,10 +1336,10 @@ func (c *Coordinator) apiAddresses() []string {
 		for _, ip := range c.DiscoveredIPs {
 			discovered = append(discovered, ip.String())
 		}
-		c.Log.Info("reporting API addresses", "listen", c.Address, "configured", additional, "discovered", discovered, "result", addrs)
+		c.Log.Info("reporting API addresses", "listen", c.Address, "configured", additional, "discovered", discovered, "result", final)
 	})
 
-	return addrs
+	return final
 }
 
 // ReportStatus reports the current cluster status to miren.cloud
