@@ -80,6 +80,22 @@ func TestLookupByLabel(t *testing.T) {
 		require.NotNil(t, found2)
 		require.Equal(t, "otherapp-v1", found2.Version)
 	})
+
+	t.Run("returns nil for expired version", func(t *testing.T) {
+		expiredVersion := &core_v1alpha.AppVersion{
+			App:                appID,
+			Version:            "myapp-expired",
+			EphemeralLabel:     "old-branch",
+			EphemeralTtl:       "1h",
+			EphemeralExpiresAt: time.Now().Add(-10 * time.Minute),
+		}
+		_, err := inmem.Client.Create(ctx, "myapp-expired", expiredVersion)
+		require.NoError(t, err)
+
+		found, err := LookupByLabel(ctx, inmem.EAC, appID, "old-branch")
+		require.NoError(t, err)
+		require.Nil(t, found, "expired version should not be returned")
+	})
 }
 
 func TestReplaceExisting(t *testing.T) {

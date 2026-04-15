@@ -167,20 +167,28 @@ func deleteEphemeralVersion(ctx context.Context, eac *entityserver_v1alpha.Entit
 }
 
 // LookupByLabel finds an ephemeral AppVersion for the given app and label.
-// Returns nil if no matching version exists.
+// Returns nil if no matching version exists or the version has expired.
 func LookupByLabel(ctx context.Context, eac *entityserver_v1alpha.EntityAccessClient, appID entity.Id, label string) (*core_v1alpha.AppVersion, error) {
 	resp, err := eac.List(ctx, entity.String(core_v1alpha.AppVersionEphemeralLabelId, label))
 	if err != nil {
 		return nil, fmt.Errorf("failed to lookup ephemeral version: %w", err)
 	}
 
+	now := time.Now()
 	for _, e := range resp.Values() {
 		var av core_v1alpha.AppVersion
 		av.Decode(e.Entity())
 
-		if av.App == appID {
-			return &av, nil
+		if av.App != appID {
+			continue
 		}
+
+		// Reject expired versions immediately rather than waiting for GC
+		if !av.EphemeralExpiresAt.IsZero() && now.After(av.EphemeralExpiresAt) {
+			return nil, nil
+		}
+
+		return &av, nil
 	}
 	return nil, nil
 }
