@@ -11,11 +11,11 @@ import (
 
 func RouteOidcDisable(ctx *Context, opts struct {
 	Host    string `position:"0" usage:"Hostname for the route (e.g., example.com)"`
-	Default bool   `long:"default" description:"Disable OIDC on the default route"`
+	Default bool   `long:"default" description:"Remove protection from the default route"`
 	ConfigCentric
 }) error {
 	if !labs.RouteOIDC() {
-		return fmt.Errorf("OIDC authentication for routes is disabled. Enable with MIREN_LABS=routeoidc")
+		return fmt.Errorf("route protection is disabled. Enable with MIREN_LABS=routeoidc")
 	}
 
 	if opts.Host == "" && !opts.Default {
@@ -56,18 +56,16 @@ func RouteOidcDisable(ctx *Context, opts struct {
 		routeLabel = opts.Host
 	}
 
-	// Check if OIDC is configured
 	if entity.Empty(route.OidcProvider) {
-		ctx.Printf("OIDC is not configured for route: %s\n", routeLabel)
+		ctx.Printf("Route is not protected: %s\n", routeLabel)
 		return nil
 	}
 
-	// Detach OIDC provider
 	_, err = ic.DetachOIDCProviderFromRoute(ctx, route)
 	if err != nil {
-		return fmt.Errorf("failed to disable OIDC: %w", err)
+		return fmt.Errorf("failed to remove route protection: %w", err)
 	}
 
-	ctx.Printf("OIDC disabled for route: %s\n", routeLabel)
+	ctx.Printf("Protection removed from route: %s\n", routeLabel)
 	return nil
 }

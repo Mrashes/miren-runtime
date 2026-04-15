@@ -38,7 +38,7 @@ miren route
 ## Subcommands
 
 - [`miren route list`](/command/route-list) — List all HTTP routes
-- [`miren route oidc`](/command/route-oidc) — OIDC authentication management for routes
+- [`miren route protect`](/command/route-protect) — Protect routes from unauthenticated access
 - [`miren route remove`](/command/route-remove) — Remove an HTTP route
 - [`miren route set`](/command/route-set) — Create or update an HTTP route
 - [`miren route set-default`](/command/route-set-default) — Set an app as the default route

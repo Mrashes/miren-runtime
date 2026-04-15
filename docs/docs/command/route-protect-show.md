@@ -1,12 +1,12 @@
 ---
-title: "miren route oidc disable"
-sidebar_label: "route oidc disable"
-description: "Disable OIDC authentication for a route"
+title: "miren route protect show"
+sidebar_label: "route protect show"
+description: "Show protection for an HTTP route"
 ---
 
-# miren route oidc disable
+# miren route protect show
 
-Disable OIDC authentication for a route
+Show protection for an HTTP route
 
 :::note
 This command requires the `routeoidc` [labs feature](/labs) to be enabled.
@@ -15,7 +15,7 @@ This command requires the `routeoidc` [labs feature](/labs) to be enabled.
 ## Usage
 
 ```bash
-miren route oidc disable <host> [flags]
+miren route protect show <host> [flags]
 ```
 
 ## Arguments
@@ -26,7 +26,9 @@ miren route oidc disable <host> [flags]
 
 - `--cluster, -C` — Cluster name
 - `--config` — Path to the config file
-- `--default` — Disable OIDC on the default route
+- `--default` — Show protection for the default route
+- `--format` — Output format (text, json) (default: `text`)
+- `--json` — Shorthand for --format json
 
 ## Global Options
 
@@ -36,12 +38,12 @@ miren route oidc disable <host> [flags]
 
 ## Examples
 
-**Disable OIDC on a route:**
+**Show route protection:**
 
 ```bash
-miren route oidc disable example.com
+miren route protect show example.com
 ```
 
 ## See also
 
-- [`miren route oidc`](/command/route-oidc)
+- [`miren route protect`](/command/route-protect)

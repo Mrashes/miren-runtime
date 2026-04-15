@@ -16,7 +16,7 @@ features:
 
   - name: routeoidc
     predicate: RouteOIDC
-    description: Enable OIDC authentication for HTTP routes
+    description: Protect HTTP routes with identity-provider login
     default: false
 
   - name: addons

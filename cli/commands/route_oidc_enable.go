@@ -13,8 +13,8 @@ import (
 func RouteOidcEnable(ctx *Context, opts struct {
 	Host         string   `position:"0" usage:"Hostname for the route (e.g., example.com)"`
 	Default      bool     `long:"default" description:"Apply to the default route"`
-	Provider     string   `long:"provider" description:"Name of existing OIDC provider (use --provider-url for inline creation)"`
-	ProviderURL  string   `long:"provider-url" description:"OIDC provider URL (e.g., https://accounts.google.com) - creates provider if not exists"`
+	Provider     string   `long:"provider" description:"Name of existing identity provider (use --provider-url for inline creation)"`
+	ProviderURL  string   `long:"provider-url" description:"Identity provider URL (e.g., https://accounts.google.com) - creates provider if not exists"`
 	ClientID     string   `long:"client-id" description:"OAuth2 client ID (required with --provider-url)"`
 	ClientSecret string   `long:"client-secret" description:"OAuth2 client secret (required with --provider-url)"`
 	Scopes       []string `long:"scope" description:"OAuth2 scopes (can be specified multiple times)"`
@@ -22,7 +22,7 @@ func RouteOidcEnable(ctx *Context, opts struct {
 	ConfigCentric
 }) error {
 	if !labs.RouteOIDC() {
-		return fmt.Errorf("OIDC authentication for routes is disabled. Enable with MIREN_LABS=routeoidc")
+		return fmt.Errorf("route protection is disabled. Enable with MIREN_LABS=routeoidc")
 	}
 
 	if opts.Host == "" && !opts.Default {
@@ -110,10 +110,10 @@ func RouteOidcEnable(ctx *Context, opts struct {
 
 		_, err = ic.CreateOrUpdateOIDCProvider(ctx, provider)
 		if err != nil {
-			return fmt.Errorf("failed to create/update OIDC provider: %w", err)
+			return fmt.Errorf("failed to create/update identity provider: %w", err)
 		}
 
-		ctx.Printf("Created/updated OIDC provider: %s\n", providerName)
+		ctx.Printf("Created/updated identity provider: %s\n", providerName)
 	}
 
 	// Parse claim mappings
@@ -132,12 +132,12 @@ func RouteOidcEnable(ctx *Context, opts struct {
 	// Attach provider to route
 	_, err = ic.AttachOIDCProviderToRoute(ctx, route, providerName, claimMappings)
 	if err != nil {
-		return fmt.Errorf("failed to attach OIDC provider to route: %w", err)
+		return fmt.Errorf("failed to attach identity provider to route: %w", err)
 	}
 
 	items := []ui.NamedValue{
 		ui.NewNamedValue("Route", routeLabel),
-		ui.NewNamedValue("OIDC", true),
+		ui.NewNamedValue("Protected", true),
 		ui.NewNamedValue("Provider", providerName),
 	}
 

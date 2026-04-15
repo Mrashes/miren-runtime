@@ -1,28 +1,28 @@
 import CliCommand from '@site/src/components/CliCommand';
 
-# Route OIDC Authentication
+# Protecting Routes
 
 :::info Labs Feature
-Route OIDC authentication is a [labs feature](/labs) and is disabled by default. Enable it with `--labs routeoidc` or `MIREN_LABS=routeoidc` when starting the server.
+Route protection is a [labs feature](/labs) and is disabled by default. Enable it with `--labs routeoidc` or `MIREN_LABS=routeoidc` when starting the server.
 :::
 
 :::tip Looking for CI/CD OIDC?
 If you want to **deploy from GitHub Actions or other CI systems** using OIDC tokens (no stored secrets), see [CI/CD Deployment with OIDC](/ci-deploy). This page covers a different feature — protecting your app's HTTP routes with single sign-on.
 :::
 
-Route OIDC authentication lets you protect your applications with single sign-on at the routing layer. Unauthenticated requests are redirected to an OIDC provider for login, and after authentication, JWT claims are injected as HTTP headers before the request reaches your app.
+Route protection lets you put single sign-on in front of an application at the routing layer. Unauthenticated requests are redirected to an OIDC identity provider for login, and after authentication, JWT claims are injected as HTTP headers before the request reaches your app.
 
-Your app receives identity information as plain HTTP headers (e.g., `X-User-Email`) — no in-app auth code required.
+Your app receives identity information as plain HTTP headers (e.g., `X-User-Email`) — no in-app auth code required. OIDC is the underlying mechanism, so any standards-compliant identity provider works.
 
 ## Authentication vs Authorization
 
 This feature handles **authentication** — verifying _who_ a user is — not **authorization** — deciding _what_ they can access.
 
-After authentication, your app receives claims as headers and decides what to do with them. For example, if you configure Google as your OIDC provider, your app receives the user's email address and can check the domain for basic access control.
+After authentication, your app receives claims as headers and decides what to do with them. For example, if you configure Google as your identity provider, your app receives the user's email address and can check the domain for basic access control.
 
 ## Trust Model
 
-Your app trusts the claim headers (e.g., `X-User-Email`) because Miren is the only network path into the sandbox — external clients cannot reach your app directly. Miren validates the JWT from the OIDC provider and sets the headers before proxying the request.
+Your app trusts the claim headers (e.g., `X-User-Email`) because Miren is the only network path into the sandbox — external clients cannot reach your app directly. Miren validates the JWT from the identity provider and sets the headers before proxying the request.
 
 This "trust the proxy" model is the standard approach used by tools like OAuth2 Proxy, Traefik ForwardAuth, and nginx `auth_request`. It's simple and works well when the platform controls the network topology, which Miren does via sandbox isolation.
 
@@ -30,11 +30,11 @@ Your app does not need to verify signatures or validate tokens — it can treat 
 
 ## How Claim Mappings Work
 
-The `--claim-header` option maps JWT claims from the OIDC provider to HTTP headers that your app receives:
+The `--claim-header` option maps JWT claims from the identity provider to HTTP headers that your app receives:
 
 <CliCommand context="client">
 ```miren
-miren route oidc enable myapp.example.com \
+miren route protect oidc myapp.example.com \
   --claim-header email:X-User-Email \
   --claim-header sub:X-User-ID \
   --claim-header name:X-User-Name
@@ -50,11 +50,11 @@ miren route oidc enable myapp.example.com \
 
 ### Google
 
-Google's OIDC provider works well when you want to restrict access by email domain.
+Google's identity provider works well when you want to restrict access by email domain.
 
 <CliCommand context="client">
 ```miren
-miren route oidc enable myapp.example.com \
+miren route protect oidc myapp.example.com \
   --provider-url https://accounts.google.com \
   --client-id $GOOGLE_CLIENT_ID \
   --client-secret $GOOGLE_CLIENT_SECRET \
@@ -76,7 +76,7 @@ GitLab has a built-in OIDC provider — no federation layer needed. Register an 
 
 <CliCommand context="client">
 ```miren
-miren route oidc enable myapp.example.com \
+miren route protect oidc myapp.example.com \
   --provider-url https://gitlab.com \
   --client-id $GITLAB_CLIENT_ID \
   --client-secret $GITLAB_CLIENT_SECRET \
@@ -92,7 +92,7 @@ miren route oidc enable myapp.example.com \
 
 <CliCommand context="client">
 ```miren
-miren route oidc enable myapp.example.com \
+miren route protect oidc myapp.example.com \
   --provider-url https://keycloak.example.com/realms/myrealm \
   --client-id $KEYCLOAK_CLIENT_ID \
   --client-secret $KEYCLOAK_CLIENT_SECRET \
@@ -104,25 +104,25 @@ miren route oidc enable myapp.example.com \
 
 ## Reusing Providers Across Routes
 
-The examples above create a new OIDC provider inline for each route. If you use the same provider for multiple routes, you can reference an existing provider by name instead of repeating the configuration:
+The examples above create a new identity provider inline for each route. If you use the same provider for multiple routes, you can reference an existing provider by name instead of repeating the configuration:
 
 <CliCommand context="client">
 ```miren
-miren route oidc enable another-app.example.com \
+miren route protect oidc another-app.example.com \
   --provider google-oauth \
   --claim-header email:X-User-Email
 ```
 </CliCommand>
 
-Providers created inline are preserved when you disable OIDC on a route, so they can be reused later.
+Providers created inline are preserved when you remove protection from a route, so they can be reused later.
 
 ## Default Route Support
 
-All `miren route oidc` commands support the `--default` flag for the default route (which has no static hostname). When used with the default route, the OAuth2 redirect URL is derived from the request's `Host` header at runtime.
+All `miren route protect` commands support the `--default` flag for the default route (which has no static hostname). When used with the default route, the OAuth2 redirect URL is derived from the request's `Host` header at runtime.
 
 <CliCommand context="client">
 ```miren
-miren route oidc enable --default \
+miren route protect oidc --default \
   --provider-url https://accounts.google.com \
   --client-id $GOOGLE_CLIENT_ID \
   --client-secret $GOOGLE_CLIENT_SECRET \
@@ -130,16 +130,16 @@ miren route oidc enable --default \
 ```
 </CliCommand>
 
-## Managing OIDC on Routes
+## Managing Route Protection
 
 <CliCommand context="client">
 ```miren
-# Show current OIDC configuration for a route
-miren route oidc show myapp.example.com
+# Show current protection for a route
+miren route protect show myapp.example.com
 
-# Disable OIDC on a route (provider is preserved for reuse)
-miren route oidc disable myapp.example.com
+# Remove protection from a route (provider is preserved for reuse)
+miren route protect disable myapp.example.com
 ```
 </CliCommand>
 
-See the [CLI reference](/command/route-oidc-enable) for the full list of options.
+See the [CLI reference](/command/route-protect-oidc) for the full list of options.

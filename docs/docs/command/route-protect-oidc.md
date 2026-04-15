@@ -1,12 +1,12 @@
 ---
-title: "miren route oidc enable"
-sidebar_label: "route oidc enable"
-description: "Enable OIDC authentication for a route"
+title: "miren route protect oidc"
+sidebar_label: "route protect oidc"
+description: "Protect an HTTP route with an OIDC identity provider"
 ---
 
-# miren route oidc enable
+# miren route protect oidc
 
-Enable OIDC authentication for a route
+Protect an HTTP route with an OIDC identity provider
 
 :::note
 This command requires the `routeoidc` [labs feature](/labs) to be enabled.
@@ -15,7 +15,7 @@ This command requires the `routeoidc` [labs feature](/labs) to be enabled.
 ## Usage
 
 ```bash
-miren route oidc enable <host> [flags]
+miren route protect oidc <host> [flags]
 ```
 
 ## Arguments
@@ -30,8 +30,8 @@ miren route oidc enable <host> [flags]
 - `--cluster, -C` — Cluster name
 - `--config` — Path to the config file
 - `--default` — Apply to the default route
-- `--provider` — Name of existing OIDC provider (use --provider-url for inline creation)
-- `--provider-url` — OIDC provider URL (e.g., https://accounts.google.com) - creates provider if not exists
+- `--provider` — Name of existing identity provider (use --provider-url for inline creation)
+- `--provider-url` — Identity provider URL (e.g., https://accounts.google.com) - creates provider if not exists
 - `--scope` — OAuth2 scopes (can be specified multiple times)
 
 ## Global Options
@@ -42,16 +42,16 @@ miren route oidc enable <host> [flags]
 
 ## Examples
 
-**Enable OIDC with an existing provider:**
+**Protect a route with an existing OIDC provider:**
 
 ```bash
-miren route oidc enable example.com --provider my-google-oidc
+miren route protect oidc example.com --provider my-google-oidc
 ```
 
-**Enable OIDC with inline provider creation:**
+**Protect a route and create the OIDC provider inline:**
 
 ```bash
-miren route oidc enable example.com \
+miren route protect oidc example.com \
   --provider-url https://accounts.google.com \
   --client-id my-client-id \
   --client-secret my-client-secret
@@ -59,4 +59,4 @@ miren route oidc enable example.com \
 
 ## See also
 
-- [`miren route oidc`](/command/route-oidc)
+- [`miren route protect`](/command/route-protect)

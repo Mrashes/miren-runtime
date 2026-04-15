@@ -170,10 +170,10 @@ Complete reference for all `miren` CLI commands.
 |---------|-------------|
 | [`miren route`](/command/route) | List all HTTP routes |
 | [`miren route list`](/command/route-list) | List all HTTP routes |
-| [`miren route oidc`](/command/route-oidc) | OIDC authentication management for routes |
-| [`miren route oidc disable`](/command/route-oidc-disable) | Disable OIDC authentication for a route _(`routeoidc`)_ |
-| [`miren route oidc enable`](/command/route-oidc-enable) | Enable OIDC authentication for a route _(`routeoidc`)_ |
-| [`miren route oidc show`](/command/route-oidc-show) | Show OIDC configuration for a route _(`routeoidc`)_ |
+| [`miren route protect`](/command/route-protect) | Protect routes from unauthenticated access |
+| [`miren route protect disable`](/command/route-protect-disable) | Remove protection from an HTTP route _(`routeoidc`)_ |
+| [`miren route protect oidc`](/command/route-protect-oidc) | Protect an HTTP route with an OIDC identity provider _(`routeoidc`)_ |
+| [`miren route protect show`](/command/route-protect-show) | Show protection for an HTTP route _(`routeoidc`)_ |
 | [`miren route remove`](/command/route-remove) | Remove an HTTP route |
 | [`miren route set`](/command/route-set) | Create or update an HTTP route |
 | [`miren route set-default`](/command/route-set-default) | Set an app as the default route |

@@ -12,12 +12,12 @@ import (
 
 func RouteOidcShow(ctx *Context, opts struct {
 	Host    string `position:"0" usage:"Hostname for the route (e.g., example.com)"`
-	Default bool   `long:"default" description:"Show OIDC config for the default route"`
+	Default bool   `long:"default" description:"Show protection for the default route"`
 	FormatOptions
 	ConfigCentric
 }) error {
 	if !labs.RouteOIDC() {
-		return fmt.Errorf("OIDC authentication for routes is disabled. Enable with MIREN_LABS=routeoidc")
+		return fmt.Errorf("route protection is disabled. Enable with MIREN_LABS=routeoidc")
 	}
 
 	if opts.Host == "" && !opts.Default {
@@ -58,31 +58,28 @@ func RouteOidcShow(ctx *Context, opts struct {
 		routeLabel = opts.Host
 	}
 
-	// Check if OIDC is configured
 	if entity.Empty(route.OidcProvider) {
 		if opts.IsJSON() {
 			return PrintJSON(map[string]interface{}{
-				"host":         routeLabel,
-				"oidc_enabled": false,
-				"provider":     nil,
+				"host":      routeLabel,
+				"protected": false,
+				"provider":  nil,
 			})
 		}
-		ctx.Printf("OIDC is not configured for route: %s\n", routeLabel)
+		ctx.Printf("Route is not protected: %s\n", routeLabel)
 		return nil
 	}
 
-	// Look up the OIDC provider
 	var provider ingress_v1alpha.OidcProvider
 	err = ic.GetEntityStore().GetById(ctx, route.OidcProvider, &provider)
 	if err != nil {
-		return fmt.Errorf("failed to get OIDC provider: %w", err)
+		return fmt.Errorf("failed to get identity provider: %w", err)
 	}
 
-	// Display OIDC config
 	if opts.IsJSON() {
-		type OIDCConfigJSON struct {
+		type ProtectConfigJSON struct {
 			Host          string              `json:"host"`
-			OIDCEnabled   bool                `json:"oidc_enabled"`
+			Protected     bool                `json:"protected"`
 			ProviderName  string              `json:"provider_name"`
 			ProviderURL   string              `json:"provider_url"`
 			ClientID      string              `json:"client_id"`
@@ -98,9 +95,9 @@ func RouteOidcShow(ctx *Context, opts struct {
 			})
 		}
 
-		return PrintJSON(OIDCConfigJSON{
+		return PrintJSON(ProtectConfigJSON{
 			Host:          routeLabel,
-			OIDCEnabled:   true,
+			Protected:     true,
 			ProviderName:  provider.Name,
 			ProviderURL:   provider.ProviderUrl,
 			ClientID:      provider.ClientId,
@@ -111,7 +108,7 @@ func RouteOidcShow(ctx *Context, opts struct {
 
 	items := []ui.NamedValue{
 		ui.NewNamedValue("Route", routeLabel),
-		ui.NewNamedValue("Enabled", true),
+		ui.NewNamedValue("Protected", true),
 		ui.NewNamedValue("Provider", provider.Name),
 		ui.NewNamedValue("Provider URL", provider.ProviderUrl),
 		ui.NewNamedValue("Client ID", provider.ClientId),

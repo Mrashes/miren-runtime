@@ -32,7 +32,7 @@ const sidebars: SidebarsConfig = {
         'disks',
         'tls',
         'firewall',
-        'route-oidc',
+        'route-protect',
         'ci-deploy',
         'admin-interface',
         'observability',

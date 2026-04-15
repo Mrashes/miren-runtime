@@ -493,35 +493,34 @@ miren deploy --analyze
 		}),
 	))
 
-	// Route OIDC commands - behind feature flag
 	if labs.RouteOIDC() {
-		d.Dispatch("route oidc", Section("route oidc", "OIDC authentication management for routes", ""))
-		d.Dispatch("route oidc enable", Infer("route oidc enable", "Enable OIDC authentication for a route", RouteOidcEnable,
+		d.Dispatch("route protect", Section("route protect", "Protect routes from unauthenticated access", ""))
+		d.Dispatch("route protect oidc", Infer("route protect oidc", "Protect an HTTP route with an OIDC identity provider", RouteOidcEnable,
 			WithLabsFeature(labs.FeatureRouteOIDC),
 			WithExample(mflags.Example{
-				Name: "Enable OIDC with an existing provider",
-				Body: "miren route oidc enable example.com --provider my-google-oidc",
+				Name: "Protect a route with an existing OIDC provider",
+				Body: "miren route protect oidc example.com --provider my-google-oidc",
 			}),
 			WithExample(mflags.Example{
-				Name: "Enable OIDC with inline provider creation",
-				Body: `miren route oidc enable example.com \
+				Name: "Protect a route and create the OIDC provider inline",
+				Body: `miren route protect oidc example.com \
   --provider-url https://accounts.google.com \
   --client-id my-client-id \
   --client-secret my-client-secret`,
 			}),
 		))
-		d.Dispatch("route oidc disable", Infer("route oidc disable", "Disable OIDC authentication for a route", RouteOidcDisable,
+		d.Dispatch("route protect disable", Infer("route protect disable", "Remove protection from an HTTP route", RouteOidcDisable,
 			WithLabsFeature(labs.FeatureRouteOIDC),
 			WithExample(mflags.Example{
-				Name: "Disable OIDC on a route",
-				Body: "miren route oidc disable example.com",
+				Name: "Remove protection from a route",
+				Body: "miren route protect disable example.com",
 			}),
 		))
-		d.Dispatch("route oidc show", Infer("route oidc show", "Show OIDC configuration for a route", RouteOidcShow,
+		d.Dispatch("route protect show", Infer("route protect show", "Show protection for an HTTP route", RouteOidcShow,
 			WithLabsFeature(labs.FeatureRouteOIDC),
 			WithExample(mflags.Example{
-				Name: "Show OIDC config for a route",
-				Body: "miren route oidc show example.com",
+				Name: "Show route protection",
+				Body: "miren route protect show example.com",
 			}),
 		))
 	}
