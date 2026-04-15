@@ -144,6 +144,37 @@ func deleteEphemeralVersion(ctx context.Context, eac *entityserver_v1alpha.Entit
 	var poolErrs []error
 	for _, p := range poolResp.Values() {
 		poolID := p.Id()
+
+		// Pools can be shared across versions (ReferencedByVersions is plural).
+		// Only delete pools exclusively owned by this version. For shared pools,
+		// remove just this version's reference.
+		var pool compute_v1alpha.SandboxPool
+		pool.Decode(p.Entity())
+
+		if len(pool.ReferencedByVersions) > 1 {
+			// Shared pool — remove our reference instead of deleting
+			var remaining []entity.Id
+			for _, ref := range pool.ReferencedByVersions {
+				if ref != versionID {
+					remaining = append(remaining, ref)
+				}
+			}
+			pool.ReferencedByVersions = remaining
+
+			updateEntity := &entityserver_v1alpha.Entity{}
+			updateEntity.SetId(poolID)
+			updateEntity.SetAttrs(pool.Encode())
+			updateEntity.SetRevision(p.Revision())
+			if _, err := eac.Put(ctx, updateEntity); err != nil {
+				log.Warn("failed to remove version reference from shared pool", "pool_id", poolID, "error", err)
+				poolErrs = append(poolErrs, fmt.Errorf("pool %s: %w", poolID, err))
+			} else {
+				log.Debug("removed version reference from shared pool", "pool_id", poolID)
+			}
+			continue
+		}
+
+		// Exclusively owned — delete the pool
 		if _, err := eac.Delete(ctx, poolID); err != nil {
 			log.Warn("failed to delete sandbox pool", "pool_id", poolID, "error", err)
 			poolErrs = append(poolErrs, fmt.Errorf("pool %s: %w", poolID, err))
@@ -183,9 +214,9 @@ func LookupByLabel(ctx context.Context, eac *entityserver_v1alpha.EntityAccessCl
 			continue
 		}
 
-		// Reject expired versions immediately rather than waiting for GC
+		// Skip expired versions — there may be a valid replacement later in the result set
 		if !av.EphemeralExpiresAt.IsZero() && now.After(av.EphemeralExpiresAt) {
-			return nil, nil
+			continue
 		}
 
 		return &av, nil
