@@ -46,12 +46,20 @@ type AdvertiseCandidate struct {
 // rejected ones, so callers can explain why) and the final list of advertised
 // host:port strings.
 //
+// The returned list is intended for StatusReport.APIAddresses, i.e. the
+// addresses miren.cloud hands out to clients that want to reach this
+// cluster. Loopback and unspecified (0.0.0.0, ::) addresses are never
+// included — a client coming in through miren.cloud is by definition not
+// running on the same host, so those entries would only produce failed
+// connection attempts.
+//
 // Filtering rules:
 //
-//  1. Listen address: included if it parses as host:port with a literal IP.
-//  2. Localhost (127.0.0.1, ::1): always included.
-//  3. AdditionalIPs: always included (user-curated).
-//  4. DiscoveredIPs:
+//  1. Listen address: included if it parses as host:port with a literal,
+//     non-loopback, non-unspecified IP.
+//  2. AdditionalIPs: always included (user-curated), except loopback
+//     and unspecified which are dropped with a reason.
+//  3. DiscoveredIPs:
 //     a. CGNAT addresses (100.64.0.0/10) are dropped. This range is used
 //     by tailscale tailnets and carrier-grade NAT; advertising them to
 //     a generic client is misleading. Users who want a CGNAT address
@@ -66,7 +74,7 @@ type AdvertiseCandidate struct {
 //     source is advertised instead).
 //     d. Otherwise (netcheck didn't run or source was invalid) they are
 //     kept as a fallback.
-//  5. Netcheck public addresses: included when reachable on at least one port.
+//  4. Netcheck public addresses: included when reachable on at least one port.
 func ComputeAdvertise(in AdvertiseInput) ([]AdvertiseCandidate, []string) {
 	port := in.Port
 	if port == 0 {
@@ -93,8 +101,34 @@ func ComputeAdvertise(in AdvertiseInput) ([]AdvertiseCandidate, []string) {
 	// 1. Listen address.
 	if in.ListenAddr != "" {
 		host, _, err := net.SplitHostPort(in.ListenAddr)
-		if err == nil && net.ParseIP(host) != nil {
-			ip := net.ParseIP(host)
+		ip := net.ParseIP(host)
+		switch {
+		case err != nil || ip == nil:
+			add(AdvertiseCandidate{
+				Source:   "listen",
+				HostPort: in.ListenAddr,
+				Included: false,
+				Reason:   "not a literal IP host",
+			})
+		case ip.IsUnspecified():
+			add(AdvertiseCandidate{
+				Source:         "listen",
+				HostPort:       in.ListenAddr,
+				IP:             ip,
+				Classification: "unspecified",
+				Included:       false,
+				Reason:         "unspecified address (0.0.0.0 / ::) is not routable",
+			})
+		case ip.IsLoopback():
+			add(AdvertiseCandidate{
+				Source:         "listen",
+				HostPort:       in.ListenAddr,
+				IP:             ip,
+				Classification: "loopback",
+				Included:       false,
+				Reason:         "loopback is not reachable from remote clients",
+			})
+		default:
 			add(AdvertiseCandidate{
 				Source:         "listen",
 				HostPort:       in.ListenAddr,
@@ -103,52 +137,39 @@ func ComputeAdvertise(in AdvertiseInput) ([]AdvertiseCandidate, []string) {
 				Included:       true,
 				Reason:         "server listen address",
 			})
-		} else {
-			add(AdvertiseCandidate{
-				Source:   "listen",
-				HostPort: in.ListenAddr,
-				Included: false,
-				Reason:   "not a literal IP host",
-			})
 		}
 	}
 
-	// 2. Localhost.
-	for _, lh := range []string{
-		net.JoinHostPort("127.0.0.1", portStr),
-		net.JoinHostPort("::1", portStr),
-	} {
-		host, _, _ := net.SplitHostPort(lh)
-		add(AdvertiseCandidate{
-			Source:         "localhost",
-			HostPort:       lh,
-			IP:             net.ParseIP(host),
-			Classification: "loopback",
-			Included:       true,
-			Reason:         "always advertised",
-		})
-	}
-
-	// 3. AdditionalIPs.
+	// 2. AdditionalIPs.
 	for _, ip := range in.AdditionalIPs {
 		if ip == nil {
 			continue
 		}
-		add(AdvertiseCandidate{
+		cand := AdvertiseCandidate{
 			Source:         "additional",
 			HostPort:       net.JoinHostPort(ip.String(), portStr),
 			IP:             ip,
 			Classification: classify(ip),
-			Included:       true,
-			Reason:         "user-configured",
-		})
+		}
+		switch {
+		case ip.IsUnspecified():
+			cand.Included = false
+			cand.Reason = "unspecified address (0.0.0.0 / ::) is not routable"
+		case ip.IsLoopback():
+			cand.Included = false
+			cand.Reason = "loopback is not reachable from remote clients"
+		default:
+			cand.Included = true
+			cand.Reason = "user-configured"
+		}
+		add(cand)
 	}
 
 	// Compute per-family netcheck state.
 	v4State := netcheckFamilyState(familyIPv4, in.Netcheck)
 	v6State := netcheckFamilyState(familyIPv6, in.Netcheck)
 
-	// 4. DiscoveredIPs.
+	// 3. DiscoveredIPs.
 	for _, ip := range in.DiscoveredIPs {
 		if ip == nil {
 			continue
@@ -194,7 +215,7 @@ func ComputeAdvertise(in AdvertiseInput) ([]AdvertiseCandidate, []string) {
 		add(cand)
 	}
 
-	// 5. Netcheck public addresses.
+	// 4. Netcheck public addresses.
 	for _, hp := range publicAddressesFromNetcheck(in.Netcheck) {
 		host, _, _ := net.SplitHostPort(hp)
 		ip := net.ParseIP(host)
