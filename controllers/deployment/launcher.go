@@ -1195,10 +1195,6 @@ func (l *Launcher) cleanupOldVersionPools(ctx context.Context, app *core_v1alpha
 		// Check if pool belongs to this app
 		appLabel, _ := poolMeta.Labels.Get("app")
 		if appLabel != app.ID.String() {
-			l.Log.Debug("skipping pool for different app",
-				"pool", pool.ID,
-				"pool_app", appLabel,
-				"our_app", app.ID)
 			continue
 		}
 

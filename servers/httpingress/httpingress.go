@@ -239,7 +239,6 @@ func (h *Server) expireLeases(ctx context.Context) {
 			// Renew all retained leases — both active (Uses > 0) and idle
 			// but within TTL. This validates with the activator that the
 			// sandbox is still alive, so we never serve a stale route.
-			h.Log.Debug("renewing lease", "app", app, "url", l.Lease.URL, "uses", l.Uses)
 			lease, err := h.aa.RenewLease(ctx, l.Lease)
 			if err != nil {
 				h.Log.Error("error renewing lease", "error", err, "app", app, "url", l.Lease.URL)
@@ -501,7 +500,6 @@ func (h *Server) serveHTTPWithMetrics(w http.ResponseWriter, req *http.Request, 
 		// Use the http route if found
 		targetAppId = route.App
 		routeType = "route"
-		h.Log.Debug("using http route", "host", onlyHost, "app", targetAppId)
 
 		// Check if OIDC authentication is required
 		if !entity.Empty(route.OidcProvider) {
