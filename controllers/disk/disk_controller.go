@@ -84,6 +84,13 @@ func (d *DiskController) shouldManageDisk(disk *storage_v1alpha.Disk) bool {
 	return d.isCoordinator
 }
 
+// myNodeId returns the entity ID used for disk_volumes owned by this
+// controller's node, normalized so the "node/" prefix is always present
+// exactly once regardless of how NodeId was passed in.
+func (d *DiskController) myNodeId() entity.Id {
+	return entity.Id("node/" + strings.TrimPrefix(d.NodeId, "node/"))
+}
+
 // ForceUniversalMode forces the controller to use disk_volume entities with
 // loop devices. This is used by integration tests.
 func (d *DiskController) ForceUniversalMode() {
@@ -178,7 +185,7 @@ func (d *DiskController) handleProvisioning(ctx context.Context, disk *storage_v
 		return fmt.Errorf("error looking up existing disk_volume for disk %s: %w", disk.ID, err)
 	}
 
-	myNodeId := entity.Id("node/" + strings.TrimPrefix(d.NodeId, "node/"))
+	myNodeId := d.myNodeId()
 
 	if existingVolume != nil && existingVolume.NodeId != "" && existingVolume.NodeId != myNodeId {
 		// Orphan from a runner that created a volume it shouldn't have. Log
@@ -414,7 +421,7 @@ func (d *DiskController) getDiskVolumeForDisk(ctx context.Context, diskId entity
 		return nil, nil
 	}
 
-	myNodeId := entity.Id("node/" + strings.TrimPrefix(d.NodeId, "node/"))
+	myNodeId := d.myNodeId()
 
 	var chosen *storage_v1alpha.DiskVolume
 	for _, v := range values {
