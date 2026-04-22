@@ -5,6 +5,11 @@ All notable changes to Miren Runtime will be documented in this file.
 ## Unreleased
 *main*
 
+---
+
+## v0.7.1
+*2026-04-22*
+
 **Improvements**
 - **Cut steady-state log noise** - Roughly 76% reduction in server log volume during normal operation. Removed per-request auth success logs, redundant controller reconcile lines, heartbeat spam, and other content-free chatter that drowned out useful signal. ([#767](https://github.com/mirendev/runtime/pull/767))
 
