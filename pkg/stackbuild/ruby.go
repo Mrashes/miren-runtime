@@ -329,11 +329,13 @@ func (s *RubyStack) detectEnvVars() []EnvVarRequirement {
 	gemVars := s.detectGemEnvVars(gemfile, gemfileLock)
 	results = append(results, gemVars...)
 
-	// 3. Source code scan
+	// 3. Source code scan. Direct, non-default code references are hard
+	// requirements; default to "required" rather than the weaker
+	// "recommended" used for gem-inferred guesses.
 	codeVars := s.scanRubySourceForEnvVars()
 	for _, v := range codeVars {
 		if !hasEnvVar(results, v.name) {
-			confidence := "recommended"
+			confidence := "required"
 			reason := "Referenced in application code"
 			if v.optional {
 				confidence = "optional"

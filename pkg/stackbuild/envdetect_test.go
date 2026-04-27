@@ -370,10 +370,10 @@ end
 		assert.Equal(t, "gem", varMap["STRIPE_API_KEY"].Source)
 	}
 
-	// Code-scanned vars
+	// Code-scanned vars: a direct, non-default reference is required.
 	if assert.Contains(t, varMap, "CUSTOM_API_ENDPOINT") {
 		assert.Equal(t, "code", varMap["CUSTOM_API_ENDPOINT"].Source)
-		assert.Equal(t, "recommended", varMap["CUSTOM_API_ENDPOINT"].Confidence)
+		assert.Equal(t, "required", varMap["CUSTOM_API_ENDPOINT"].Confidence)
 	}
 
 	// Config file vars (CUSTOM_VAR from .env.sample, DATABASE_URL already from gem)
@@ -734,13 +734,13 @@ end
 		varMap[v.Name] = v
 	}
 
-	// Required vars should have recommended confidence
+	// Direct, non-default code references are hard requirements.
 	if assert.Contains(t, varMap, "API_KEY") {
-		assert.Equal(t, "recommended", varMap["API_KEY"].Confidence)
+		assert.Equal(t, "required", varMap["API_KEY"].Confidence)
 		assert.NotContains(t, varMap["API_KEY"].Reason, "has default")
 	}
 	if assert.Contains(t, varMap, "SECRET_TOKEN") {
-		assert.Equal(t, "recommended", varMap["SECRET_TOKEN"].Confidence)
+		assert.Equal(t, "required", varMap["SECRET_TOKEN"].Confidence)
 	}
 
 	// Optional vars should have optional confidence

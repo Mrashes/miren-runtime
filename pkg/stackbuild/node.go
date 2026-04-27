@@ -55,6 +55,8 @@ var nodeOptionalEnvPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`process\.env\[['"]([A-Z][A-Z0-9_]+)['"]\]\s*\|\|`),
 	// process.env.VAR ?? 'default' (nullish coalescing)
 	regexp.MustCompile(`process\.env\.([A-Z][A-Z0-9_]+)\s*\?\?`),
+	// process.env['VAR'] ?? 'default' (bracket notation, nullish coalescing)
+	regexp.MustCompile(`process\.env\[['"]([A-Z][A-Z0-9_]+)['"]\]\s*\?\?`),
 }
 
 // nodePackageManager represents the detected package manager
@@ -287,10 +289,13 @@ func (s *NodeStack) detectEnvVars() []EnvVarRequirement {
 		}
 	}
 
-	// 4. Add remaining source-detected vars not covered by packages
+	// 4. Add remaining source-detected vars not covered by packages.
+	// A direct, non-default code reference is a hard requirement — the app
+	// will not boot without it — so default to "required" rather than the
+	// weaker "recommended" used for package-inferred guesses.
 	for _, v := range sourceVars {
 		if !hasEnvVar(results, v.name) {
-			confidence := "recommended"
+			confidence := "required"
 			reason := "Referenced in application code"
 			if v.optional {
 				confidence = "optional"

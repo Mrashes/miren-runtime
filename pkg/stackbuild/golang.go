@@ -269,10 +269,13 @@ func (s *GoStack) detectEnvVars() []EnvVarRequirement {
 		}
 	}
 
-	// 4. Add remaining source-detected vars not covered by modules
+	// 4. Add remaining source-detected vars not covered by modules.
+	// Direct, non-default code references are hard requirements; default
+	// to "required" rather than the weaker "recommended" used for
+	// module-inferred guesses.
 	for _, v := range sourceVars {
 		if !hasEnvVar(results, v.name) {
-			confidence := "recommended"
+			confidence := "required"
 			reason := "Referenced in application code"
 			if v.optional {
 				confidence = "optional"

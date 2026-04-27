@@ -257,10 +257,13 @@ func (s *BunStack) detectEnvVars() []EnvVarRequirement {
 		}
 	}
 
-	// 4. Add remaining source-detected vars not covered by packages
+	// 4. Add remaining source-detected vars not covered by packages.
+	// Direct, non-default code references are hard requirements; default
+	// to "required" rather than the weaker "recommended" used for
+	// package-inferred guesses.
 	for _, v := range sourceVars {
 		if !hasEnvVar(results, v.name) {
-			confidence := "recommended"
+			confidence := "required"
 			reason := "Referenced in application code"
 			if v.optional {
 				confidence = "optional"

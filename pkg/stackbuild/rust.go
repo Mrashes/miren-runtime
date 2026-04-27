@@ -256,10 +256,13 @@ func (s *RustStack) detectEnvVars() []EnvVarRequirement {
 		}
 	}
 
-	// 4. Add remaining source-detected vars not covered by crates
+	// 4. Add remaining source-detected vars not covered by crates.
+	// Direct, non-default code references are hard requirements; default
+	// to "required" rather than the weaker "recommended" used for
+	// crate-inferred guesses.
 	for _, v := range sourceVars {
 		if !hasEnvVar(results, v.name) {
-			confidence := "recommended"
+			confidence := "required"
 			reason := "Referenced in application code"
 			if v.optional {
 				confidence = "optional"
