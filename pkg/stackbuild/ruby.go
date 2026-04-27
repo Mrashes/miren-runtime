@@ -12,30 +12,34 @@ import (
 	"miren.dev/runtime/pkg/imagerefs"
 )
 
-// rubyGemEnvVars maps gem names to the environment variables they typically require
+// rubyGemEnvVars maps gem names to the environment variables they typically
+// pair with. Gem presence is only a heuristic — the app might use a YAML
+// config, hard-coded values, or a different env name — so entries default to
+// "recommended". Source-code scanning elevates a guess to "required" when
+// the named variable is read directly from ENV.
 var rubyGemEnvVars = map[string][]rubyEnvVarDef{
-	"pg":            {{name: "DATABASE_URL", confidence: "required"}},
-	"mysql2":        {{name: "DATABASE_URL", confidence: "required"}},
-	"redis":         {{name: "REDIS_URL", confidence: "required"}},
-	"sidekiq":       {{name: "REDIS_URL", confidence: "required"}},
-	"aws-sdk-s3":    {{name: "AWS_ACCESS_KEY_ID", confidence: "required"}, {name: "AWS_SECRET_ACCESS_KEY", confidence: "required"}, {name: "AWS_REGION", confidence: "recommended"}},
-	"aws-sdk-core":  {{name: "AWS_ACCESS_KEY_ID", confidence: "required"}, {name: "AWS_SECRET_ACCESS_KEY", confidence: "required"}, {name: "AWS_REGION", confidence: "recommended"}},
-	"stripe":        {{name: "STRIPE_API_KEY", confidence: "required"}},
-	"sentry-ruby":   {{name: "SENTRY_DSN", confidence: "required"}},
-	"sentry-rails":  {{name: "SENTRY_DSN", confidence: "required"}},
-	"honeybadger":   {{name: "HONEYBADGER_API_KEY", confidence: "required"}},
-	"rollbar":       {{name: "ROLLBAR_ACCESS_TOKEN", confidence: "required"}},
-	"bugsnag":       {{name: "BUGSNAG_API_KEY", confidence: "required"}},
-	"newrelic_rpm":  {{name: "NEW_RELIC_LICENSE_KEY", confidence: "required"}},
-	"scout_apm":     {{name: "SCOUT_KEY", confidence: "required"}},
-	"sendgrid":      {{name: "SENDGRID_API_KEY", confidence: "required"}},
-	"mailgun-ruby":  {{name: "MAILGUN_API_KEY", confidence: "required"}},
-	"postmark":      {{name: "POSTMARK_API_TOKEN", confidence: "required"}},
-	"twilio-ruby":   {{name: "TWILIO_ACCOUNT_SID", confidence: "required"}, {name: "TWILIO_AUTH_TOKEN", confidence: "required"}},
-	"pusher":        {{name: "PUSHER_APP_ID", confidence: "required"}, {name: "PUSHER_KEY", confidence: "required"}, {name: "PUSHER_SECRET", confidence: "required"}},
-	"elasticsearch": {{name: "ELASTICSEARCH_URL", confidence: "required"}},
-	"searchkick":    {{name: "ELASTICSEARCH_URL", confidence: "required"}},
-	"cloudinary":    {{name: "CLOUDINARY_URL", confidence: "required"}},
+	"pg":            {{name: "DATABASE_URL", confidence: "recommended"}},
+	"mysql2":        {{name: "DATABASE_URL", confidence: "recommended"}},
+	"redis":         {{name: "REDIS_URL", confidence: "recommended"}},
+	"sidekiq":       {{name: "REDIS_URL", confidence: "recommended"}},
+	"aws-sdk-s3":    {{name: "AWS_ACCESS_KEY_ID", confidence: "recommended"}, {name: "AWS_SECRET_ACCESS_KEY", confidence: "recommended"}, {name: "AWS_REGION", confidence: "recommended"}},
+	"aws-sdk-core":  {{name: "AWS_ACCESS_KEY_ID", confidence: "recommended"}, {name: "AWS_SECRET_ACCESS_KEY", confidence: "recommended"}, {name: "AWS_REGION", confidence: "recommended"}},
+	"stripe":        {{name: "STRIPE_API_KEY", confidence: "recommended"}},
+	"sentry-ruby":   {{name: "SENTRY_DSN", confidence: "recommended"}},
+	"sentry-rails":  {{name: "SENTRY_DSN", confidence: "recommended"}},
+	"honeybadger":   {{name: "HONEYBADGER_API_KEY", confidence: "recommended"}},
+	"rollbar":       {{name: "ROLLBAR_ACCESS_TOKEN", confidence: "recommended"}},
+	"bugsnag":       {{name: "BUGSNAG_API_KEY", confidence: "recommended"}},
+	"newrelic_rpm":  {{name: "NEW_RELIC_LICENSE_KEY", confidence: "recommended"}},
+	"scout_apm":     {{name: "SCOUT_KEY", confidence: "recommended"}},
+	"sendgrid":      {{name: "SENDGRID_API_KEY", confidence: "recommended"}},
+	"mailgun-ruby":  {{name: "MAILGUN_API_KEY", confidence: "recommended"}},
+	"postmark":      {{name: "POSTMARK_API_TOKEN", confidence: "recommended"}},
+	"twilio-ruby":   {{name: "TWILIO_ACCOUNT_SID", confidence: "recommended"}, {name: "TWILIO_AUTH_TOKEN", confidence: "recommended"}},
+	"pusher":        {{name: "PUSHER_APP_ID", confidence: "recommended"}, {name: "PUSHER_KEY", confidence: "recommended"}, {name: "PUSHER_SECRET", confidence: "recommended"}},
+	"elasticsearch": {{name: "ELASTICSEARCH_URL", confidence: "recommended"}},
+	"searchkick":    {{name: "ELASTICSEARCH_URL", confidence: "recommended"}},
+	"cloudinary":    {{name: "CLOUDINARY_URL", confidence: "recommended"}},
 }
 
 type rubyEnvVarDef struct {
