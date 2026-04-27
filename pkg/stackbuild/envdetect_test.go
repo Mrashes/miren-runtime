@@ -3,6 +3,7 @@ package stackbuild
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 	"time"
 
@@ -1145,6 +1146,45 @@ SECRET = os.environ.get('PY_SECRET_TOKEN')
 	assert.True(t, foundNames["PY_REDIS_URL"])
 	assert.True(t, foundNames["PY_SECRET_TOKEN"])
 	assert.False(t, foundNames["SHOULD_BE_IGNORED"], "__pycache__ should be skipped")
+}
+
+// TestBunEnvPatterns verifies that the Bun-specific Bun.env accessor is
+// recognized alongside process.env so the scanner doesn't miss vars in
+// idiomatic Bun code.
+func TestBunEnvPatterns(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "bun-scan-test-")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	// Mix of process.env and Bun.env, including bracket and nullish forms.
+	// (PORT is in ignoredEnvVars, so it doesn't appear in results.)
+	jsContent := `
+const sentryKey = process.env.MY_SENTRY_KEY;
+const apiKey = Bun.env.BUN_API_KEY;
+const dbUrl = Bun.env["BUN_DATABASE_URL"];
+const optional = Bun.env.BUN_LOG_LEVEL ?? "info";
+const fallback = Bun.env['BUN_REGION'] || "us-east-1";
+`
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "index.ts"), []byte(jsContent), 0644))
+
+	envPatterns := append(append([]*regexp.Regexp{}, nodeEnvPatterns...), bunEnvPatterns...)
+	optionalPatterns := append(append([]*regexp.Regexp{}, nodeOptionalEnvPatterns...), bunOptionalEnvPatterns...)
+	found := scanSourceFilesForEnvVars(tmpDir, []string{".ts"}, envPatterns, optionalPatterns)
+
+	byName := make(map[string]detectedEnvVar)
+	for _, v := range found {
+		byName[v.name] = v
+	}
+
+	assert.Contains(t, byName, "MY_SENTRY_KEY")
+	assert.Contains(t, byName, "BUN_API_KEY")
+	assert.Contains(t, byName, "BUN_DATABASE_URL")
+	if assert.Contains(t, byName, "BUN_LOG_LEVEL") {
+		assert.True(t, byName["BUN_LOG_LEVEL"].optional, "Bun.env.X ?? default should be optional")
+	}
+	if assert.Contains(t, byName, "BUN_REGION") {
+		assert.True(t, byName["BUN_REGION"].optional, "Bun.env['X'] || default should be optional")
+	}
 }
 
 func TestScanSourceFilesForEnvVars_Go(t *testing.T) {

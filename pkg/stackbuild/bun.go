@@ -9,6 +9,27 @@ import (
 	"miren.dev/runtime/pkg/imagerefs"
 )
 
+// bunEnvPatterns extend nodeEnvPatterns with Bun's runtime-specific
+// `Bun.env` accessor (in addition to the standard process.env).
+var bunEnvPatterns = []*regexp.Regexp{
+	// Bun.env.VAR
+	regexp.MustCompile(`Bun\.env\.([A-Z][A-Z0-9_]+)`),
+	// Bun.env['VAR'] or Bun.env["VAR"]
+	regexp.MustCompile(`Bun\.env\[['"]([A-Z][A-Z0-9_]+)['"]\]`),
+}
+
+// bunOptionalEnvPatterns mirror nodeOptionalEnvPatterns for Bun.env.
+var bunOptionalEnvPatterns = []*regexp.Regexp{
+	// Bun.env.VAR || 'default'
+	regexp.MustCompile(`Bun\.env\.([A-Z][A-Z0-9_]+)\s*\|\|`),
+	// Bun.env['VAR'] || 'default'
+	regexp.MustCompile(`Bun\.env\[['"]([A-Z][A-Z0-9_]+)['"]\]\s*\|\|`),
+	// Bun.env.VAR ?? 'default' (nullish coalescing)
+	regexp.MustCompile(`Bun\.env\.([A-Z][A-Z0-9_]+)\s*\?\?`),
+	// Bun.env['VAR'] ?? 'default' (bracket notation, nullish coalescing)
+	regexp.MustCompile(`Bun\.env\[['"]([A-Z][A-Z0-9_]+)['"]\]\s*\?\?`),
+}
+
 // BunStack implements Stack for Bun
 type BunStack struct {
 	MetaStack
@@ -225,9 +246,12 @@ func (s *BunStack) RequiredEnvVars() []EnvVarRequirement {
 func (s *BunStack) detectEnvVars() []EnvVarRequirement {
 	var results []EnvVarRequirement
 
-	// 1. Scan source code first to know what env vars are actually used
-	// Bun also supports Bun.env in addition to process.env
-	sourceVars := scanSourceFilesForEnvVars(s.dir, []string{".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs"}, nodeEnvPatterns, nodeOptionalEnvPatterns)
+	// 1. Scan source code first to know what env vars are actually used.
+	// Bun apps may use either process.env (Node-compatible) or Bun.env
+	// (Bun-specific), so combine both pattern sets.
+	envPatterns := append(append([]*regexp.Regexp{}, nodeEnvPatterns...), bunEnvPatterns...)
+	optionalPatterns := append(append([]*regexp.Regexp{}, nodeOptionalEnvPatterns...), bunOptionalEnvPatterns...)
+	sourceVars := scanSourceFilesForEnvVars(s.dir, []string{".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs"}, envPatterns, optionalPatterns)
 
 	// 2. Framework defaults - NODE_ENV is recognized by Bun
 	results = append(results, EnvVarRequirement{
