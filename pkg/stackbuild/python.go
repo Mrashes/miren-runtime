@@ -536,31 +536,20 @@ func (s *PythonStack) detectEnvVars() []EnvVarRequirement {
 	sourceVars := scanSourceFilesForEnvVars(s.dir, []string{".py"}, pythonEnvPatterns, pythonOptionalEnvPatterns)
 
 	// 2. Framework core vars
+	//
+	// Django does not read DJANGO_SECRET_KEY automatically — settings.py has
+	// to wire SECRET_KEY = os.environ["..."], and the chosen name is
+	// app-specific. Flask only reads FLASK_-prefixed vars when the app calls
+	// app.config.from_prefixed_env(). So neither framework gives us a stable
+	// "core" var to require by name. Source/config scanning below picks up
+	// the actual names the app reads.
 	if s.hasDjango {
-		results = append(results, EnvVarRequirement{
-			Name:        "DJANGO_SECRET_KEY",
-			Source:      "django_core",
-			Confidence:  "required",
-			Reason:      "Required by Django in production",
-			CanGenerate: true,
-		})
-
 		results = append(results, EnvVarRequirement{
 			Name:         "DJANGO_DEBUG",
 			Source:       "django_core",
 			Confidence:   "recommended",
 			Reason:       "Django debug mode (should be False in production)",
 			DefaultValue: "False",
-		})
-	}
-
-	if s.hasFlask {
-		results = append(results, EnvVarRequirement{
-			Name:        "FLASK_SECRET_KEY",
-			Source:      "flask_core",
-			Confidence:  "required",
-			Reason:      "Required by Flask for session security",
-			CanGenerate: true,
 		})
 	}
 
