@@ -1129,3 +1129,124 @@ func TestDeleteEnvVar(t *testing.T) {
 		}
 	})
 }
+
+func TestSetInitialEnvVars(t *testing.T) {
+	ctx := context.Background()
+
+	inmem, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	ec := entityserver.NewClient(slog.Default(), inmem.EAC)
+
+	appInfo := &AppInfo{
+		Log:  slog.Default(),
+		EC:   ec,
+		CPU:  &metrics.CPUUsage{},
+		Mem:  &metrics.MemoryUsage{},
+		HTTP: &metrics.HTTPMetrics{},
+	}
+
+	client := &app_v1alpha.CrudClient{
+		Client: rpc.LocalClient(app_v1alpha.AdaptCrud(appInfo)),
+	}
+
+	t.Run("creates ConfigVersion and points app.initial_config without an AppVersion", func(t *testing.T) {
+		appName := "test-init-config"
+		app := &core_v1alpha.App{}
+		_, err := inmem.Client.Create(ctx, appName, app)
+		if err != nil {
+			t.Fatalf("failed to create app: %v", err)
+		}
+
+		nv1 := makeNamedValue("SECRET_KEY_BASE", "abc123", true)
+		nv2 := makeNamedValue("DATABASE_URL", "postgres://x", true)
+
+		res, err := client.SetInitialEnvVars(ctx, appName, []*app_v1alpha.NamedValue{nv1, nv2}, "")
+		if err != nil {
+			t.Fatalf("SetInitialEnvVars failed: %v", err)
+		}
+		if res.ConfigVersionId() == "" {
+			t.Fatal("expected non-empty config version ID")
+		}
+
+		var appCheck core_v1alpha.App
+		if err := ec.Get(ctx, appName, &appCheck); err != nil {
+			t.Fatalf("failed to get app: %v", err)
+		}
+		if appCheck.ActiveVersion != "" {
+			t.Fatalf("active_version should be empty, got %s", appCheck.ActiveVersion)
+		}
+		if appCheck.InitialConfig == "" {
+			t.Fatal("initial_config should be set")
+		}
+
+		var cv core_v1alpha.ConfigVersion
+		if err := ec.GetById(ctx, appCheck.InitialConfig, &cv); err != nil {
+			t.Fatalf("failed to get initial config version: %v", err)
+		}
+		if len(cv.Spec.Variables) != 2 {
+			t.Fatalf("expected 2 variables in initial config, got %d", len(cv.Spec.Variables))
+		}
+	})
+
+	t.Run("merges with existing initial config on subsequent calls", func(t *testing.T) {
+		appName := "test-init-merge"
+		app := &core_v1alpha.App{}
+		_, err := inmem.Client.Create(ctx, appName, app)
+		if err != nil {
+			t.Fatalf("failed to create app: %v", err)
+		}
+
+		_, err = client.SetInitialEnvVars(ctx, appName,
+			[]*app_v1alpha.NamedValue{makeNamedValue("FIRST", "1", false)}, "")
+		if err != nil {
+			t.Fatalf("first SetInitialEnvVars failed: %v", err)
+		}
+
+		_, err = client.SetInitialEnvVars(ctx, appName,
+			[]*app_v1alpha.NamedValue{makeNamedValue("SECOND", "2", false)}, "")
+		if err != nil {
+			t.Fatalf("second SetInitialEnvVars failed: %v", err)
+		}
+
+		var appCheck core_v1alpha.App
+		if err := ec.Get(ctx, appName, &appCheck); err != nil {
+			t.Fatalf("failed to get app: %v", err)
+		}
+
+		var cv core_v1alpha.ConfigVersion
+		if err := ec.GetById(ctx, appCheck.InitialConfig, &cv); err != nil {
+			t.Fatalf("failed to get initial config version: %v", err)
+		}
+
+		keys := map[string]bool{}
+		for _, v := range cv.Spec.Variables {
+			keys[v.Key] = true
+		}
+		if !keys["FIRST"] || !keys["SECOND"] {
+			t.Fatalf("expected merged keys, got %v", keys)
+		}
+	})
+
+	t.Run("rejects calls after an AppVersion exists", func(t *testing.T) {
+		appName := "test-init-after-deploy"
+		app := &core_v1alpha.App{}
+		_, err := inmem.Client.Create(ctx, appName, app)
+		if err != nil {
+			t.Fatalf("failed to create app: %v", err)
+		}
+
+		// Simulate a deploy by creating a normal AppVersion + setting it active.
+		_, err = client.SetEnvVars(ctx, appName,
+			[]*app_v1alpha.NamedValue{makeNamedValue("DEPLOYED", "yes", false)}, "")
+		if err != nil {
+			t.Fatalf("SetEnvVars failed: %v", err)
+		}
+
+		_, err = client.SetInitialEnvVars(ctx, appName,
+			[]*app_v1alpha.NamedValue{makeNamedValue("LATE", "x", false)}, "")
+		if err == nil {
+			t.Fatal("expected error when setting initial env vars after deploy")
+		}
+	})
+}

@@ -8,6 +8,7 @@ import (
 	coreutil "miren.dev/runtime/api/core"
 	"miren.dev/runtime/api/core/core_v1alpha"
 	"miren.dev/runtime/api/entityserver"
+	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/idgen"
 )
 
@@ -210,6 +211,111 @@ func resolveBaseVersion(ctx context.Context, ec *entityserver.Client, appName st
 	}
 
 	return &appVer, &spec, &appRec, nil
+}
+
+// SetInitialEnvVars stages env vars on an app's initial ConfigVersion,
+// before any AppVersion exists. Used during `miren init` to record secrets
+// and other config that the first deploy will pick up. The app's
+// initial_config field is updated to point at the new ConfigVersion; no
+// AppVersion is created and active_version is left untouched.
+//
+// Subsequent calls merge with the existing initial config rather than
+// replacing it, mirroring the SetEnvVars behaviour for active versions.
+func SetInitialEnvVars(ctx context.Context, ec *entityserver.Client, appName string,
+	vars []EnvVarInput, service string) (entity.Id, error) {
+
+	for _, v := range vars {
+		if strings.HasPrefix(v.Key, "MIREN_") {
+			return "", fmt.Errorf("cannot set MIREN_ environment variables")
+		}
+	}
+
+	var appRec core_v1alpha.App
+	if err := ec.Get(ctx, appName, &appRec); err != nil {
+		return "", err
+	}
+
+	if appRec.ActiveVersion != "" {
+		return "", fmt.Errorf("app %q already has a deployed version; use SetEnvVars instead", appName)
+	}
+
+	var spec core_v1alpha.ConfigSpec
+	if appRec.InitialConfig != "" {
+		var prev core_v1alpha.ConfigVersion
+		if err := ec.GetById(ctx, appRec.InitialConfig, &prev); err != nil {
+			return "", fmt.Errorf("failed to load existing initial config: %w", err)
+		}
+		spec = prev.Spec
+	}
+
+	for _, v := range vars {
+		if service == "" {
+			found := false
+			for i, ev := range spec.Variables {
+				if ev.Key == v.Key {
+					spec.Variables[i].Value = v.Value
+					spec.Variables[i].Sensitive = v.Sensitive
+					spec.Variables[i].Source = "manual"
+					found = true
+					break
+				}
+			}
+			if !found {
+				spec.Variables = append(spec.Variables, core_v1alpha.ConfigSpecVariables{
+					Key:       v.Key,
+					Value:     v.Value,
+					Sensitive: v.Sensitive,
+					Source:    "manual",
+				})
+			}
+		} else {
+			svcFound := false
+			for i := range spec.Services {
+				if spec.Services[i].Name == service {
+					svcFound = true
+					envFound := false
+					for j, e := range spec.Services[i].Env {
+						if e.Key == v.Key {
+							spec.Services[i].Env[j].Value = v.Value
+							spec.Services[i].Env[j].Sensitive = v.Sensitive
+							spec.Services[i].Env[j].Source = "manual"
+							envFound = true
+							break
+						}
+					}
+					if !envFound {
+						spec.Services[i].Env = append(spec.Services[i].Env, core_v1alpha.ConfigSpecServicesEnv{
+							Key:       v.Key,
+							Value:     v.Value,
+							Sensitive: v.Sensitive,
+							Source:    "manual",
+						})
+					}
+					break
+				}
+			}
+			if !svcFound {
+				return "", fmt.Errorf("service %q not found", service)
+			}
+		}
+	}
+
+	configVer := &core_v1alpha.ConfigVersion{
+		App:  appRec.ID,
+		Spec: spec,
+	}
+	cvName := appName + "-initial-" + idgen.Gen("c")
+	cvid, err := ec.Create(ctx, cvName, configVer)
+	if err != nil {
+		return "", fmt.Errorf("error creating initial config version: %w", err)
+	}
+
+	appRec.InitialConfig = cvid
+	if err := ec.Update(ctx, &appRec); err != nil {
+		return "", fmt.Errorf("error updating app initial_config: %w", err)
+	}
+
+	return cvid, nil
 }
 
 // createNewVersion creates a ConfigVersion + AppVersion from the mutated spec and activates it.

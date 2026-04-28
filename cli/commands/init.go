@@ -279,12 +279,26 @@ func Init(ctx *Context, opts struct {
 					lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Render("Warning:"), err)
 				ctx.Printf("Secrets not stored. Run 'miren config set' to configure manually.\n")
 			} else {
+				// Stage the secrets on the app's initial ConfigVersion via a
+				// single batched RPC. This deliberately avoids creating an
+				// AppVersion before the first build — the initial config is
+				// picked up by the first deploy.
+				rpcVars := make([]*app_v1alpha.NamedValue, 0, len(secretsToStore))
 				for _, secret := range secretsToStore {
-					_, err := ac.SetEnvVar(ctx, appConfig.Name, secret.Key, secret.Value, secret.Sensitive, "")
-					if err != nil {
-						ctx.Printf("  %s Failed to set %s: %v\n",
-							lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Render("Warning:"), secret.Key, err)
-					} else {
+					nv := &app_v1alpha.NamedValue{}
+					nv.SetKey(secret.Key)
+					nv.SetValue(secret.Value)
+					nv.SetSensitive(secret.Sensitive)
+					rpcVars = append(rpcVars, nv)
+				}
+
+				_, err := ac.SetInitialEnvVars(ctx, appConfig.Name, rpcVars, "")
+				if err != nil {
+					ctx.Printf("\n%s Failed to stage secrets on server: %v\n",
+						lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Render("Warning:"), err)
+					ctx.Printf("Secrets not stored. Run 'miren config set' to configure manually.\n")
+				} else {
+					for _, secret := range secretsToStore {
 						serverConfigured = append(serverConfigured, secret)
 						// Record the key (without its value) so that a subsequent
 						// `miren init --update` treats this secret as already

@@ -716,7 +716,8 @@ func (b *Builder) nextVersion(ctx context.Context, name string) (
 
 	var currentCfg core_v1alpha.ConfigSpec
 
-	if appRec.ActiveVersion != "" {
+	switch {
+	case appRec.ActiveVersion != "":
 		var verRec core_v1alpha.AppVersion
 
 		err := b.ec.GetById(ctx, appRec.ActiveVersion, &verRec)
@@ -730,6 +731,15 @@ func (b *Builder) nextVersion(ctx context.Context, name string) (
 			return nil, nil, core_v1alpha.ConfigSpec{}, "", fmt.Errorf("failed to resolve config: %w", err)
 		}
 		currentCfg = *resolvedCfg
+
+	case appRec.InitialConfig != "":
+		// First deploy after `miren init` staged config server-side. Seed from
+		// the initial ConfigVersion so generated secrets are picked up.
+		var cv core_v1alpha.ConfigVersion
+		if err := b.ec.GetById(ctx, appRec.InitialConfig, &cv); err != nil {
+			return nil, nil, core_v1alpha.ConfigSpec{}, "", fmt.Errorf("failed to load initial config: %w", err)
+		}
+		currentCfg = cv.Spec
 	}
 
 	ver := name + "-" + idgen.Gen("v")

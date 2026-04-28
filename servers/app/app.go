@@ -627,6 +627,28 @@ func (r *AppInfo) SetEnvVars(ctx context.Context, state *app_v1alpha.CrudSetEnvV
 	return nil
 }
 
+func (r *AppInfo) SetInitialEnvVars(ctx context.Context, state *app_v1alpha.CrudSetInitialEnvVars) error {
+	args := state.Args()
+	rpcVars := args.Vars()
+
+	if len(rpcVars) == 0 {
+		return fmt.Errorf("no environment variables provided")
+	}
+
+	vars := make([]appclient.EnvVarInput, len(rpcVars))
+	for i, v := range rpcVars {
+		vars[i] = appclient.EnvVarInput{Key: v.Key(), Value: v.Value(), Sensitive: v.Sensitive()}
+	}
+
+	cvid, err := appclient.SetInitialEnvVars(ctx, r.EC, args.App(), vars, args.Service())
+	if err != nil {
+		return err
+	}
+
+	state.Results().SetConfigVersionId(string(cvid))
+	return nil
+}
+
 func (r *AppInfo) DeleteEnvVar(ctx context.Context, state *app_v1alpha.CrudDeleteEnvVar) error {
 	args := state.Args()
 
