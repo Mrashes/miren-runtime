@@ -234,30 +234,23 @@ func MakeFilteredTar(dir string, includePatterns []string, onlyPaths map[string]
 // and only including regular files for which accept returns true. Directory entries
 // are emitted lazily as needed to contain accepted files.
 func makeTarWithFilter(dir string, includePatterns []string, accept func(string) bool, uncompressedBytes *atomic.Int64) (io.ReadCloser, error) {
-	r, w, err := os.Pipe()
-	if err != nil {
-		return nil, err
-	}
-
-	gzw := gzip.NewWriter(w)
-	tw := tar.NewWriter(gzw)
-
 	ignorePatterns, err := parseGitignoreFile(filepath.Join(dir, ".gitignore"), nil)
 	if err != nil {
-		w.Close()
 		return nil, err
 	}
 	ignorePatterns = append(ignorePatterns, gitignore.ParsePattern(".git", nil))
 	includes := parseStringPatterns(includePatterns)
 
-	go func() {
-		defer w.Close()
-		defer tw.Close()
-		defer gzw.Close()
+	// io.Pipe (rather than os.Pipe) lets us surface walk errors to the
+	// reader via CloseWithError instead of silently EOF-ing.
+	r, w := io.Pipe()
+	gzw := gzip.NewWriter(w)
+	tw := tar.NewWriter(gzw)
 
+	go func() {
 		emittedDirs := make(map[string]bool)
 
-		filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		walkErr := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
 			}
@@ -350,6 +343,22 @@ func makeTarWithFilter(dir string, includePatterns []string, accept func(string)
 
 			return nil
 		})
+
+		// Close the tar/gzip writers before the pipe so their trailers
+		// flush. Order matters: tw must close before gzw, gzw before w.
+		// On walk error, propagate it through the pipe so the reader
+		// gets the actual failure instead of a silent EOF.
+		if cerr := tw.Close(); cerr != nil && walkErr == nil {
+			walkErr = cerr
+		}
+		if cerr := gzw.Close(); cerr != nil && walkErr == nil {
+			walkErr = cerr
+		}
+		if walkErr != nil {
+			w.CloseWithError(walkErr)
+			return
+		}
+		w.Close()
 	}()
 
 	return r, nil
