@@ -87,6 +87,9 @@ func (r *AppInfo) New(ctx context.Context, state *app_v1alpha.CrudNew) error {
 		state.Results().SetId(string(appRec.ID))
 		return nil
 	}
+	if !errors.Is(err, cond.ErrNotFound{}) {
+		return fmt.Errorf("failed to look up app %q: %w", name, err)
+	}
 
 	// Set default project to match the build server behavior
 	appRec.Project = "project/default"
