@@ -1,28 +1,31 @@
 ---
-title: "miren route show"
-sidebar_label: "route show"
-description: "Show details of an HTTP route"
+title: "miren auth provider show"
+sidebar_label: "auth provider show"
+description: "Show an identity provider"
 ---
 
-# miren route show
+# miren auth provider show
 
-Show details of an HTTP route
+Show an identity provider
+
+:::note
+This command requires the `routeoidc` [labs feature](/labs) to be enabled.
+:::
 
 ## Usage
 
 ```bash
-miren route show <host> [flags]
+miren auth provider show <name> [flags]
 ```
 
 ## Arguments
 
-- `host` — Hostname of the route to show; omit and pass --default for the default route
+- `name` — Name of the identity provider
 
 ## Flags
 
 - `--cluster, -C` — Cluster name
 - `--config` — Path to the config file
-- `--default` — Show the default route (instead of a hostname)
 - `--format` — Output format (text, json) (default: `text`)
 - `--json` — Shorthand for --format json
 
@@ -32,14 +35,6 @@ miren route show <host> [flags]
 - `--server-address` — Server address to connect to (default: `127.0.0.1:8443`)
 - `--verbose, -v` — Enable verbose output
 
-## Examples
-
-**Show route details:**
-
-```bash
-miren route show example.com
-```
-
 ## See also
 
-- [`miren route`](/command/route)
+- [`miren auth provider`](/command/auth-provider)

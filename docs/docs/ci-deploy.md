@@ -6,8 +6,8 @@ Deploy to Miren from CI/CD pipelines without storing long-lived secrets. Instead
 
 GitHub Actions works out of the box. Other OIDC-capable CI systems (GitLab CI, CircleCI, etc.) are supported with manual configuration.
 
-:::info Looking for Route OIDC?
-This page covers OIDC for **CI/CD deployment authentication** — letting pipelines deploy without stored secrets. For protecting your **application's HTTP routes** with single sign-on, see [Route OIDC Authentication](/route-oidc).
+:::info Looking for Route Protection?
+This page covers OIDC for **CI/CD deployment authentication** — letting pipelines deploy without stored secrets. For putting single sign-on in front of your **application's HTTP routes**, see [Protecting Routes](/route-protect).
 :::
 
 ## How It Works

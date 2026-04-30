@@ -2,22 +2,24 @@ package commands
 
 import (
 	"fmt"
+	"strings"
 
 	"miren.dev/runtime/api/ingress"
 	"miren.dev/runtime/api/ingress/ingress_v1alpha"
-	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/labs"
 	"miren.dev/runtime/pkg/ui"
 )
 
-func RouteOidcShow(ctx *Context, opts struct {
-	Host    string `position:"0" usage:"Hostname for the route (e.g., example.com)"`
-	Default bool   `long:"default" description:"Show OIDC config for the default route"`
+func RouteProtect(ctx *Context, opts struct {
+	Host        string   `position:"0" usage:"Hostname for the route (e.g., example.com); omit and pass --default for the default route"`
+	Default     bool     `long:"default" description:"Protect the default route (instead of a hostname)"`
+	Provider    string   `long:"provider" description:"Name of the identity provider" required:"true"`
+	ClaimHeader []string `long:"claim-header" description:"Claim to header mapping in format 'claim:header' (e.g., 'email:X-User-Email')"`
 	FormatOptions
 	ConfigCentric
 }) error {
 	if !labs.RouteOIDC() {
-		return fmt.Errorf("OIDC authentication for routes is disabled. Enable with MIREN_LABS=routeoidc")
+		return fmt.Errorf("route protection is disabled. Enable with MIREN_LABS=routeoidc")
 	}
 
 	if opts.Host == "" && !opts.Default {
@@ -26,6 +28,10 @@ func RouteOidcShow(ctx *Context, opts struct {
 
 	if opts.Host != "" && opts.Default {
 		return fmt.Errorf("--default cannot be used with a hostname")
+	}
+
+	if opts.Provider == "" {
+		return fmt.Errorf("--provider is required")
 	}
 
 	client, err := ctx.RPCClient("entities")
@@ -58,71 +64,63 @@ func RouteOidcShow(ctx *Context, opts struct {
 		routeLabel = opts.Host
 	}
 
-	// Check if OIDC is configured
-	if entity.Empty(route.OidcProvider) {
-		if opts.IsJSON() {
-			return PrintJSON(map[string]interface{}{
-				"host":         routeLabel,
-				"oidc_enabled": false,
-				"provider":     nil,
-			})
+	var claimMappings []ingress_v1alpha.ClaimMappings
+	for _, mapping := range opts.ClaimHeader {
+		parts := strings.SplitN(mapping, ":", 2)
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid claim-header mapping format: %s (expected 'claim:header')", mapping)
 		}
-		ctx.Printf("OIDC is not configured for route: %s\n", routeLabel)
-		return nil
+		claim := strings.TrimSpace(parts[0])
+		header := strings.TrimSpace(parts[1])
+		if claim == "" || header == "" {
+			return fmt.Errorf("invalid claim-header mapping format: %q (expected non-empty 'claim:header')", mapping)
+		}
+		claimMappings = append(claimMappings, ingress_v1alpha.ClaimMappings{
+			Claim:  claim,
+			Header: header,
+		})
 	}
 
-	// Look up the OIDC provider
-	var provider ingress_v1alpha.OidcProvider
-	err = ic.GetEntityStore().GetById(ctx, route.OidcProvider, &provider)
+	_, err = ic.AttachOIDCProviderToRoute(ctx, route, opts.Provider, claimMappings)
 	if err != nil {
-		return fmt.Errorf("failed to get OIDC provider: %w", err)
+		return fmt.Errorf("failed to protect route: %w", err)
 	}
 
-	// Display OIDC config
 	if opts.IsJSON() {
-		type OIDCConfigJSON struct {
-			Host          string              `json:"host"`
-			OIDCEnabled   bool                `json:"oidc_enabled"`
-			ProviderName  string              `json:"provider_name"`
-			ProviderURL   string              `json:"provider_url"`
-			ClientID      string              `json:"client_id"`
-			Scopes        string              `json:"scopes"`
+		type RouteProtectJSON struct {
+			Route         string              `json:"route"`
+			Protected     bool                `json:"protected"`
+			Provider      string              `json:"provider"`
 			ClaimMappings []map[string]string `json:"claim_mappings,omitempty"`
 		}
 
 		var mappings []map[string]string
-		for _, m := range route.ClaimMappings {
+		for _, m := range claimMappings {
 			mappings = append(mappings, map[string]string{
 				"claim":  m.Claim,
 				"header": m.Header,
 			})
 		}
 
-		return PrintJSON(OIDCConfigJSON{
-			Host:          routeLabel,
-			OIDCEnabled:   true,
-			ProviderName:  provider.Name,
-			ProviderURL:   provider.ProviderUrl,
-			ClientID:      provider.ClientId,
-			Scopes:        provider.Scopes,
+		return PrintJSON(RouteProtectJSON{
+			Route:         routeLabel,
+			Protected:     true,
+			Provider:      opts.Provider,
 			ClaimMappings: mappings,
 		})
 	}
 
 	items := []ui.NamedValue{
 		ui.NewNamedValue("Route", routeLabel),
-		ui.NewNamedValue("Enabled", true),
-		ui.NewNamedValue("Provider", provider.Name),
-		ui.NewNamedValue("Provider URL", provider.ProviderUrl),
-		ui.NewNamedValue("Client ID", provider.ClientId),
-		ui.NewNamedValue("Scopes", provider.Scopes),
+		ui.NewNamedValue("Protected", true),
+		ui.NewNamedValue("Provider", opts.Provider),
 	}
 
 	ctx.Printf("%s\n", ui.NewNamedValueList(items).Render())
 
-	if len(route.ClaimMappings) > 0 {
+	if len(claimMappings) > 0 {
 		var rows []ui.Row
-		for _, m := range route.ClaimMappings {
+		for _, m := range claimMappings {
 			rows = append(rows, ui.Row{m.Claim, m.Header})
 		}
 

@@ -36,7 +36,7 @@ func FeatureDescriptions() map[string]string {
 		FeatureGlobalRouter:       "Use global NAT traversal router for connectivity",
 		FeatureDistributedRunners: "Schedule jobs across multiple runner nodes",
 		FeatureAdminAPI:           "Enable the admin API for application management functions",
-		FeatureRouteOIDC:          "Enable OIDC authentication for HTTP routes",
+		FeatureRouteOIDC:          "Protect HTTP routes with identity-provider login",
 		FeatureAddons:             "Enable the addon system for managed backing services",
 		FeatureSagas:              "Use saga-based crash-recoverable workflows for sandbox lifecycle",
 	}
@@ -161,7 +161,7 @@ func AdminAPI() bool {
 }
 
 // RouteOIDC returns whether the routeoidc feature is enabled.
-// Enable OIDC authentication for HTTP routes
+// Protect HTTP routes with identity-provider login
 func RouteOIDC() bool {
 	return IsEnabled(FeatureRouteOIDC)
 }

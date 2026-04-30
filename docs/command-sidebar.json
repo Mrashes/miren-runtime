@@ -60,7 +60,12 @@
       "command/auth-ci-add",
       "command/auth-ci-list",
       "command/auth-ci-remove",
-      "command/auth-generate"
+      "command/auth-generate",
+      "command/auth-provider",
+      "command/auth-provider-add",
+      "command/auth-provider-list",
+      "command/auth-provider-remove",
+      "command/auth-provider-show"
     ]
   },
   {
@@ -249,14 +254,12 @@
     },
     "items": [
       "command/route-list",
-      "command/route-oidc",
-      "command/route-oidc-disable",
-      "command/route-oidc-enable",
-      "command/route-oidc-show",
+      "command/route-protect",
       "command/route-remove",
       "command/route-set",
       "command/route-set-default",
       "command/route-show",
+      "command/route-unprotect",
       "command/route-unset-default"
     ]
   },

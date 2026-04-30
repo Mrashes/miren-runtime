@@ -60,6 +60,11 @@ Complete reference for all `miren` CLI commands.
 | [`miren auth ci list`](/command/auth-ci-list) | List CI authentication bindings for an application |
 | [`miren auth ci remove`](/command/auth-ci-remove) | Remove a CI authentication binding |
 | [`miren auth generate`](/command/auth-generate) | Generate authentication config file |
+| [`miren auth provider`](/command/auth-provider) | Identity provider management |
+| [`miren auth provider add`](/command/auth-provider-add) | Add an identity provider for route protection _(`routeoidc`)_ |
+| [`miren auth provider list`](/command/auth-provider-list) | List identity providers _(`routeoidc`)_ |
+| [`miren auth provider remove`](/command/auth-provider-remove) | Remove an identity provider _(`routeoidc`)_ |
+| [`miren auth provider show`](/command/auth-provider-show) | Show an identity provider _(`routeoidc`)_ |
 
 ## cluster
 
@@ -171,14 +176,12 @@ Complete reference for all `miren` CLI commands.
 |---------|-------------|
 | [`miren route`](/command/route) | List all HTTP routes |
 | [`miren route list`](/command/route-list) | List all HTTP routes |
-| [`miren route oidc`](/command/route-oidc) | OIDC authentication management for routes |
-| [`miren route oidc disable`](/command/route-oidc-disable) | Disable OIDC authentication for a route _(`routeoidc`)_ |
-| [`miren route oidc enable`](/command/route-oidc-enable) | Enable OIDC authentication for a route _(`routeoidc`)_ |
-| [`miren route oidc show`](/command/route-oidc-show) | Show OIDC configuration for a route _(`routeoidc`)_ |
+| [`miren route protect`](/command/route-protect) | Protect an HTTP route with an identity provider _(`routeoidc`)_ |
 | [`miren route remove`](/command/route-remove) | Remove an HTTP route |
 | [`miren route set`](/command/route-set) | Create or update an HTTP route |
 | [`miren route set-default`](/command/route-set-default) | Set an app as the default route |
 | [`miren route show`](/command/route-show) | Show details of an HTTP route |
+| [`miren route unprotect`](/command/route-unprotect) | Remove identity-provider protection from an HTTP route _(`routeoidc`)_ |
 | [`miren route unset-default`](/command/route-unset-default) | Remove the default route |
 
 ## runner
