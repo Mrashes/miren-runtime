@@ -131,6 +131,9 @@ func ComputeManifest(dir string, includePatterns []string) ([]FileManifest, erro
 	ignorePatterns = append(ignorePatterns, gitignore.ParsePattern(".git", nil))
 	includes := parseStringPatterns(includePatterns)
 
+	includesMatcher := gitignore.NewMatcher(includes)
+	ignoreMatcher := gitignore.NewMatcher(ignorePatterns)
+
 	var manifest []FileManifest
 
 	err = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
@@ -150,10 +153,10 @@ func ComputeManifest(dir string, includePatterns []string) ([]FileManifest, erro
 
 		segs := pathSegments(rp)
 
-		isIncluded := len(includes) > 0 && gitignore.NewMatcher(includes).Match(segs, info.IsDir())
+		isIncluded := len(includes) > 0 && includesMatcher.Match(segs, info.IsDir())
 
 		if !isIncluded {
-			if gitignore.NewMatcher(ignorePatterns).Match(segs, info.IsDir()) {
+			if ignoreMatcher.Match(segs, info.IsDir()) {
 				if info.IsDir() {
 					return filepath.SkipDir
 				}
@@ -169,6 +172,7 @@ func ComputeManifest(dir string, includePatterns []string) ([]FileManifest, erro
 			}
 			if more != nil {
 				ignorePatterns = append(ignorePatterns, more...)
+				ignoreMatcher = gitignore.NewMatcher(ignorePatterns)
 			}
 			return nil
 		}
@@ -241,6 +245,9 @@ func makeTarWithFilter(dir string, includePatterns []string, accept func(string)
 	ignorePatterns = append(ignorePatterns, gitignore.ParsePattern(".git", nil))
 	includes := parseStringPatterns(includePatterns)
 
+	includesMatcher := gitignore.NewMatcher(includes)
+	ignoreMatcher := gitignore.NewMatcher(ignorePatterns)
+
 	// io.Pipe (rather than os.Pipe) lets us surface walk errors to the
 	// reader via CloseWithError instead of silently EOF-ing.
 	r, w := io.Pipe()
@@ -267,10 +274,10 @@ func makeTarWithFilter(dir string, includePatterns []string, accept func(string)
 
 			segs := pathSegments(rp)
 
-			isIncluded := len(includes) > 0 && gitignore.NewMatcher(includes).Match(segs, info.IsDir())
+			isIncluded := len(includes) > 0 && includesMatcher.Match(segs, info.IsDir())
 
 			if !isIncluded {
-				if gitignore.NewMatcher(ignorePatterns).Match(segs, info.IsDir()) {
+				if ignoreMatcher.Match(segs, info.IsDir()) {
 					if info.IsDir() {
 						return filepath.SkipDir
 					}
@@ -286,6 +293,7 @@ func makeTarWithFilter(dir string, includePatterns []string, accept func(string)
 				}
 				if more != nil {
 					ignorePatterns = append(ignorePatterns, more...)
+					ignoreMatcher = gitignore.NewMatcher(ignorePatterns)
 				}
 				return nil
 			}

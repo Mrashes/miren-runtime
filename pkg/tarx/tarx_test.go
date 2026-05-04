@@ -365,6 +365,41 @@ func TestMakeTarBridgetownTmpPids(t *testing.T) {
 	require.NotContains(t, entries, "tmp/cache/x.txt")
 }
 
+// TestMakeTarSiblingGitignoresDoNotCrossPollute verifies that when a nested
+// .gitignore is encountered, its patterns do not leak to sibling directories.
+// We accumulate patterns into a single slice as we walk, so this test pins
+// down that go-git's per-pattern `domain` actually scopes matches to the
+// gitignore's directory subtree.
+func TestMakeTarSiblingGitignoresDoNotCrossPollute(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tarx-sibling-")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	files := map[string]string{
+		"subdirA/.gitignore": "keep.txt\n",
+		"subdirA/keep.txt":   "should be ignored in subdirA",
+		"subdirA/other.txt":  "kept",
+		"subdirB/keep.txt":   "should NOT be ignored in subdirB",
+		"subdirB/other.txt":  "kept",
+	}
+	for filename, content := range files {
+		fullPath := filepath.Join(tmpDir, filename)
+		require.NoError(t, os.MkdirAll(filepath.Dir(fullPath), 0755))
+		require.NoError(t, os.WriteFile(fullPath, []byte(content), 0644))
+	}
+
+	reader, err := MakeTar(tmpDir, nil, nil)
+	require.NoError(t, err)
+
+	entries := extractTarEntries(t, reader)
+	require.NotContains(t, entries, "subdirA/keep.txt",
+		"subdirA/.gitignore must hide keep.txt in subdirA")
+	require.Contains(t, entries, "subdirB/keep.txt",
+		"subdirA/.gitignore must NOT affect subdirB")
+	require.Contains(t, entries, "subdirA/other.txt")
+	require.Contains(t, entries, "subdirB/other.txt")
+}
+
 func TestComputeManifest(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "tarx-manifest-")
 	require.NoError(t, err)
