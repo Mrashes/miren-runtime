@@ -19,6 +19,7 @@ import (
 	"miren.dev/runtime/pkg/controller"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/testutils"
+	"miren.dev/runtime/version"
 )
 
 func TestRunnerCoordinatorIntegration(t *testing.T) {
@@ -165,6 +166,10 @@ nodeReady:
 	r.True(ok)
 
 	r.Equal(compute.NodeStatusReadyId, status.Value.Id())
+
+	nodeVersion, ok := node.Get(compute.NodeVersionId)
+	r.True(ok, "node entity should have version attr after startup")
+	r.Equal(version.GetInfo().Version, nodeVersion.Value.String())
 
 	// Create and start the scheduler controller
 	scheduler := schedulerctrl.NewController(testDeps.Log, &eac)
