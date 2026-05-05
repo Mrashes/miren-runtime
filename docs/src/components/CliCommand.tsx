@@ -20,11 +20,14 @@ export default function CliCommand({
   context: Context;
   children: React.ReactNode;
 }) {
+  const labels = badges[context];
+  const description = `Runs on: ${labels.join(" and ").toLowerCase()}`;
+
   return (
-    <div className="cli-command">
+    <div className="cli-command" role="group" aria-label={description}>
       <div className="cli-command__body">{children}</div>
-      <div className="cli-command__footer">
-        {badges[context].map((label) => (
+      <div className="cli-command__footer" aria-hidden="true">
+        {labels.map((label) => (
           <span key={label} className={`cli-command__badge ${badgeClass[label]}`}>
             {label}
           </span>

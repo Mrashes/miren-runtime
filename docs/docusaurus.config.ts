@@ -139,6 +139,7 @@ const config: Config = {
           href: 'https://github.com/mirendev/runtime',
           label: 'GitHub',
           position: 'right',
+          'aria-label': 'GitHub repository (opens in new tab)',
         },
       ],
     },
