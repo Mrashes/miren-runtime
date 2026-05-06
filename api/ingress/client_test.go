@@ -234,6 +234,79 @@ func TestExtractSubdomainLabel(t *testing.T) {
 	}
 }
 
+func TestSetRouteWAFLevel(t *testing.T) {
+	ctx := context.Background()
+
+	inmem, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	ec := entityserver.NewClient(slog.Default(), inmem.EAC)
+	client := &Client{
+		log: slog.Default(),
+		ec:  ec,
+		eac: inmem.EAC,
+	}
+
+	testAppID := entity.Id("test-app-waf")
+
+	t.Run("SetAndLookup", func(t *testing.T) {
+		_, err := client.SetRoute(ctx, "waf.example.com", testAppID)
+		require.NoError(t, err)
+
+		route, err := client.SetRouteWAFLevel(ctx, "waf.example.com", 2)
+		require.NoError(t, err)
+		require.Equal(t, int64(2), route.WafLevel)
+
+		looked, err := client.Lookup(ctx, "waf.example.com")
+		require.NoError(t, err)
+		require.NotNil(t, looked)
+		require.Equal(t, int64(2), looked.WafLevel)
+	})
+
+	t.Run("DisableWAF", func(t *testing.T) {
+		route, err := client.SetRouteWAFLevel(ctx, "waf.example.com", 0)
+		require.NoError(t, err)
+		require.Equal(t, int64(0), route.WafLevel)
+
+		looked, err := client.Lookup(ctx, "waf.example.com")
+		require.NoError(t, err)
+		require.Equal(t, int64(0), looked.WafLevel)
+	})
+
+	t.Run("InvalidLevels", func(t *testing.T) {
+		_, err := client.SetRouteWAFLevel(ctx, "waf.example.com", -1)
+		require.Error(t, err)
+
+		_, err = client.SetRouteWAFLevel(ctx, "waf.example.com", 5)
+		require.Error(t, err)
+	})
+
+	t.Run("NonExistentRoute", func(t *testing.T) {
+		_, err := client.SetRouteWAFLevel(ctx, "nonexistent.example.com", 1)
+		require.Error(t, err)
+	})
+
+	t.Run("SetOnRoute", func(t *testing.T) {
+		_, err := client.SetRoute(ctx, "waf2.example.com", testAppID)
+		require.NoError(t, err)
+
+		route, err := client.Lookup(ctx, "waf2.example.com")
+		require.NoError(t, err)
+
+		updated, err := client.SetRouteWAFLevelOnRoute(ctx, route, 3)
+		require.NoError(t, err)
+		require.Equal(t, int64(3), updated.WafLevel)
+	})
+
+	t.Run("AllParanoiaLevels", func(t *testing.T) {
+		for _, level := range []int{1, 2, 3, 4} {
+			route, err := client.SetRouteWAFLevel(ctx, "waf.example.com", level)
+			require.NoError(t, err)
+			require.Equal(t, int64(level), route.WafLevel)
+		}
+	})
+}
+
 func TestValidateWildcardHost(t *testing.T) {
 	tests := []struct {
 		host    string

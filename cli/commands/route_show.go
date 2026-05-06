@@ -78,6 +78,7 @@ func RouteShow(ctx *Context, opts struct {
 			ProviderURL     string              `json:"provider_url,omitempty"`
 			ProviderMissing bool                `json:"provider_missing,omitempty"`
 			ClaimMappings   []map[string]string `json:"claim_mappings,omitempty"`
+			WafLevel        int                 `json:"waf_level"`
 		}
 
 		r := RouteJSON{
@@ -86,6 +87,7 @@ func RouteShow(ctx *Context, opts struct {
 			Default:     route.Default,
 			Protected:   protected,
 			OIDCEnabled: protected,
+			WafLevel:    int(route.WafLevel),
 		}
 
 		if protected {
@@ -110,6 +112,9 @@ func RouteShow(ctx *Context, opts struct {
 	ctx.Printf("  App:       %s\n", ui.CleanEntityID(string(route.App)))
 	ctx.Printf("  Default:   %v\n", route.Default)
 	ctx.Printf("  Protected: %v\n", protected)
+	if route.WafLevel > 0 {
+		ctx.Printf("  WAF Level: %d\n", route.WafLevel)
+	}
 
 	if protected {
 		if provider != nil {

@@ -415,3 +415,35 @@ func (c *Client) DetachOIDCProviderFromRoute(ctx context.Context, route *ingress
 
 	return route, nil
 }
+
+func (c *Client) SetRouteWAFLevel(ctx context.Context, host string, level int) (*ingress_v1alpha.HttpRoute, error) {
+	route, err := c.Lookup(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+
+	if route == nil {
+		return nil, fmt.Errorf("route not found: %s", host)
+	}
+
+	return c.SetRouteWAFLevelOnRoute(ctx, route, level)
+}
+
+func (c *Client) SetRouteWAFLevelOnRoute(ctx context.Context, route *ingress_v1alpha.HttpRoute, level int) (*ingress_v1alpha.HttpRoute, error) {
+	if level < 0 || level > 4 {
+		return nil, fmt.Errorf("WAF level must be between 0 and 4, got %d", level)
+	}
+
+	route.WafLevel = int64(level)
+
+	// Use Patch to explicitly set the attribute, since Encode() omits zero values
+	// and Update would leave the old waf_level in place when disabling (level=0).
+	err := c.ec.Patch(ctx, route.ID, 0,
+		entity.Int64(ingress_v1alpha.HttpRouteWafLevelId, int64(level)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to set WAF level on route: %w", err)
+	}
+
+	return route, nil
+}

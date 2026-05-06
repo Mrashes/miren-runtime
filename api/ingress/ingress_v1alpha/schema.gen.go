@@ -11,6 +11,7 @@ const (
 	HttpRouteDefaultId       = entity.Id("dev.miren.ingress/http_route.default")
 	HttpRouteHostId          = entity.Id("dev.miren.ingress/http_route.host")
 	HttpRouteOidcProviderId  = entity.Id("dev.miren.ingress/http_route.oidc_provider")
+	HttpRouteWafLevelId      = entity.Id("dev.miren.ingress/http_route.waf_level")
 )
 
 type HttpRoute struct {
@@ -20,6 +21,7 @@ type HttpRoute struct {
 	Default       bool            `cbor:"default,omitempty" json:"default,omitempty"`
 	Host          string          `cbor:"host,omitempty" json:"host,omitempty"`
 	OidcProvider  entity.Id       `cbor:"oidc_provider,omitempty" json:"oidc_provider,omitempty"`
+	WafLevel      int64           `cbor:"waf_level,omitempty" json:"waf_level,omitempty"`
 }
 
 func (o *HttpRoute) Decode(e entity.AttrGetter) {
@@ -42,6 +44,9 @@ func (o *HttpRoute) Decode(e entity.AttrGetter) {
 	}
 	if a, ok := e.Get(HttpRouteOidcProviderId); ok && a.Value.Kind() == entity.KindId {
 		o.OidcProvider = a.Value.Id()
+	}
+	if a, ok := e.Get(HttpRouteWafLevelId); ok && a.Value.Kind() == entity.KindInt64 {
+		o.WafLevel = a.Value.Int64()
 	}
 }
 
@@ -75,6 +80,9 @@ func (o *HttpRoute) Encode() (attrs []entity.Attr) {
 	if !entity.Empty(o.OidcProvider) {
 		attrs = append(attrs, entity.Ref(HttpRouteOidcProviderId, o.OidcProvider))
 	}
+	if !entity.Empty(o.WafLevel) {
+		attrs = append(attrs, entity.Int64(HttpRouteWafLevelId, o.WafLevel))
+	}
 	attrs = append(attrs, entity.Ref(entity.EntityKind, KindHttpRoute))
 	return
 }
@@ -95,6 +103,9 @@ func (o *HttpRoute) Empty() bool {
 	if !entity.Empty(o.OidcProvider) {
 		return false
 	}
+	if !entity.Empty(o.WafLevel) {
+		return false
+	}
 	return true
 }
 
@@ -105,6 +116,7 @@ func (o *HttpRoute) InitSchema(sb *schema.SchemaBuilder) {
 	sb.Bool("default", "dev.miren.ingress/http_route.default", schema.Doc("Whether this is the default route for routing"), schema.Indexed)
 	sb.String("host", "dev.miren.ingress/http_route.host", schema.Doc("The hostname to match on for the application"), schema.Indexed)
 	sb.Ref("oidc_provider", "dev.miren.ingress/http_route.oidc_provider", schema.Doc("Reference to an OIDC provider for authentication"), schema.Indexed)
+	sb.Int64("waf_level", "dev.miren.ingress/http_route.waf_level", schema.Doc("WAF protection level (0=disabled, 1-4=OWASP CRS paranoia level)"))
 }
 
 const (
@@ -261,5 +273,5 @@ func init() {
 		(&HttpRoute{}).InitSchema(sb)
 		(&OidcProvider{}).InitSchema(sb)
 	})
-	schema.RegisterEncodedSchema("dev.miren.ingress", "v1alpha", []byte("\x1f\x8b\b\x00\x00\x00\x00\x00\x00\xff\x94\x94\xdbN\x840\x10\x86_\xc4DM\x8c\xc6\x13\xc6'\"]f\x80q{\xb2\xed\x92\xdd[\x13_\xc4\xd3\x1b\xea\xb5a\x80\xb0\x05\x04\xbc\xd9\f\xed\xcc\xf7\xf7\xef\xce\xf4\x03\xb4P\xf8\fX%\x8a\x1c\xea\x84t\xe1\xd0{ܒ\x06\xff\xb6?\x1f\xed<\xd4;I\x19\x82M\x9d\xd9\x05\xfcb\xc2\xfed\x9c\xd8\xe74\xb4\x9f\x1c\x8c\x12\xa4\xc7jyN(\xc1\xbf\xbeo\b\xf6gs\xa4DX˂Y\x1d\x84\x83\xc5\r\xc1g]v;[\x96IA*U\xc2Z҅\a%\xf4\xe1\x9b9z\xb0S#)3\xca\x1a\x8d:\xf4Qks\xac\x92\xfc\xa9\xb2\xd2\xf5\v\xbb\xbe\x1c\x1f?\xa65p>\x056a}\xd4\xdc\aG\xba`\xc4\xd5\"\xa2D\x01蘑\xb7\xf1\x11\xa4\xa8\xd0y2\xba\xa8\x1e\x85\xb4\xa5\x90֑\x12\xee\x90\xd6>\x14\xa3:\x12\xeb]\xcc\xde8`.v2\xb0X\xd1}\xd4j\xb01F2`\xa2\xb9\x8e\x00\xa5\xf1M5p4t{3[l\b\xb2\xd4:SQgX\xc5Km\xeb\xccz~\xea\x81Sfy\x10\"j\xdb$\xa7\xe3\xdc(\xed_\xe3p\xbd\x00K2I\xa8CJ\xc0\xe2\xd4\x7f\x0eo\xec~%\xc9c氹z\x15/\r\x89\x13\x97\x12\x13\xf9\xef\xeb\x7f\x86\xf5wK\xf5]\x90\xee\x9cd\x84\x8cV\x86\xbc\x89!\x8ay>3\x16}3\x00m\xbcz\x00\"\xd20u\xebK\xe3Bڼ\x9a\xc7}\xb3\xfc\x80\xc6\xe0u\x8d\xf6\v\x00\x00\xff\xff\x01\x00\x00\xff\xff+\xdeU\"\xb7\x05\x00\x00"))
+	schema.RegisterEncodedSchema("dev.miren.ingress", "v1alpha", []byte("\x1f\x8b\b\x00\x00\x00\x00\x00\x00\xff\x8c\x94뮔0\x10\xc7_\xc4DM\x8c\xc6\x1b\xc6'j\xba\xed\x00\xe3\xf6f\xdb\xc5ݯ&\xfa ^\xce\x1b\x9e\xf3\xf9\xa4S\b\x14X\xe0\v\x99\xb63\xbf\xb9\xf0o\xffI\xc35|\x97\xd0U\x1a=\x98\nM\xe3!\x048\xa3\x91\xe1\xcf\xf5\xf5\xe2\xe4K:\xa9\xda\x18\x1d\xf3\xf6\x12\xe1\x81\b\xd7\x17K\xc7\xd1'Ӟji5G\xb3\xccV\xd7\bJ\x86\xdf\x7fO(\xaf\xaf\xb6H\x15w\x8e\x12\x8adě\x83\x13\xca\xff)\xec\xe3f\x98P\x1c5\xd3\xdc94M\x90\x9a\x9b\xdb#q\xcc\xec$!QX\xed\xac\x01\x13G\xabos\x99\xa5\xba\x9b\xe5`\xd7?\xa9\xeb\xb7\xcb\xf2KZ\x86S\x15\x90\xcdTj\x1d\xa2G\xd3\x10\xe2\xdd.\xa2\x05.\xc1\x13\xa3\xee\xed\t\xa4\xe9\xc0\a\xb4\xa6\xe9\xber\xe5Z\xae\x9cG\xcd\xfd\x8d\xa5>4\xa1\x06\x12\xe5{\xb39q\t5\xbf\xa8Hɚa\x91\xb2ɓ\xb5\x8a\x00+\xe2\x9a\x00Z\x1br\xb4$k\xde\xed\x87\xcd`\x8bR0\xe7m\x87Cú\xdc\xea\xa5so\xf6\x13\xd4\x0f^3\x05\x1d(\xc2\xe0\xb8L\b\x81&n\xce\xed\xdbHZ\x1b\x18]\xa6\xa2\xb2^h/\x97\xbe\x85\xdbAq\xfd\xa2\x06\xdf\xef\xc0*\xa1\x10Ld(s\x8f\xe3r>\xf5\xcf\aI\x01\x84\x87\xfc\xfbt\xb95'\xae\f\xa5$\x92\x04\xc6\xcf<\xfe\xd3^\xfc`\xb0\x8bϿP\x15;sފ\x18J^\x10\xd6Aȗ\xa8\xb7\x0f_\xa2\x824w=\x87\xd6\xfa\xc8\xf2\xcb;\xd5\xcd\xfe#\\\x82\x8f\t\xed\x19\x00\x00\xff\xff\x01\x00\x00\xff\xff\x87\xbd)}\xfb\x05\x00\x00"))
 }

@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"fmt"
 	"time"
 
 	"miren.dev/runtime/api/ingress"
@@ -28,6 +29,7 @@ func RouteList(ctx *Context, opts struct {
 			Host      string `json:"host"`
 			App       string `json:"app"`
 			Default   bool   `json:"default"`
+			WafLevel  int    `json:"waf_level"`
 			CreatedAt int64  `json:"created_at"`
 			UpdatedAt int64  `json:"updated_at"`
 		}
@@ -42,6 +44,7 @@ func RouteList(ctx *Context, opts struct {
 				Host:      host,
 				App:       string(r.Route.App),
 				Default:   r.Route.Default,
+				WafLevel:  int(r.Route.WafLevel),
 				CreatedAt: r.CreatedAt,
 				UpdatedAt: r.UpdatedAt,
 			})
@@ -51,7 +54,7 @@ func RouteList(ctx *Context, opts struct {
 	}
 
 	var rows []ui.Row
-	headers := []string{"HOST", "APP", "DEFAULT", "CREATED", "UPDATED"}
+	headers := []string{"HOST", "APP", "DEFAULT", "WAF", "CREATED", "UPDATED"}
 
 	for _, r := range routes {
 		route := r.Route
@@ -74,10 +77,16 @@ func RouteList(ctx *Context, opts struct {
 			defaultDisplay = "✓"
 		}
 
+		wafDisplay := "-"
+		if route.WafLevel > 0 {
+			wafDisplay = fmt.Sprintf("%d", route.WafLevel)
+		}
+
 		rows = append(rows, ui.Row{
 			host,
 			appDisplay,
 			defaultDisplay,
+			wafDisplay,
 			humanFriendlyTimestamp(time.UnixMilli(r.CreatedAt)),
 			humanFriendlyTimestamp(time.UnixMilli(r.UpdatedAt)),
 		})
