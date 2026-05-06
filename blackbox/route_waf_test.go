@@ -173,13 +173,13 @@ func TestRouteWafInvalidLevel(t *testing.T) {
 	m.MustRun("route", "set", host, name).RequireSuccess(t)
 
 	// Level 0 should fail (use --disable instead)
-	r := m.MustRun("route", "waf", host, "--level", "0")
+	r := m.Run("route", "waf", host, "--level", "0")
 	if r.Success() {
 		t.Fatal("expected route waf --level 0 to fail")
 	}
 
 	// Level 5 should fail
-	r = m.MustRun("route", "waf", host, "--level", "5")
+	r = m.Run("route", "waf", host, "--level", "5")
 	if r.Success() {
 		t.Fatal("expected route waf --level 5 to fail")
 	}
