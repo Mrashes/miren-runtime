@@ -517,8 +517,12 @@ miren deploy --analyze
 
 	d.Dispatch("route protect", Infer("route protect", "Protect an HTTP route with an identity provider", RouteProtect,
 		WithExample(mflags.Example{
-			Name: "Protect a route with an identity provider",
+			Name: "Protect a route with an OIDC provider",
 			Body: "miren route protect example.com --provider my-google-oidc --claim-header email:X-User-Email",
+		}),
+		WithExample(mflags.Example{
+			Name: "Protect a route with a password",
+			Body: "miren route protect example.com --provider my-pw",
 		}),
 		WithExample(mflags.Example{
 			Name: "Protect the default route",
@@ -906,6 +910,12 @@ miren deploy --analyze
   --client-id $CLIENT_ID \
   --client-secret $CLIENT_SECRET \
   --scope email --scope profile`,
+		}),
+	))
+	d.Dispatch("auth provider add-password", Infer("auth provider add-password", "Add a password provider for route protection", AuthProviderAddPassword,
+		WithExample(mflags.Example{
+			Name: "Add a password provider",
+			Body: `miren auth provider add-password my-pw --password hunter2`,
 		}),
 	))
 	d.Dispatch("auth provider list", Infer("auth provider list", "List identity providers", AuthProviderList))

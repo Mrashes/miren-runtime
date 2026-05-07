@@ -59,49 +59,123 @@ func RouteProtect(ctx *Context, opts struct {
 		routeLabel = opts.Host
 	}
 
-	var claimMappings []ingress_v1alpha.ClaimMappings
-	for _, mapping := range opts.ClaimHeader {
-		parts := strings.SplitN(mapping, ":", 2)
-		if len(parts) != 2 {
-			return fmt.Errorf("invalid claim-header mapping format: %s (expected 'claim:header')", mapping)
-		}
-		claim := strings.TrimSpace(parts[0])
-		header := strings.TrimSpace(parts[1])
-		if claim == "" || header == "" {
-			return fmt.Errorf("invalid claim-header mapping format: %q (expected non-empty 'claim:header')", mapping)
-		}
-		claimMappings = append(claimMappings, ingress_v1alpha.ClaimMappings{
-			Claim:  claim,
-			Header: header,
-		})
+	// Auto-detect provider type: try OIDC first, then password
+	oidcProvider, err := ic.GetOIDCProvider(ctx, opts.Provider)
+	if err != nil {
+		return fmt.Errorf("failed to lookup provider: %w", err)
 	}
 
-	_, err = ic.AttachOIDCProviderToRoute(ctx, route, opts.Provider, claimMappings)
+	if oidcProvider != nil {
+		// OIDC provider found — attach with claim mappings
+		var claimMappings []ingress_v1alpha.ClaimMappings
+		for _, mapping := range opts.ClaimHeader {
+			parts := strings.SplitN(mapping, ":", 2)
+			if len(parts) != 2 {
+				return fmt.Errorf("invalid claim-header mapping format: %s (expected 'claim:header')", mapping)
+			}
+			claim := strings.TrimSpace(parts[0])
+			header := strings.TrimSpace(parts[1])
+			if claim == "" || header == "" {
+				return fmt.Errorf("invalid claim-header mapping format: %q (expected non-empty 'claim:header')", mapping)
+			}
+			claimMappings = append(claimMappings, ingress_v1alpha.ClaimMappings{
+				Claim:  claim,
+				Header: header,
+			})
+		}
+
+		_, err = ic.AttachOIDCProviderToRoute(ctx, route, opts.Provider, claimMappings)
+		if err != nil {
+			return fmt.Errorf("failed to protect route: %w", err)
+		}
+
+		if opts.IsJSON() {
+			type RouteProtectJSON struct {
+				Route         string              `json:"route"`
+				Protected     bool                `json:"protected"`
+				Provider      string              `json:"provider"`
+				ProviderType  string              `json:"provider_type"`
+				ClaimMappings []map[string]string `json:"claim_mappings,omitempty"`
+			}
+
+			var mappings []map[string]string
+			for _, m := range claimMappings {
+				mappings = append(mappings, map[string]string{
+					"claim":  m.Claim,
+					"header": m.Header,
+				})
+			}
+
+			return PrintJSON(RouteProtectJSON{
+				Route:         routeLabel,
+				Protected:     true,
+				Provider:      opts.Provider,
+				ProviderType:  "oidc",
+				ClaimMappings: mappings,
+			})
+		}
+
+		items := []ui.NamedValue{
+			ui.NewNamedValue("Route", routeLabel),
+			ui.NewNamedValue("Protected", true),
+			ui.NewNamedValue("Provider", opts.Provider),
+			ui.NewNamedValue("Type", "oidc"),
+		}
+
+		ctx.Printf("%s\n", ui.NewNamedValueList(items).Render())
+
+		if len(claimMappings) > 0 {
+			var rows []ui.Row
+			for _, m := range claimMappings {
+				rows = append(rows, ui.Row{m.Claim, m.Header})
+			}
+
+			headers := []string{"CLAIM", "HEADER"}
+			columns := ui.AutoSizeColumns(headers, rows, ui.Columns().NoTruncate(0).NoTruncate(1))
+			table := ui.NewTable(
+				ui.WithTableTitle("Claim Mappings"),
+				ui.WithColumns(columns),
+				ui.WithRows(rows),
+			)
+
+			ctx.Printf("\n%s\n", table.Render())
+		}
+
+		return nil
+	}
+
+	// Try password provider
+	pwProvider, err := ic.GetPasswordProvider(ctx, opts.Provider)
+	if err != nil {
+		return fmt.Errorf("failed to lookup provider: %w", err)
+	}
+
+	if pwProvider == nil {
+		return fmt.Errorf("provider not found: %s", opts.Provider)
+	}
+
+	if len(opts.ClaimHeader) > 0 {
+		ctx.Printf("Warning: --claim-header is ignored for password providers\n")
+	}
+
+	_, err = ic.AttachPasswordProviderToRoute(ctx, route, opts.Provider)
 	if err != nil {
 		return fmt.Errorf("failed to protect route: %w", err)
 	}
 
 	if opts.IsJSON() {
 		type RouteProtectJSON struct {
-			Route         string              `json:"route"`
-			Protected     bool                `json:"protected"`
-			Provider      string              `json:"provider"`
-			ClaimMappings []map[string]string `json:"claim_mappings,omitempty"`
-		}
-
-		var mappings []map[string]string
-		for _, m := range claimMappings {
-			mappings = append(mappings, map[string]string{
-				"claim":  m.Claim,
-				"header": m.Header,
-			})
+			Route        string `json:"route"`
+			Protected    bool   `json:"protected"`
+			Provider     string `json:"provider"`
+			ProviderType string `json:"provider_type"`
 		}
 
 		return PrintJSON(RouteProtectJSON{
-			Route:         routeLabel,
-			Protected:     true,
-			Provider:      opts.Provider,
-			ClaimMappings: mappings,
+			Route:        routeLabel,
+			Protected:    true,
+			Provider:     opts.Provider,
+			ProviderType: "password",
 		})
 	}
 
@@ -109,26 +183,9 @@ func RouteProtect(ctx *Context, opts struct {
 		ui.NewNamedValue("Route", routeLabel),
 		ui.NewNamedValue("Protected", true),
 		ui.NewNamedValue("Provider", opts.Provider),
+		ui.NewNamedValue("Type", "password"),
 	}
 
 	ctx.Printf("%s\n", ui.NewNamedValueList(items).Render())
-
-	if len(claimMappings) > 0 {
-		var rows []ui.Row
-		for _, m := range claimMappings {
-			rows = append(rows, ui.Row{m.Claim, m.Header})
-		}
-
-		headers := []string{"CLAIM", "HEADER"}
-		columns := ui.AutoSizeColumns(headers, rows, ui.Columns().NoTruncate(0).NoTruncate(1))
-		table := ui.NewTable(
-			ui.WithTableTitle("Claim Mappings"),
-			ui.WithColumns(columns),
-			ui.WithRows(rows),
-		)
-
-		ctx.Printf("\n%s\n", table.Render())
-	}
-
 	return nil
 }

@@ -374,17 +374,13 @@ func (c *Client) AttachOIDCProviderToRoute(ctx context.Context, route *ingress_v
 		return nil, fmt.Errorf("OIDC provider not found: %s", providerName)
 	}
 
-	// Update route with provider reference and claim mappings
+	// Update route with provider reference and claim mappings.
+	// Clear password provider for mutual exclusion.
 	route.OidcProvider = provider.ID
 	route.ClaimMappings = claimMappings
+	route.PasswordProvider = ""
 
-	// Update the route
-	err = c.ec.Update(ctx, route)
-	if err != nil {
-		return nil, fmt.Errorf("failed to attach OIDC provider to route: %w", err)
-	}
-
-	return route, nil
+	return route, c.replaceRoute(ctx, route)
 }
 
 // DetachOIDCProvider removes OIDC provider association from a route
@@ -403,14 +399,131 @@ func (c *Client) DetachOIDCProvider(ctx context.Context, host string) (*ingress_
 
 // DetachOIDCProviderFromRoute removes OIDC provider association from an already-resolved route
 func (c *Client) DetachOIDCProviderFromRoute(ctx context.Context, route *ingress_v1alpha.HttpRoute) (*ingress_v1alpha.HttpRoute, error) {
-	// Clear provider reference and claim mappings
+	route.OidcProvider = ""
+	route.ClaimMappings = nil
+	route.PasswordProvider = ""
+
+	return route, c.replaceRoute(ctx, route)
+}
+
+// replaceRoute replaces the full set of route attributes in the entity store.
+// This is used instead of Update when clearing ref fields, because the
+// generated Encode() omits empty fields and the merge-based Update would
+// leave stale refs in place.
+func (c *Client) replaceRoute(ctx context.Context, route *ingress_v1alpha.HttpRoute) error {
+	gr, err := c.eac.Get(ctx, string(route.EntityId()))
+	if err != nil {
+		return fmt.Errorf("failed to get route entity for replace: %w", err)
+	}
+
+	attrs := entity.New(
+		route.Encode,
+		entity.DBId, route.EntityId(),
+	).Attrs()
+
+	_, err = c.eac.Replace(ctx, attrs, gr.Entity().Revision())
+	if err != nil {
+		return fmt.Errorf("failed to replace route entity: %w", err)
+	}
+
+	return nil
+}
+
+// CreateOrUpdatePasswordProvider creates or updates a password provider
+func (c *Client) CreateOrUpdatePasswordProvider(ctx context.Context, provider *ingress_v1alpha.PasswordProvider) (*ingress_v1alpha.PasswordProvider, error) {
+	if provider.Name == "" {
+		return nil, fmt.Errorf("provider name is required")
+	}
+
+	_, err := c.ec.CreateOrUpdate(ctx, provider.Name, provider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create/update password provider: %w", err)
+	}
+
+	return provider, nil
+}
+
+// GetPasswordProvider looks up a password provider by name
+func (c *Client) GetPasswordProvider(ctx context.Context, name string) (*ingress_v1alpha.PasswordProvider, error) {
+	ia := entity.String(ingress_v1alpha.PasswordProviderNameId, name)
+
+	var provider ingress_v1alpha.PasswordProvider
+	err := c.ec.OneAtIndex(ctx, ia, &provider)
+	if err != nil {
+		if errors.Is(err, cond.ErrNotFound{}) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to lookup password provider %s: %w", name, err)
+	}
+
+	return &provider, nil
+}
+
+// ListPasswordProviders returns all password providers
+func (c *Client) ListPasswordProviders(ctx context.Context) ([]*ingress_v1alpha.PasswordProvider, error) {
+	kindRes, err := c.eac.LookupKind(ctx, "password_provider")
+	if err != nil {
+		return nil, fmt.Errorf("failed to lookup password_provider kind: %w", err)
+	}
+
+	res, err := c.eac.List(ctx, kindRes.Attr())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list password providers: %w", err)
+	}
+
+	var providers []*ingress_v1alpha.PasswordProvider
+	for _, e := range res.Values() {
+		var provider ingress_v1alpha.PasswordProvider
+		provider.Decode(e.Entity())
+		providers = append(providers, &provider)
+	}
+
+	return providers, nil
+}
+
+// DeletePasswordProvider deletes a password provider by name
+func (c *Client) DeletePasswordProvider(ctx context.Context, name string) error {
+	provider, err := c.GetPasswordProvider(ctx, name)
+	if err != nil {
+		return err
+	}
+
+	if provider == nil {
+		return fmt.Errorf("password provider not found: %s", name)
+	}
+
+	if err := c.ec.Delete(ctx, provider.ID); err != nil {
+		return fmt.Errorf("failed to delete password provider: %w", err)
+	}
+
+	return nil
+}
+
+// AttachPasswordProviderToRoute associates a password provider with an already-resolved route
+func (c *Client) AttachPasswordProviderToRoute(ctx context.Context, route *ingress_v1alpha.HttpRoute, providerName string) (*ingress_v1alpha.HttpRoute, error) {
+	provider, err := c.GetPasswordProvider(ctx, providerName)
+	if err != nil {
+		return nil, err
+	}
+
+	if provider == nil {
+		return nil, fmt.Errorf("password provider not found: %s", providerName)
+	}
+
+	// Set password provider, clear OIDC for mutual exclusion
+	route.PasswordProvider = provider.ID
 	route.OidcProvider = ""
 	route.ClaimMappings = nil
 
-	// Update the route
-	err := c.ec.Update(ctx, route)
-	if err != nil {
-		return nil, fmt.Errorf("failed to detach OIDC provider from route: %w", err)
+	return route, c.replaceRoute(ctx, route)
+}
+
+// DetachPasswordProviderFromRoute removes password provider association from a route
+func (c *Client) DetachPasswordProviderFromRoute(ctx context.Context, route *ingress_v1alpha.HttpRoute) (*ingress_v1alpha.HttpRoute, error) {
+	route.PasswordProvider = ""
+
+	if err := c.replaceRoute(ctx, route); err != nil {
+		return nil, fmt.Errorf("failed to detach password provider from route: %w", err)
 	}
 
 	return route, nil

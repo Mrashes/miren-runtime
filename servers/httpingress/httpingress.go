@@ -100,6 +100,9 @@ type Server struct {
 	wafEngine       *waf.Engine
 	wafProfileMu    sync.RWMutex
 	wafProfileCache map[entity.Id]*wafProfileEntry
+
+	passwordMu       sync.RWMutex
+	passwordHandlers map[string]*passwordHandler
 }
 
 type appUsage struct {
@@ -162,6 +165,7 @@ func NewServer(
 		oidcHandlers:       make(map[string]*oidcHandler),
 		wafEngine:          waf.NewEngine(log.With("component", "waf")),
 		wafProfileCache:    make(map[entity.Id]*wafProfileEntry),
+		passwordHandlers:   make(map[string]*passwordHandler),
 	}
 
 	if httpMetrics == nil {
@@ -543,13 +547,15 @@ func (h *Server) serveHTTPWithMetrics(w http.ResponseWriter, req *http.Request, 
 		h.Log.Debug("using default route", "host", onlyHost, "app", targetAppId)
 	}
 
-	// Compose middleware chain: WAF → OIDC → serve
+	// Compose middleware chain: WAF → auth → serve
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		h.serveAuthenticatedRequest(w, r, targetAppId, routeType, ephemeralLabel, appName)
 	}
 
 	if !entity.Empty(route.OidcProvider) {
 		handler = h.oidcMiddleware(route, handler)
+	} else if !entity.Empty(route.PasswordProvider) {
+		handler = h.passwordMiddleware(route, handler)
 	}
 
 	handler = h.wafMiddleware(route, handler)
@@ -1168,11 +1174,14 @@ func (h *Server) AcquireTunnel(ctx context.Context, hostname, path string) (*Tun
 	if route != nil {
 		targetAppId = route.App
 
-		// Reject tunnels to apps that require OIDC authentication.
-		// OIDC auth flows require browser redirects which can't work
+		// Reject tunnels to apps that require authentication.
+		// Auth flows require browser interaction which can't work
 		// over a tunneled WebSocket connection.
 		if !entity.Empty(route.OidcProvider) {
 			return nil, fmt.Errorf("tunneling not supported for OIDC-protected routes (host: %s)", onlyHost)
+		}
+		if !entity.Empty(route.PasswordProvider) {
+			return nil, fmt.Errorf("tunneling not supported for password-protected routes (host: %s)", onlyHost)
 		}
 	} else {
 		defaultRoute, err := h.ingressClient.LookupDefault(ctx)
@@ -1184,6 +1193,9 @@ func (h *Server) AcquireTunnel(ctx context.Context, hostname, path string) (*Tun
 		}
 		if !entity.Empty(defaultRoute.OidcProvider) {
 			return nil, fmt.Errorf("tunneling not supported for OIDC-protected routes (host: %s)", onlyHost)
+		}
+		if !entity.Empty(defaultRoute.PasswordProvider) {
+			return nil, fmt.Errorf("tunneling not supported for password-protected routes (host: %s)", onlyHost)
 		}
 		targetAppId = defaultRoute.App
 	}

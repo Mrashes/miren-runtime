@@ -67,16 +67,37 @@ func RouteShow(ctx *Context, opts struct {
 		}
 	}
 
-	protected := !entity.Empty(route.OidcProvider)
-	var provider *ingress_v1alpha.OidcProvider
-	if protected {
-		provider = &ingress_v1alpha.OidcProvider{}
-		if err := ic.GetEntityStore().GetById(ctx, route.OidcProvider, provider); err != nil {
+	oidcProtected := !entity.Empty(route.OidcProvider)
+	passwordProtected := !entity.Empty(route.PasswordProvider)
+	protected := oidcProtected || passwordProtected
+
+	var oidcProvider *ingress_v1alpha.OidcProvider
+	if oidcProtected {
+		oidcProvider = &ingress_v1alpha.OidcProvider{}
+		if err := ic.GetEntityStore().GetById(ctx, route.OidcProvider, oidcProvider); err != nil {
 			if !errors.Is(err, cond.ErrNotFound{}) {
 				return fmt.Errorf("failed to get identity provider: %w", err)
 			}
-			provider = nil
+			oidcProvider = nil
 		}
+	}
+
+	var pwProvider *ingress_v1alpha.PasswordProvider
+	if passwordProtected {
+		pwProvider = &ingress_v1alpha.PasswordProvider{}
+		if err := ic.GetEntityStore().GetById(ctx, route.PasswordProvider, pwProvider); err != nil {
+			if !errors.Is(err, cond.ErrNotFound{}) {
+				return fmt.Errorf("failed to get password provider: %w", err)
+			}
+			pwProvider = nil
+		}
+	}
+
+	protectionType := "none"
+	if oidcProtected {
+		protectionType = "oidc"
+	} else if passwordProtected {
+		protectionType = "password"
 	}
 
 	if opts.IsJSON() {
@@ -85,7 +106,9 @@ func RouteShow(ctx *Context, opts struct {
 			App             string              `json:"app"`
 			Default         bool                `json:"default"`
 			Protected       bool                `json:"protected"`
+			ProtectionType  string              `json:"protection_type"`
 			OIDCEnabled     bool                `json:"oidc_enabled"`
+			PasswordEnabled bool                `json:"password_enabled"`
 			ProviderName    string              `json:"provider_name,omitempty"`
 			ProviderURL     string              `json:"provider_url,omitempty"`
 			ProviderMissing bool                `json:"provider_missing,omitempty"`
@@ -99,18 +122,20 @@ func RouteShow(ctx *Context, opts struct {
 		}
 
 		r := RouteJSON{
-			Host:        routeLabel,
-			App:         ui.CleanEntityID(string(route.App)),
-			Default:     route.Default,
-			Protected:   protected,
-			OIDCEnabled: protected,
-			WafLevel:    wafLevel,
+			Host:            routeLabel,
+			App:             ui.CleanEntityID(string(route.App)),
+			Default:         route.Default,
+			Protected:       protected,
+			ProtectionType:  protectionType,
+			OIDCEnabled:     oidcProtected,
+			PasswordEnabled: passwordProtected,
+			WafLevel:        wafLevel,
 		}
 
-		if protected {
-			if provider != nil {
-				r.ProviderName = provider.Name
-				r.ProviderURL = provider.ProviderUrl
+		if oidcProtected {
+			if oidcProvider != nil {
+				r.ProviderName = oidcProvider.Name
+				r.ProviderURL = oidcProvider.ProviderUrl
 			} else {
 				r.ProviderMissing = true
 			}
@@ -119,6 +144,12 @@ func RouteShow(ctx *Context, opts struct {
 					"claim":  m.Claim,
 					"header": m.Header,
 				})
+			}
+		} else if passwordProtected {
+			if pwProvider != nil {
+				r.ProviderName = pwProvider.Name
+			} else {
+				r.ProviderMissing = true
 			}
 		}
 
@@ -133,9 +164,10 @@ func RouteShow(ctx *Context, opts struct {
 		ctx.Printf("  WAF Level: %d\n", wafProfile.ParanoiaLevel)
 	}
 
-	if protected {
-		if provider != nil {
-			ctx.Printf("  Provider:  %s (%s)\n", provider.Name, provider.ProviderUrl)
+	if oidcProtected {
+		ctx.Printf("  Type:      oidc\n")
+		if oidcProvider != nil {
+			ctx.Printf("  Provider:  %s (%s)\n", oidcProvider.Name, oidcProvider.ProviderUrl)
 		} else {
 			ctx.Printf("  Provider:  <missing — provider has been deleted>\n")
 		}
@@ -155,6 +187,13 @@ func RouteShow(ctx *Context, opts struct {
 			)
 
 			ctx.Printf("\n%s\n", table.Render())
+		}
+	} else if passwordProtected {
+		ctx.Printf("  Type:      password\n")
+		if pwProvider != nil {
+			ctx.Printf("  Provider:  %s\n", pwProvider.Name)
+		} else {
+			ctx.Printf("  Provider:  <missing — provider has been deleted>\n")
 		}
 	}
 
