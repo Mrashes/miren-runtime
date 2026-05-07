@@ -8,10 +8,6 @@ description: "Add an identity provider for route protection"
 
 Add an identity provider for route protection
 
-:::note
-This command requires the `routeoidc` [labs feature](/labs) to be enabled.
-:::
-
 ## Usage
 
 ```bash

@@ -6,7 +6,6 @@ import (
 
 	"miren.dev/runtime/api/ingress"
 	"miren.dev/runtime/api/ingress/ingress_v1alpha"
-	"miren.dev/runtime/pkg/labs"
 	"miren.dev/runtime/pkg/ui"
 )
 
@@ -18,10 +17,6 @@ func RouteProtect(ctx *Context, opts struct {
 	FormatOptions
 	ConfigCentric
 }) error {
-	if !labs.RouteOIDC() {
-		return fmt.Errorf("route protection is disabled. Enable with MIREN_LABS=routeoidc")
-	}
-
 	if opts.Host == "" && !opts.Default {
 		return fmt.Errorf("either a hostname or --default must be specified")
 	}

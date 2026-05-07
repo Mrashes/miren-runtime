@@ -8,10 +8,6 @@ import CliCommand from '@site/src/components/CliCommand';
 
 # Protecting Routes
 
-:::info Labs Feature
-Route protection is a [labs feature](/labs) and is disabled by default. Enable it with `--labs routeoidc` or `MIREN_LABS=routeoidc` when starting the server.
-:::
-
 :::tip Looking for CI/CD OIDC?
 If you want to **deploy from GitHub Actions or other CI systems** using OIDC tokens (no stored secrets), see [CI/CD Deployment with OIDC](/ci-deploy). This page covers a different feature — protecting your app's HTTP routes with single sign-on.
 :::

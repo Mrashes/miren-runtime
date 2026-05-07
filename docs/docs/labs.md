@@ -29,13 +29,13 @@ Labs features are controlled via the `--labs` flag or `MIREN_LABS` environment v
 miren server --labs adminapi
 
 # Enable multiple features
-miren server --labs adminapi --labs routeoidc
+miren server --labs adminapi --labs distributedrunners
 
 # Via environment variable
 MIREN_LABS=adminapi miren server
 
 # Multiple features via environment variable (comma-separated)
-MIREN_LABS=adminapi,routeoidc miren server
+MIREN_LABS=adminapi,distributedrunners miren server
 ```
 </CliCommand>
 

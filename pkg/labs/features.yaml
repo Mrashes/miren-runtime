@@ -14,11 +14,6 @@ features:
     description: Enable the admin API for application management functions
     default: false
 
-  - name: routeoidc
-    predicate: RouteOIDC
-    description: Protect HTTP routes with identity-provider login
-    default: false
-
   - name: addons
     predicate: Addons
     description: Enable the addon system for managed backing services
