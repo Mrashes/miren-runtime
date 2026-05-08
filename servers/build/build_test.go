@@ -720,6 +720,7 @@ func TestBuildServicesConfig(t *testing.T) {
 			},
 			procfileServices: nil,
 			validateServices: func(t *testing.T, services []core_v1alpha.ConfigSpecServices) {
+				require.Len(t, services, 2)
 				byName := make(map[string]core_v1alpha.ConfigSpecServices, len(services))
 				for _, s := range services {
 					byName[s.Name] = s
