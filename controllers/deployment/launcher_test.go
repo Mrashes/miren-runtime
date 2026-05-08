@@ -3156,10 +3156,10 @@ func TestDisklessServiceNotDrained(t *testing.T) {
 	assert.Equal(t, int64(0), oldPool.DesiredInstances, "old pool should be scaled down")
 }
 
-// TestPortWaitTimeoutPropagatesToSandboxSpec verifies that a per-service
-// port_wait_timeout in ConfigSpec is copied into SandboxSpec.PortWaitTimeout
+// TestPortTimeoutPropagatesToSandboxSpec verifies that a per-service
+// port_timeout in ConfigSpec is copied into SandboxSpec.PortWaitTimeout
 // for the matching service, and left empty for siblings.
-func TestPortWaitTimeoutPropagatesToSandboxSpec(t *testing.T) {
+func TestPortTimeoutPropagatesToSandboxSpec(t *testing.T) {
 	ctx := context.Background()
 	log := testutils.TestLogger(t)
 
@@ -3182,7 +3182,7 @@ func TestPortWaitTimeoutPropagatesToSandboxSpec(t *testing.T) {
 
 	cfgSpec := &core_v1alpha.ConfigSpec{
 		Services: []core_v1alpha.ConfigSpecServices{
-			{Name: "web", Port: 4000, PortWaitTimeout: "120s"},
+			{Name: "web", Port: 4000, PortTimeout: "120s"},
 			{Name: "worker"},
 		},
 	}

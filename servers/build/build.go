@@ -436,8 +436,8 @@ func buildServicesConfig(appConfig *appconfig.AppConfig, procfileServices map[st
 				}
 			}
 
-			if serviceConfig.PortWaitTimeout != "" {
-				svc.PortWaitTimeout = serviceConfig.PortWaitTimeout
+			if serviceConfig.PortTimeout != "" {
+				svc.PortTimeout = serviceConfig.PortTimeout
 			}
 
 			if serviceConfig.Concurrency != nil {

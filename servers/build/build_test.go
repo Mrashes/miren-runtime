@@ -705,13 +705,13 @@ func TestBuildServicesConfig(t *testing.T) {
 			},
 		},
 		{
-			name: "service with port_wait_timeout copies through to ConfigSpec",
+			name: "service with port_timeout copies through to ConfigSpec",
 			appConfig: &appconfig.AppConfig{
 				Services: map[string]*appconfig.ServiceConfig{
 					"web": {
-						Command:         "bin/start",
-						Port:            4000,
-						PortWaitTimeout: "120s",
+						Command:     "bin/start",
+						Port:        4000,
+						PortTimeout: "120s",
 					},
 					"worker": {
 						Command: "bin/worker",
@@ -725,9 +725,9 @@ func TestBuildServicesConfig(t *testing.T) {
 					byName[s.Name] = s
 				}
 				require.Contains(t, byName, "web")
-				assert.Equal(t, "120s", byName["web"].PortWaitTimeout)
+				assert.Equal(t, "120s", byName["web"].PortTimeout)
 				require.Contains(t, byName, "worker")
-				assert.Empty(t, byName["worker"].PortWaitTimeout, "unset field stays empty so resolvePortWaitTimeout falls back to default")
+				assert.Empty(t, byName["worker"].PortTimeout, "unset field stays empty so resolvePortWaitTimeout falls back to default")
 			},
 		},
 	}

@@ -542,8 +542,8 @@ func (l *Launcher) buildSandboxSpec(
 			if svc.Concurrency.ShutdownTimeout != "" {
 				shutdownTimeout = svc.Concurrency.ShutdownTimeout
 			}
-			if svc.PortWaitTimeout != "" {
-				sbSpec.PortWaitTimeout = svc.PortWaitTimeout
+			if svc.PortTimeout != "" {
+				sbSpec.PortWaitTimeout = svc.PortTimeout
 			}
 
 			if len(svc.Ports) > 0 {
