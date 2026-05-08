@@ -455,13 +455,15 @@ func CheckBridgeStatus(name string) error {
 	return nil
 }
 
-// ReconcileBridgeAddresses removes bridge addresses, NAT chain rules, and
-// POSTROUTING jumps that belong to subnets no longer in `desired`. Drift
-// happens when a runner's flannel lease rotates (typically after the runner
-// is offline long enough for its etcd lease to expire) and a fresh subnet
-// is allocated. Without this reconcile the host bridge accumulates stale
-// addresses across lease eras, and the per-bridge MIREN-* chain accumulates
-// rules that interfere with traffic on the new subnet (MIR-1108).
+// ReconcileBridgeAddresses owns the per-bridge NAT chain shape and removes
+// bridge addresses + POSTROUTING jumps that belong to subnets no longer in
+// `desired`. It runs at sandbox controller init so the chain is in the
+// right shape before any sandbox is created. Drift happens when a runner's
+// flannel lease rotates (typically after the runner is offline long enough
+// for its etcd lease to expire) and a fresh subnet is allocated; without
+// this reconcile the host bridge accumulates stale addresses across lease
+// eras, and the per-bridge MIREN-* chain accumulates rules that interfere
+// with traffic on the new subnet (MIR-1108).
 func ReconcileBridgeAddresses(log *slog.Logger, br netlink.Link, desired []netip.Prefix) error {
 	bridgeName := br.Attrs().Name
 	chain := formatChain(bridgeName)
@@ -488,33 +490,31 @@ func ReconcileBridgeAddresses(log *slog.Logger, br netlink.Link, desired []netip
 		}
 	}
 
-	if len(stale) == 0 {
-		return nil
-	}
-
-	log.Warn("removing stale bridge state",
-		"bridge", bridgeName, "stale", stale, "desired", desired)
-
 	ipt, err := iptables.NewWithProtocol(iptables.ProtocolIPv4)
 	if err != nil {
 		return fmt.Errorf("locating iptables: %w", err)
 	}
 
-	for _, s := range stale {
-		ipn := netipx.PrefixIPNet(s)
-		if err := deleteAddr(br, ipn); err != nil {
-			return fmt.Errorf("removing stale bridge address %s: %w", s, err)
-		}
-		log.Info("removed stale bridge address", "bridge", bridgeName, "address", s)
+	if len(stale) > 0 {
+		log.Warn("removing stale bridge state",
+			"bridge", bridgeName, "stale", stale, "desired", desired)
 
-		if err := removeStalePostroutingJumps(log, ipt, chain, comment, s); err != nil {
-			log.Warn("failed to clean POSTROUTING jumps",
-				"bridge", bridgeName, "subnet", s, "error", err)
+		for _, s := range stale {
+			ipn := netipx.PrefixIPNet(s)
+			if err := deleteAddr(br, ipn); err != nil {
+				return fmt.Errorf("removing stale bridge address %s: %w", s, err)
+			}
+			log.Info("removed stale bridge address", "bridge", bridgeName, "address", s)
+
+			if err := removeStalePostroutingJumps(log, ipt, chain, comment, s); err != nil {
+				log.Warn("failed to clean POSTROUTING jumps",
+					"bridge", bridgeName, "subnet", s, "error", err)
+			}
 		}
 	}
 
 	if err := reconcileMasqChain(ipt, chain, comment, desired); err != nil {
-		return fmt.Errorf("reconciling chain after removing stale addresses: %w", err)
+		return fmt.Errorf("reconciling chain on %s: %w", bridgeName, err)
 	}
 
 	return nil
@@ -554,6 +554,12 @@ func removeStalePostroutingJumps(log *slog.Logger, ipt *iptables.IPTables, chain
 	return nil
 }
 
+// MasqueradeEndpoint adds a POSTROUTING jump for each address in `ec` to
+// the per-bridge MIREN-* chain, so packets with that source pod IP get
+// masqueraded on egress to non-pod-subnet destinations. The bridge-scope
+// chain content (per-subnet ACCEPTs followed by the MASQUERADE catch-all)
+// is owned by ReconcileBridgeAddresses, which runs at controller init
+// before any sandbox is created.
 func MasqueradeEndpoint(ec *EndpointConfig) error {
 	if len(ec.Addresses) == 0 {
 		return nil
@@ -565,10 +571,6 @@ func MasqueradeEndpoint(ec *EndpointConfig) error {
 	ipt, err := iptables.NewWithProtocol(iptables.ProtocolIPv4)
 	if err != nil {
 		return fmt.Errorf("locating iptables: %w", err)
-	}
-
-	if err := reconcileMasqChain(ipt, chain, comment, ec.Addresses); err != nil {
-		return err
 	}
 
 	for _, ac := range ec.Addresses {

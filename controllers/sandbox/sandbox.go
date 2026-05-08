@@ -689,31 +689,40 @@ func (c *SandboxController) isContainerHealthy(ctx context.Context, containerID 
 }
 
 // checkNetworkHealth verifies that a sandbox's app is still listening on at
-// least one declared port. Returns true for sandboxes with no exposed ports
-// (background workers) or no allocated network. Returns false if ports are
-// declared but none are in LISTEN state inside the pause container's
-// network namespace.
+// least one declared TCP port. Returns true for sandboxes with no exposed
+// TCP ports (background workers, UDP-only) or no allocated network. Returns
+// false if TCP ports are declared but none are in LISTEN state inside the
+// pause container's network namespace.
 //
 // The check reads /proc/<pause-pid>/net/tcp{,6} rather than dialing the pod
 // IP from the host. Host-to-pod TCP dials traverse the bridge's POSTROUTING
 // chain and can be intercepted by MASQUERADE, breaking connection tracking
 // on the dialing host. PortMonitor switched away from dials for the same
 // reason (commit 63661df3); MIR-1108 is the same class of bug here.
+//
+// Only TCP ports are probed because /proc/net/tcp does not expose UDP
+// listeners; a UDP-only sandbox would be wrongly killed if we treated UDP
+// ports as health-relevant.
 func (c *SandboxController) checkNetworkHealth(ctx context.Context, sb *compute.Sandbox) bool {
 	if len(sb.Network) == 0 {
 		c.Log.Debug("sandbox has no network, skipping network health check", "sandbox_id", sb.ID)
 		return true
 	}
 
-	hasPorts := false
+	hasTCPPorts := false
 	for _, container := range sb.Spec.Container {
-		if len(container.Port) > 0 {
-			hasPorts = true
+		for _, p := range container.Port {
+			if portIsTCP(p) {
+				hasTCPPorts = true
+				break
+			}
+		}
+		if hasTCPPorts {
 			break
 		}
 	}
-	if !hasPorts {
-		c.Log.Debug("sandbox has no exposed ports, skipping network health check", "sandbox_id", sb.ID)
+	if !hasTCPPorts {
+		c.Log.Debug("sandbox has no exposed TCP ports, skipping network health check", "sandbox_id", sb.ID)
 		return true
 	}
 
@@ -726,22 +735,29 @@ func (c *SandboxController) checkNetworkHealth(ctx context.Context, sb *compute.
 	}
 
 	for _, container := range sb.Spec.Container {
-		if len(container.Port) == 0 {
-			continue
-		}
-
-		port := int(container.Port[0].Port)
-		if checkPort(pid, port) {
-			c.Log.Debug("network health check passed",
+		for _, p := range container.Port {
+			if !portIsTCP(p) {
+				continue
+			}
+			port := int(p.Port)
+			if checkPort(pid, port) {
+				c.Log.Debug("network health check passed",
+					"sandbox_id", sb.ID, "container_name", container.Name, "port", port)
+				return true
+			}
+			c.Log.Debug("network health check found no listener for port",
 				"sandbox_id", sb.ID, "container_name", container.Name, "port", port)
-			return true
 		}
-
-		c.Log.Debug("network health check found no listener for port",
-			"sandbox_id", sb.ID, "container_name", container.Name, "port", port)
 	}
 
 	return false
+}
+
+// portIsTCP returns true for ports declared as TCP. Empty Protocol defaults
+// to TCP (matches mapLegacyProtocol), so ports without a protocol set are
+// treated as TCP as well.
+func portIsTCP(p compute.SandboxSpecContainerPort) bool {
+	return p.Protocol == "" || p.Protocol == compute.SandboxSpecContainerPortTCP
 }
 
 // pauseContainerPID returns the PID of the pause container's task. The
