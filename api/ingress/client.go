@@ -461,6 +461,9 @@ func (c *Client) SetRouteWAFLevel(ctx context.Context, host string, level int) (
 }
 
 func (c *Client) SetRouteWAFLevelOnRoute(ctx context.Context, route *ingress_v1alpha.HttpRoute, level int) (*ingress_v1alpha.HttpRoute, error) {
+	if route == nil {
+		return nil, fmt.Errorf("route is required")
+	}
 	if level < 1 || level > 4 {
 		return nil, fmt.Errorf("WAF level must be between 1 and 4, got %d", level)
 	}
@@ -493,6 +496,9 @@ func (c *Client) DetachWAFProfile(ctx context.Context, host string) (*ingress_v1
 }
 
 func (c *Client) DetachWAFProfileFromRoute(ctx context.Context, route *ingress_v1alpha.HttpRoute) (*ingress_v1alpha.HttpRoute, error) {
+	if route == nil {
+		return nil, fmt.Errorf("route is required")
+	}
 	err := c.ec.Patch(ctx, route.ID, 0,
 		entity.Ref(ingress_v1alpha.HttpRouteWafProfileId, ""),
 	)

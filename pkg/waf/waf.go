@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/corazawaf/coraza/v3"
@@ -76,11 +77,12 @@ Include @owasp_crs/*.conf
 		WithDirectives(directives).
 		WithRootFS(coreruleset.FS).
 		WithErrorCallback(func(mr types.MatchedRule) {
+			path, _, _ := strings.Cut(mr.URI(), "?")
 			log.Warn("WAF rule matched",
 				"id", mr.Rule().ID(),
 				"msg", mr.Message(),
 				"severity", mr.Rule().Severity().String(),
-				"uri", mr.URI(),
+				"path", path,
 			)
 		})
 
