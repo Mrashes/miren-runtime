@@ -84,7 +84,7 @@ func RouteProtect(ctx *Context, opts struct {
 			})
 		}
 
-		_, err = ic.AttachOIDCProviderToRoute(ctx, route, opts.Provider, claimMappings)
+		_, err = ic.AttachAuthProviderToRoute(ctx, route, oidcProvider.ID, claimMappings)
 		if err != nil {
 			return fmt.Errorf("failed to protect route: %w", err)
 		}
@@ -161,7 +161,7 @@ func RouteProtect(ctx *Context, opts struct {
 		ctx.Printf("Warning: --claim-header is ignored for password providers\n")
 	}
 
-	_, err = ic.AttachPasswordProviderToRoute(ctx, route, opts.Provider)
+	_, err = ic.AttachAuthProviderToRoute(ctx, route, pwProvider.ID, nil)
 	if err != nil {
 		return fmt.Errorf("failed to protect route: %w", err)
 	}

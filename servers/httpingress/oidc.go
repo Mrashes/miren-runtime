@@ -339,7 +339,7 @@ func (s *Server) getOrCreateOIDCHandler(ctx context.Context, route *ingress_v1al
 	}
 
 	// Try to resolve the current provider config from the entity store.
-	resp, err := s.eac.Get(ctx, string(route.OidcProvider))
+	resp, err := s.eac.Get(ctx, string(route.AuthProvider))
 	if err != nil {
 		// Entity store unavailable — return cached handler if we have one
 		// to avoid failing open (serving without auth).
@@ -389,7 +389,7 @@ func (s *Server) getOrCreateOIDCHandler(ctx context.Context, route *ingress_v1al
 
 // oidcMiddleware wraps the request handling with OIDC authentication
 func (s *Server) oidcMiddleware(route *ingress_v1alpha.HttpRoute, next http.HandlerFunc) http.HandlerFunc {
-	if entity.Empty(route.OidcProvider) {
+	if entity.Empty(route.AuthProvider) {
 		return next
 	}
 
@@ -402,7 +402,7 @@ func (s *Server) oidcMiddleware(route *ingress_v1alpha.HttpRoute, next http.Hand
 		handler, err := s.getOrCreateOIDCHandler(r.Context(), route, baseURL)
 		if err != nil {
 			s.Log.Error("failed to get OIDC handler", "error", err, "host", r.Host)
-			next(w, r)
+			http.Error(w, "Authentication service unavailable", http.StatusServiceUnavailable)
 			return
 		}
 

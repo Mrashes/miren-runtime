@@ -284,7 +284,7 @@ func AuthProviderRemove(ctx *Context, opts struct {
 
 			var inUse []string
 			for _, rm := range routes {
-				if rm.Route.OidcProvider == oidcProvider.ID {
+				if rm.Route.AuthProvider == oidcProvider.ID {
 					inUse = append(inUse, rm.Route.Host)
 				}
 			}
@@ -318,7 +318,7 @@ func AuthProviderRemove(ctx *Context, opts struct {
 
 			var inUse []string
 			for _, rm := range routes {
-				if rm.Route.PasswordProvider == pwProvider.ID {
+				if rm.Route.AuthProvider == pwProvider.ID {
 					host := rm.Route.Host
 					if rm.Route.Default {
 						host = "(default)"

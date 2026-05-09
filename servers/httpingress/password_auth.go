@@ -156,7 +156,7 @@ func (s *Server) getOrCreatePasswordHandler(ctx context.Context, route *ingress_
 		key = "__default__|" + baseURL
 	}
 
-	resp, err := s.eac.Get(ctx, string(route.PasswordProvider))
+	resp, err := s.eac.Get(ctx, string(route.AuthProvider))
 	if err != nil {
 		s.passwordMu.Lock()
 		delete(s.passwordHandlers, key)
@@ -193,7 +193,7 @@ func (s *Server) getOrCreatePasswordHandler(ctx context.Context, route *ingress_
 }
 
 func (s *Server) passwordMiddleware(route *ingress_v1alpha.HttpRoute, next http.HandlerFunc) http.HandlerFunc {
-	if entity.Empty(route.PasswordProvider) {
+	if entity.Empty(route.AuthProvider) {
 		return next
 	}
 

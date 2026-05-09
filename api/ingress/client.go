@@ -348,58 +348,20 @@ func (c *Client) DeleteOIDCProvider(ctx context.Context, name string) error {
 	return nil
 }
 
-// AttachOIDCProvider associates an OIDC provider with a route and sets claim mappings
-func (c *Client) AttachOIDCProvider(ctx context.Context, host string, providerName string, claimMappings []ingress_v1alpha.ClaimMappings) (*ingress_v1alpha.HttpRoute, error) {
-	route, err := c.Lookup(ctx, host)
-	if err != nil {
-		return nil, err
-	}
-
-	if route == nil {
-		return nil, fmt.Errorf("route not found: %s", host)
-	}
-
-	return c.AttachOIDCProviderToRoute(ctx, route, providerName, claimMappings)
-}
-
-// AttachOIDCProviderToRoute associates an OIDC provider with an already-resolved route
-func (c *Client) AttachOIDCProviderToRoute(ctx context.Context, route *ingress_v1alpha.HttpRoute, providerName string, claimMappings []ingress_v1alpha.ClaimMappings) (*ingress_v1alpha.HttpRoute, error) {
-	provider, err := c.GetOIDCProvider(ctx, providerName)
-	if err != nil {
-		return nil, err
-	}
-
-	if provider == nil {
-		return nil, fmt.Errorf("OIDC provider not found: %s", providerName)
-	}
-
+// AttachAuthProviderToRoute associates an auth provider with an already-resolved route.
+// The providerID should be the entity ID of either an OIDC or password provider.
+func (c *Client) AttachAuthProviderToRoute(ctx context.Context, route *ingress_v1alpha.HttpRoute, providerID entity.Id, claimMappings []ingress_v1alpha.ClaimMappings) (*ingress_v1alpha.HttpRoute, error) {
 	return c.mutateAndReplaceRoute(ctx, route.EntityId(), func(r *ingress_v1alpha.HttpRoute) {
-		r.OidcProvider = provider.ID
+		r.AuthProvider = providerID
 		r.ClaimMappings = claimMappings
-		r.PasswordProvider = ""
 	})
 }
 
-// DetachOIDCProvider removes OIDC provider association from a route
-func (c *Client) DetachOIDCProvider(ctx context.Context, host string) (*ingress_v1alpha.HttpRoute, error) {
-	route, err := c.Lookup(ctx, host)
-	if err != nil {
-		return nil, err
-	}
-
-	if route == nil {
-		return nil, fmt.Errorf("route not found: %s", host)
-	}
-
-	return c.DetachOIDCProviderFromRoute(ctx, route)
-}
-
-// DetachOIDCProviderFromRoute removes OIDC provider association from an already-resolved route
-func (c *Client) DetachOIDCProviderFromRoute(ctx context.Context, route *ingress_v1alpha.HttpRoute) (*ingress_v1alpha.HttpRoute, error) {
+// DetachAuthProviderFromRoute removes auth provider association from a route
+func (c *Client) DetachAuthProviderFromRoute(ctx context.Context, route *ingress_v1alpha.HttpRoute) (*ingress_v1alpha.HttpRoute, error) {
 	return c.mutateAndReplaceRoute(ctx, route.EntityId(), func(r *ingress_v1alpha.HttpRoute) {
-		r.OidcProvider = ""
+		r.AuthProvider = ""
 		r.ClaimMappings = nil
-		r.PasswordProvider = ""
 	})
 }
 
@@ -499,31 +461,6 @@ func (c *Client) DeletePasswordProvider(ctx context.Context, name string) error 
 	}
 
 	return nil
-}
-
-// AttachPasswordProviderToRoute associates a password provider with an already-resolved route
-func (c *Client) AttachPasswordProviderToRoute(ctx context.Context, route *ingress_v1alpha.HttpRoute, providerName string) (*ingress_v1alpha.HttpRoute, error) {
-	provider, err := c.GetPasswordProvider(ctx, providerName)
-	if err != nil {
-		return nil, err
-	}
-
-	if provider == nil {
-		return nil, fmt.Errorf("password provider not found: %s", providerName)
-	}
-
-	return c.mutateAndReplaceRoute(ctx, route.EntityId(), func(r *ingress_v1alpha.HttpRoute) {
-		r.PasswordProvider = provider.ID
-		r.OidcProvider = ""
-		r.ClaimMappings = nil
-	})
-}
-
-// DetachPasswordProviderFromRoute removes password provider association from a route
-func (c *Client) DetachPasswordProviderFromRoute(ctx context.Context, route *ingress_v1alpha.HttpRoute) (*ingress_v1alpha.HttpRoute, error) {
-	return c.mutateAndReplaceRoute(ctx, route.EntityId(), func(r *ingress_v1alpha.HttpRoute) {
-		r.PasswordProvider = ""
-	})
 }
 
 func (c *Client) CreateWAFProfile(ctx context.Context, level int) (*ingress_v1alpha.WafProfile, error) {

@@ -67,37 +67,35 @@ func RouteShow(ctx *Context, opts struct {
 		}
 	}
 
-	oidcProtected := !entity.Empty(route.OidcProvider)
-	passwordProtected := !entity.Empty(route.PasswordProvider)
-	protected := oidcProtected || passwordProtected
+	protected := !entity.Empty(route.AuthProvider)
 
 	var oidcProvider *ingress_v1alpha.OidcProvider
-	if oidcProtected {
+	var pwProvider *ingress_v1alpha.PasswordProvider
+	protectionType := "none"
+
+	if protected {
 		oidcProvider = &ingress_v1alpha.OidcProvider{}
-		if err := ic.GetEntityStore().GetById(ctx, route.OidcProvider, oidcProvider); err != nil {
+		if err := ic.GetEntityStore().GetById(ctx, route.AuthProvider, oidcProvider); err != nil {
 			if !errors.Is(err, cond.ErrNotFound{}) {
-				return fmt.Errorf("failed to get identity provider: %w", err)
+				return fmt.Errorf("failed to get auth provider: %w", err)
 			}
 			oidcProvider = nil
 		}
-	}
 
-	var pwProvider *ingress_v1alpha.PasswordProvider
-	if passwordProtected {
-		pwProvider = &ingress_v1alpha.PasswordProvider{}
-		if err := ic.GetEntityStore().GetById(ctx, route.PasswordProvider, pwProvider); err != nil {
-			if !errors.Is(err, cond.ErrNotFound{}) {
-				return fmt.Errorf("failed to get password provider: %w", err)
+		if oidcProvider != nil {
+			protectionType = "oidc"
+		} else {
+			pwProvider = &ingress_v1alpha.PasswordProvider{}
+			if err := ic.GetEntityStore().GetById(ctx, route.AuthProvider, pwProvider); err != nil {
+				if !errors.Is(err, cond.ErrNotFound{}) {
+					return fmt.Errorf("failed to get auth provider: %w", err)
+				}
+				pwProvider = nil
 			}
-			pwProvider = nil
+			if pwProvider != nil {
+				protectionType = "password"
+			}
 		}
-	}
-
-	protectionType := "none"
-	if oidcProtected {
-		protectionType = "oidc"
-	} else if passwordProtected {
-		protectionType = "password"
 	}
 
 	if opts.IsJSON() {
@@ -107,8 +105,6 @@ func RouteShow(ctx *Context, opts struct {
 			Default         bool                `json:"default"`
 			Protected       bool                `json:"protected"`
 			ProtectionType  string              `json:"protection_type"`
-			OIDCEnabled     bool                `json:"oidc_enabled"`
-			PasswordEnabled bool                `json:"password_enabled"`
 			ProviderName    string              `json:"provider_name,omitempty"`
 			ProviderURL     string              `json:"provider_url,omitempty"`
 			ProviderMissing bool                `json:"provider_missing,omitempty"`
@@ -122,31 +118,25 @@ func RouteShow(ctx *Context, opts struct {
 		}
 
 		r := RouteJSON{
-			Host:            routeLabel,
-			App:             ui.CleanEntityID(string(route.App)),
-			Default:         route.Default,
-			Protected:       protected,
-			ProtectionType:  protectionType,
-			OIDCEnabled:     oidcProtected,
-			PasswordEnabled: passwordProtected,
-			WafLevel:        wafLevel,
+			Host:           routeLabel,
+			App:            ui.CleanEntityID(string(route.App)),
+			Default:        route.Default,
+			Protected:      protected,
+			ProtectionType: protectionType,
+			WafLevel:       wafLevel,
 		}
 
-		if oidcProtected {
+		if protected {
 			if oidcProvider != nil {
 				r.ProviderName = oidcProvider.Name
 				r.ProviderURL = oidcProvider.ProviderUrl
-			} else {
-				r.ProviderMissing = true
-			}
-			for _, m := range route.ClaimMappings {
-				r.ClaimMappings = append(r.ClaimMappings, map[string]string{
-					"claim":  m.Claim,
-					"header": m.Header,
-				})
-			}
-		} else if passwordProtected {
-			if pwProvider != nil {
+				for _, m := range route.ClaimMappings {
+					r.ClaimMappings = append(r.ClaimMappings, map[string]string{
+						"claim":  m.Claim,
+						"header": m.Header,
+					})
+				}
+			} else if pwProvider != nil {
 				r.ProviderName = pwProvider.Name
 			} else {
 				r.ProviderMissing = true
@@ -164,7 +154,8 @@ func RouteShow(ctx *Context, opts struct {
 		ctx.Printf("  WAF Level: %d\n", wafProfile.ParanoiaLevel)
 	}
 
-	if oidcProtected {
+	switch protectionType {
+	case "oidc":
 		ctx.Printf("  Type:      oidc\n")
 		if oidcProvider != nil {
 			ctx.Printf("  Provider:  %s (%s)\n", oidcProvider.Name, oidcProvider.ProviderUrl)
@@ -188,7 +179,7 @@ func RouteShow(ctx *Context, opts struct {
 
 			ctx.Printf("\n%s\n", table.Render())
 		}
-	} else if passwordProtected {
+	case "password":
 		ctx.Printf("  Type:      password\n")
 		if pwProvider != nil {
 			ctx.Printf("  Provider:  %s\n", pwProvider.Name)

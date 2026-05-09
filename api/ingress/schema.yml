@@ -18,13 +18,9 @@ kinds:
     waf_profile:
       type: ref
       doc: Reference to a WAF profile for request filtering
-    oidc_provider:
+    auth_provider:
       type: ref
-      doc: Reference to an OIDC provider for authentication
-      indexed: true
-    password_provider:
-      type: ref
-      doc: Reference to a password provider for simple authentication
+      doc: Reference to an auth provider (OIDC or password) for authentication
       indexed: true
     claim_mappings:
       type: component

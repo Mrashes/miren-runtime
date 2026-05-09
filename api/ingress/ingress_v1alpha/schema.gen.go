@@ -6,30 +6,31 @@ import (
 )
 
 const (
-	HttpRouteAppId              = entity.Id("dev.miren.ingress/http_route.app")
-	HttpRouteClaimMappingsId    = entity.Id("dev.miren.ingress/http_route.claim_mappings")
-	HttpRouteDefaultId          = entity.Id("dev.miren.ingress/http_route.default")
-	HttpRouteHostId             = entity.Id("dev.miren.ingress/http_route.host")
-	HttpRouteOidcProviderId     = entity.Id("dev.miren.ingress/http_route.oidc_provider")
-	HttpRoutePasswordProviderId = entity.Id("dev.miren.ingress/http_route.password_provider")
-	HttpRouteWafProfileId       = entity.Id("dev.miren.ingress/http_route.waf_profile")
+	HttpRouteAppId           = entity.Id("dev.miren.ingress/http_route.app")
+	HttpRouteAuthProviderId  = entity.Id("dev.miren.ingress/http_route.auth_provider")
+	HttpRouteClaimMappingsId = entity.Id("dev.miren.ingress/http_route.claim_mappings")
+	HttpRouteDefaultId       = entity.Id("dev.miren.ingress/http_route.default")
+	HttpRouteHostId          = entity.Id("dev.miren.ingress/http_route.host")
+	HttpRouteWafProfileId    = entity.Id("dev.miren.ingress/http_route.waf_profile")
 )
 
 type HttpRoute struct {
-	ID               entity.Id       `json:"id"`
-	App              entity.Id       `cbor:"app,omitempty" json:"app,omitempty"`
-	ClaimMappings    []ClaimMappings `cbor:"claim_mappings,omitempty" json:"claim_mappings,omitempty"`
-	Default          bool            `cbor:"default,omitempty" json:"default,omitempty"`
-	Host             string          `cbor:"host,omitempty" json:"host,omitempty"`
-	OidcProvider     entity.Id       `cbor:"oidc_provider,omitempty" json:"oidc_provider,omitempty"`
-	PasswordProvider entity.Id       `cbor:"password_provider,omitempty" json:"password_provider,omitempty"`
-	WafProfile       entity.Id       `cbor:"waf_profile,omitempty" json:"waf_profile,omitempty"`
+	ID            entity.Id       `json:"id"`
+	App           entity.Id       `cbor:"app,omitempty" json:"app,omitempty"`
+	AuthProvider  entity.Id       `cbor:"auth_provider,omitempty" json:"auth_provider,omitempty"`
+	ClaimMappings []ClaimMappings `cbor:"claim_mappings,omitempty" json:"claim_mappings,omitempty"`
+	Default       bool            `cbor:"default,omitempty" json:"default,omitempty"`
+	Host          string          `cbor:"host,omitempty" json:"host,omitempty"`
+	WafProfile    entity.Id       `cbor:"waf_profile,omitempty" json:"waf_profile,omitempty"`
 }
 
 func (o *HttpRoute) Decode(e entity.AttrGetter) {
 	o.ID = entity.MustGet(e, entity.DBId).Value.Id()
 	if a, ok := e.Get(HttpRouteAppId); ok && a.Value.Kind() == entity.KindId {
 		o.App = a.Value.Id()
+	}
+	if a, ok := e.Get(HttpRouteAuthProviderId); ok && a.Value.Kind() == entity.KindId {
+		o.AuthProvider = a.Value.Id()
 	}
 	for _, a := range e.GetAll(HttpRouteClaimMappingsId) {
 		if a.Value.Kind() == entity.KindComponent {
@@ -43,12 +44,6 @@ func (o *HttpRoute) Decode(e entity.AttrGetter) {
 	}
 	if a, ok := e.Get(HttpRouteHostId); ok && a.Value.Kind() == entity.KindString {
 		o.Host = a.Value.String()
-	}
-	if a, ok := e.Get(HttpRouteOidcProviderId); ok && a.Value.Kind() == entity.KindId {
-		o.OidcProvider = a.Value.Id()
-	}
-	if a, ok := e.Get(HttpRoutePasswordProviderId); ok && a.Value.Kind() == entity.KindId {
-		o.PasswordProvider = a.Value.Id()
 	}
 	if a, ok := e.Get(HttpRouteWafProfileId); ok && a.Value.Kind() == entity.KindId {
 		o.WafProfile = a.Value.Id()
@@ -75,18 +70,15 @@ func (o *HttpRoute) Encode() (attrs []entity.Attr) {
 	if !entity.Empty(o.App) {
 		attrs = append(attrs, entity.Ref(HttpRouteAppId, o.App))
 	}
+	if !entity.Empty(o.AuthProvider) {
+		attrs = append(attrs, entity.Ref(HttpRouteAuthProviderId, o.AuthProvider))
+	}
 	for _, v := range o.ClaimMappings {
 		attrs = append(attrs, entity.Component(HttpRouteClaimMappingsId, v.Encode()))
 	}
 	attrs = append(attrs, entity.Bool(HttpRouteDefaultId, o.Default))
 	if !entity.Empty(o.Host) {
 		attrs = append(attrs, entity.String(HttpRouteHostId, o.Host))
-	}
-	if !entity.Empty(o.OidcProvider) {
-		attrs = append(attrs, entity.Ref(HttpRouteOidcProviderId, o.OidcProvider))
-	}
-	if !entity.Empty(o.PasswordProvider) {
-		attrs = append(attrs, entity.Ref(HttpRoutePasswordProviderId, o.PasswordProvider))
 	}
 	if !entity.Empty(o.WafProfile) {
 		attrs = append(attrs, entity.Ref(HttpRouteWafProfileId, o.WafProfile))
@@ -99,6 +91,9 @@ func (o *HttpRoute) Empty() bool {
 	if !entity.Empty(o.App) {
 		return false
 	}
+	if !entity.Empty(o.AuthProvider) {
+		return false
+	}
 	if len(o.ClaimMappings) != 0 {
 		return false
 	}
@@ -106,12 +101,6 @@ func (o *HttpRoute) Empty() bool {
 		return false
 	}
 	if !entity.Empty(o.Host) {
-		return false
-	}
-	if !entity.Empty(o.OidcProvider) {
-		return false
-	}
-	if !entity.Empty(o.PasswordProvider) {
 		return false
 	}
 	if !entity.Empty(o.WafProfile) {
@@ -122,12 +111,11 @@ func (o *HttpRoute) Empty() bool {
 
 func (o *HttpRoute) InitSchema(sb *schema.SchemaBuilder) {
 	sb.Ref("app", "dev.miren.ingress/http_route.app", schema.Doc("The application to route to"), schema.Indexed, schema.Tags("dev.miren.app_ref"))
+	sb.Ref("auth_provider", "dev.miren.ingress/http_route.auth_provider", schema.Doc("Reference to an auth provider (OIDC or password) for authentication"), schema.Indexed)
 	sb.Component("claim_mappings", "dev.miren.ingress/http_route.claim_mappings", schema.Doc("Mappings from JWT claims to HTTP headers"), schema.Many)
 	(&ClaimMappings{}).InitSchema(sb.Builder("http_route.claim_mappings"))
 	sb.Bool("default", "dev.miren.ingress/http_route.default", schema.Doc("Whether this is the default route for routing"), schema.Indexed)
 	sb.String("host", "dev.miren.ingress/http_route.host", schema.Doc("The hostname to match on for the application"), schema.Indexed)
-	sb.Ref("oidc_provider", "dev.miren.ingress/http_route.oidc_provider", schema.Doc("Reference to an OIDC provider for authentication"), schema.Indexed)
-	sb.Ref("password_provider", "dev.miren.ingress/http_route.password_provider", schema.Doc("Reference to a password provider for simple authentication"), schema.Indexed)
 	sb.Ref("waf_profile", "dev.miren.ingress/http_route.waf_profile", schema.Doc("Reference to a WAF profile for request filtering"))
 }
 
@@ -400,5 +388,5 @@ func init() {
 		(&PasswordProvider{}).InitSchema(sb)
 		(&WafProfile{}).InitSchema(sb)
 	})
-	schema.RegisterEncodedSchema("dev.miren.ingress", "v1alpha", []byte("\x1f\x8b\b\x00\x00\x00\x00\x00\x00\xff\x94\x96ے\xd30\f\x86_\x04\x86\xe3p&\xcc>Qƍ\x95Dԧ\xb5\xddn{\t3\f\x0f\xc2\xc2\x1b\xc25\x139%\xb1\x9du\xcd͎\xa2H\x9f\xf2ے\xb6\xf7\\1\t\xb7\x1c\x8e\x8dD\v\xaaA5Xp\x0e\xf6\xa8\xb8\xbb?=\xcb\xde|\x9a\xde4\xa3\xf7\xa6\xb5\xfa\xe0\xe1\x17\x11N\x8f\xf2\xc0%&\xd0\xfe\xf4\\K\x86*\xaf\xd6\xf7\b\x82\xbb\xef?v\xc8OOK\xa4\x86\x19C\x05\xbb\xc9\xf0g\x03;\xe4?\xa7\xb4\xf7ŴN0\x94\xaddƠ\x1a\x1c\x97L\x9d\x7f\x13G%o&$vZ\x1a\xad@\xf9Śe\xe6U\x9a\a\xabT\xaa\xfeJ\xaa_\xe5\x9f\x1f\xd3\x02\x9c\xbe\x02\x829}j\xef\xbcE5\x10\xe2\xf5U\xc4\b\x8c\x83%F?\xdb+\xc8p\x04\xebP\xab\xe1xÄ\x19\x990\x16%\xb3\xe7v\xd2!\tu!Q\xbd\x97\xc5\x13\xe7г\x83\xf0Tl\xb8<L\xd5\xf8NkA\x80\x8d\xe6Z\x01F\xedB6'+U\xfb\xae\x98\xac\x91w\xad\xb1\xfa\x88\x17\xc12vͭC\xa8\xa6\x882̹;my\x8c\xbb\xcd\xddk\xe4\x9b\"\xf2\x8e\xf5SZ\x8f\x02\b\xb6_;fL\xf16>/\xb0\xd3\xf3\aFtŜ\x9b\xf7q\x1e\xb9\n\xaal\xd7/\xa4\xefC\x11\xd5\x18f\x99\xd2\xc8Z\x01G\x10a\xd0\x12\xdf$\xb3C\xe5\x8b:\xd7\a\xb3\xd5o$4\xba\xd8Y\xea\x93<6\n\xab\x14\xfb\x8dľ\xbd\x02k:\x81\xa0|\x8b\x9c\x8a\xe3\xf2\x986\xed\xc7J\x92\x83\xceB\xe8~\x19\xbbR\xe2ơ\xc4D\x9a\xa0\xe5O\x9a\xbfq\x91q\xfe\xc5h\x0f6\\\xa4\x88<)oc\x8f\xc5<\xd7i\x03.\xec\xa0ٮ\xdeA\x11ikƨ\x1f\xb2ɜ{\xe2E\x1e\x9f\x85\xfe\xd7\xce\xde\xf8\x80\fx\xed\xfcoj\x18\xff<#sc\xe8\x8a\xd8U{\x82\xf9\xd6J\xc3\xf7n\xd4ַ\xe1\xdf\xffz\xcd\\\xff%\x10\rk\xc5VJ\xae\xb3j\xbcs\x01\xf5m\xf0\x17\x00\x00\xff\xff\x01\x00\x00\xff\xff\xf1\x8a٭\xec\b\x00\x00"))
+	schema.RegisterEncodedSchema("dev.miren.ingress", "v1alpha", []byte("\x1f\x8b\b\x00\x00\x00\x00\x00\x00\xff\x94\x95ے\xd30\f\x86_\x04\x86\xe3p&\xcc>Qƍ\x95Dԧ\xb5\xddl{\t3\xf0\",\xbc!\\3\x91\xd3Ml\xa7\xa9\xf7\xa6\xa3\xca\xf2'K\xfe\xe5\xdcs\xc5$\xdcr\x18*\x89\x16T\x85\xaa\xb3\xe0\x1c\xecQqw\x7f|\x91\xad|\x19W\xaa\xde{S[}\xf0\xf0\x87\b\xc7'y\xe0\x1c\x13h\xffZ\xae%C\x95gk[\x04\xc1\xdd\xcf_;\xe4\xc7\xe7[\xa4\x8a\x19C\t\x9b\xd1\xf0'\x03;\xe4\xb4\xed\xc3\xf6\xb6\x83\xefkc\xf5\x80\x1c,\x01d\xec\x9aP\xbfG\xd4\xc7MT#\x18\xcaZ2cPu\x8eK\xa6N\x7f\x89\xa8\x92\x95\x11\x89\x8d\x96F+P~\xb6\xa6\x8e\xe5Y\xaa\x8bY\n\x1b\xf8\x9d:\xf1&?~L\vp:\x05\x04s<j\xeb\xbcE\xd5\x11\xe2\xedUD\x0f\xec\xdc\xc9v\xb2\x17\x90n\x00\xebP\xabn\xb8a\xc2\xf4L\x18\x8b\x92\xd9S=\xd6!\tu&Q\xbeכ\x1d\xe7в\x83\xf0\x94\xac;\xff\x19\xb3\xf1\x9dւ\x00+:]\x00z\xed\xc2nNVZ\xed\xbb\xcd\xcdw\xac\x1deҢ\x00b엎I6\x9b\xf5~\x9daǗ\x17\xe6i\xc1\x9c\xe4\xf14\x8f\\\x04\x15\n\xe2\x1b\xd5\xf7i\x13U\x19f\x99\xd2\xc8j\x01\x03\x88 \xe5\xc47\x96٠\xf2\x9bu.\x1b\xb3v\xa3T\xa8F\xde<L\xddT\xea\xb3<6\n+,\xf6\a\x15\xfb\xfe\n\xacj\x04\x82\xf25rJ\x8e\xf3\xdfT\x16\x9f\vI\x0e\x1a\vA_2v\xa5ĕ\xa6\xc4D\xd2\xe8\xfc\x93\xee_\xb9\xc8x\xff٨\x0f6\\\xa4\x88<)o奈y\xae\xd1\x06\\\x98\xf2\xc9.\x9e\xf2\x88\xb46c\xa4\aÜ\xbbӖ\xa7\x9ax\x95\xc7g\xa1\x8fz\x15W\x0e\x90\x01\xaf\xf5\xff\xa6\x84\xf1\xe0\xe9\x99\xeb\x83*bWi\ao3v\x1a\xbew\xbd\xb6\xbe\x0e\xdf\xea\xe53s\xfd\xb3\x1d\rk\xc1\xab\x94\\g\xd1x\xe7\x05\x94\xcb\xe0?\x00\x00\x00\xff\xff\x01\x00\x00\xff\xff;\xd8hV\x99\b\x00\x00"))
 }

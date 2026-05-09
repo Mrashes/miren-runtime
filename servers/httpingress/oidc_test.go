@@ -283,7 +283,7 @@ func TestGetOrCreateOIDCHandlerCacheInvalidation(t *testing.T) {
 
 	route := &ingress_v1alpha.HttpRoute{
 		Host:         "socials.example.com",
-		OidcProvider: entity.Id(providerIdent),
+		AuthProvider: entity.Id(providerIdent),
 	}
 
 	// First call: creates and caches a handler
@@ -346,7 +346,7 @@ func TestGetOrCreateOIDCHandlerFailClosed(t *testing.T) {
 
 	route := &ingress_v1alpha.HttpRoute{
 		Host:         "socials.example.com",
-		OidcProvider: entity.Id(providerIdent),
+		AuthProvider: entity.Id(providerIdent),
 	}
 
 	// Warm the cache
@@ -370,7 +370,7 @@ func TestGetOrCreateOIDCHandlerFailClosed(t *testing.T) {
 	// With no cache entry and no entity store, should error (not fail open)
 	routeNew := &ingress_v1alpha.HttpRoute{
 		Host:         "newsite.example.com",
-		OidcProvider: entity.Id(providerIdent),
+		AuthProvider: entity.Id(providerIdent),
 	}
 	_, err = srv.getOrCreateOIDCHandler(context.Background(), routeNew, "https://newsite.example.com")
 	if err == nil {

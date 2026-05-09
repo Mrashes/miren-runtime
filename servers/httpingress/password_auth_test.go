@@ -94,8 +94,8 @@ func TestGetOrCreatePasswordHandlerCacheInvalidation(t *testing.T) {
 	storePasswordProvider(store, providerIdent, string(hash1))
 
 	route := &ingress_v1alpha.HttpRoute{
-		Host:             "app.example.com",
-		PasswordProvider: entity.Id(providerIdent),
+		Host:         "app.example.com",
+		AuthProvider: entity.Id(providerIdent),
 	}
 
 	h1, err := srv.getOrCreatePasswordHandler(context.Background(), route, "https://app.example.com")
@@ -140,8 +140,8 @@ func TestGetOrCreatePasswordHandlerFailClosed(t *testing.T) {
 	storePasswordProvider(store, providerIdent, string(hash))
 
 	route := &ingress_v1alpha.HttpRoute{
-		Host:             "app.example.com",
-		PasswordProvider: entity.Id(providerIdent),
+		Host:         "app.example.com",
+		AuthProvider: entity.Id(providerIdent),
 	}
 
 	// Warm the cache
