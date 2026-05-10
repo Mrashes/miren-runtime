@@ -248,9 +248,10 @@ func (v *Validator) ValidateAttribute(ctx context.Context, attr *Attr) error {
 		if !ok {
 			return fmt.Errorf("attribute %s must be a string representing an entity ID", name)
 		}
-		// Check if the referenced entity exists
-		if _, err := v.store.GetEntity(ctx, str); err != nil {
-			return fmt.Errorf("attribute %s references a non-existent entity: %w", name, err)
+		if str != "" {
+			if _, err := v.store.GetEntity(ctx, str); err != nil {
+				return fmt.Errorf("attribute %s references a non-existent entity: %w", name, err)
+			}
 		}
 	case TypeTime:
 		// Timestamps can be stored as various integer types representing milliseconds since epoch
