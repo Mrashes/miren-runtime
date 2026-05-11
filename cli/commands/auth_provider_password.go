@@ -2,6 +2,8 @@ package commands
 
 import (
 	"fmt"
+	"os"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -12,7 +14,7 @@ import (
 
 func AuthProviderAddPassword(ctx *Context, opts struct {
 	Name     string `position:"0" usage:"Name for this password provider" required:"true"`
-	Password string `long:"password" description:"Password to protect routes with" required:"true"`
+	Password string `long:"password" description:"Password (omit to prompt interactively, use @file to read from file)"`
 	Update   bool   `long:"update" description:"Overwrite an existing provider with the same name (rotates password)"`
 	ConfigCentric
 }) error {
@@ -20,8 +22,30 @@ func AuthProviderAddPassword(ctx *Context, opts struct {
 		return fmt.Errorf("provider name is required")
 	}
 
-	if opts.Password == "" {
-		return fmt.Errorf("--password is required")
+	password := opts.Password
+
+	switch {
+	case password == "":
+		prompted, err := ui.PromptForInput(
+			ui.WithLabel("Enter password"),
+			ui.WithSensitive(true),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to read password: %w", err)
+		}
+		if prompted == "" {
+			return fmt.Errorf("password cannot be empty")
+		}
+		password = prompted
+	case strings.HasPrefix(password, "@"):
+		data, err := os.ReadFile(password[1:])
+		if err != nil {
+			return fmt.Errorf("failed to read password from file %s: %w", password[1:], err)
+		}
+		password = strings.TrimRight(string(data), "\r\n")
+		if password == "" {
+			return fmt.Errorf("password file is empty")
+		}
 	}
 
 	client, err := ctx.RPCClient("entities")
@@ -47,7 +71,7 @@ func AuthProviderAddPassword(ctx *Context, opts struct {
 		return fmt.Errorf("an OIDC provider named %q already exists. Provider names must be unique across types", opts.Name)
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(opts.Password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return fmt.Errorf("failed to hash password: %w", err)
 	}

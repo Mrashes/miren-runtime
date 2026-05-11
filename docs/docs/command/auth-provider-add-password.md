@@ -22,7 +22,7 @@ miren auth provider add-password <name> [flags]
 
 - `--cluster, -C` — Cluster name
 - `--config` — Path to the config file
-- `--password` — Password to protect routes with
+- `--password` — Password (omit to prompt interactively, use @file to read from file)
 - `--update` — Overwrite an existing provider with the same name (rotates password)
 
 ## Global Options
