@@ -1,7 +1,6 @@
 package httpingress
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -329,24 +328,14 @@ func oidcProviderMatches(cached *oidcHandler, current *ingress_v1alpha.OidcProvi
 // If the provider config has changed since the handler was cached, the stale
 // handler is replaced with a new one. If the entity store is unreachable,
 // the cached handler is evicted and an error is returned (fail-closed).
-func (s *Server) getOrCreateOIDCHandler(ctx context.Context, route *ingress_v1alpha.HttpRoute, baseURL string) (*oidcHandler, error) {
-	// Key by route host + baseURL so that handlers with different redirect
-	// URIs (different scheme or host for default routes) are cached separately.
+func (s *Server) getOrCreateOIDCHandler(route *ingress_v1alpha.HttpRoute, baseURL string, providerEntity entity.AttrGetter) (*oidcHandler, error) {
 	key := route.Host + "|" + baseURL
 	if route.Default {
 		key = "__default__|" + baseURL
 	}
 
-	resp, err := s.eac.Get(ctx, string(route.AuthProvider))
-	if err != nil {
-		s.oidcMu.Lock()
-		delete(s.oidcHandlers, key)
-		s.oidcMu.Unlock()
-		return nil, fmt.Errorf("failed to get OIDC provider: %w", err)
-	}
-
 	var provider ingress_v1alpha.OidcProvider
-	provider.Decode(resp.Entity().Entity())
+	provider.Decode(providerEntity)
 
 	s.oidcMu.RLock()
 	if h, ok := s.oidcHandlers[key]; ok && oidcProviderMatches(h, &provider) {
@@ -379,19 +368,14 @@ func (s *Server) getOrCreateOIDCHandler(ctx context.Context, route *ingress_v1al
 	return handler, nil
 }
 
-// oidcMiddleware wraps the request handling with OIDC authentication
-func (s *Server) oidcMiddleware(route *ingress_v1alpha.HttpRoute, next http.HandlerFunc) http.HandlerFunc {
-	if entity.Empty(route.AuthProvider) {
-		return next
-	}
-
+func (s *Server) oidcMiddleware(route *ingress_v1alpha.HttpRoute, providerEntity entity.AttrGetter, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		scheme := requestScheme(r)
 		baseURL := fmt.Sprintf("%s://%s", scheme, r.Host)
 
 		s.oidcSessionManager.SetSecure(scheme == "https")
 
-		handler, err := s.getOrCreateOIDCHandler(r.Context(), route, baseURL)
+		handler, err := s.getOrCreateOIDCHandler(route, baseURL, providerEntity)
 		if err != nil {
 			s.Log.Error("failed to get OIDC handler", "error", err, "host", r.Host)
 			http.Error(w, "Authentication service unavailable", http.StatusServiceUnavailable)

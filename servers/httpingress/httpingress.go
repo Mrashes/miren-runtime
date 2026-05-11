@@ -603,9 +603,9 @@ func (h *Server) authMiddleware(route *ingress_v1alpha.HttpRoute, next http.Hand
 
 		switch {
 		case entity.Is(ent, ingress_v1alpha.KindOidcProvider):
-			h.oidcMiddleware(route, next)(w, r)
+			h.oidcMiddleware(route, ent, next)(w, r)
 		case entity.Is(ent, ingress_v1alpha.KindPasswordProvider):
-			h.passwordMiddleware(route, next)(w, r)
+			h.passwordMiddleware(route, ent, next)(w, r)
 		default:
 			h.Log.Error("unknown auth provider kind", "provider", route.AuthProvider)
 			http.Error(w, "Authentication service unavailable", http.StatusServiceUnavailable)

@@ -1,7 +1,6 @@
 package httpingress
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -150,22 +149,14 @@ func passwordProviderMatches(cached *passwordHandler, current *ingress_v1alpha.P
 	return cp.ID == current.ID && cp.PasswordHash == current.PasswordHash
 }
 
-func (s *Server) getOrCreatePasswordHandler(ctx context.Context, route *ingress_v1alpha.HttpRoute, baseURL string) (*passwordHandler, error) {
+func (s *Server) getOrCreatePasswordHandler(route *ingress_v1alpha.HttpRoute, baseURL string, providerEntity entity.AttrGetter) (*passwordHandler, error) {
 	key := route.Host + "|" + baseURL
 	if route.Default {
 		key = "__default__|" + baseURL
 	}
 
-	resp, err := s.eac.Get(ctx, string(route.AuthProvider))
-	if err != nil {
-		s.passwordMu.Lock()
-		delete(s.passwordHandlers, key)
-		s.passwordMu.Unlock()
-		return nil, fmt.Errorf("failed to get password provider: %w", err)
-	}
-
 	var provider ingress_v1alpha.PasswordProvider
-	provider.Decode(resp.Entity().Entity())
+	provider.Decode(providerEntity)
 
 	s.passwordMu.RLock()
 	if h, ok := s.passwordHandlers[key]; ok && passwordProviderMatches(h, &provider) {
@@ -192,18 +183,14 @@ func (s *Server) getOrCreatePasswordHandler(ctx context.Context, route *ingress_
 	return handler, nil
 }
 
-func (s *Server) passwordMiddleware(route *ingress_v1alpha.HttpRoute, next http.HandlerFunc) http.HandlerFunc {
-	if entity.Empty(route.AuthProvider) {
-		return next
-	}
-
+func (s *Server) passwordMiddleware(route *ingress_v1alpha.HttpRoute, providerEntity entity.AttrGetter, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		scheme := requestScheme(r)
 		baseURL := fmt.Sprintf("%s://%s", scheme, r.Host)
 
 		s.oidcSessionManager.SetSecure(scheme == "https")
 
-		handler, err := s.getOrCreatePasswordHandler(r.Context(), route, baseURL)
+		handler, err := s.getOrCreatePasswordHandler(route, baseURL, providerEntity)
 		if err != nil {
 			s.Log.Error("failed to get password handler", "error", err, "host", r.Host)
 			http.Error(w, "Authentication service unavailable", http.StatusServiceUnavailable)

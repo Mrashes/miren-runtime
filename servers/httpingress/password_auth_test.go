@@ -1,7 +1,6 @@
 package httpingress
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -11,35 +10,24 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"miren.dev/runtime/api/entityserver/entityserver_v1alpha"
 	"miren.dev/runtime/api/ingress/ingress_v1alpha"
 	"miren.dev/runtime/pkg/entity"
 	"miren.dev/runtime/pkg/oidc"
-	"miren.dev/runtime/pkg/rpc"
-	"miren.dev/runtime/servers/entityserver"
 )
 
-func storePasswordProvider(store *entity.MockStore, ident, hash string) {
-	store.AddEntity(entity.Id(ident), entity.New([]entity.Attr{
-		{ID: entity.Ident, Value: entity.KeywordValue(ident)},
+func makePasswordProviderEntity(ident, hash string) *entity.Entity {
+	return entity.New(
+		entity.DBId, entity.Id(ident),
+		entity.Ref(entity.EntityKind, ingress_v1alpha.KindPasswordProvider),
 		entity.String(ingress_v1alpha.PasswordProviderPasswordHashId, hash),
-	}))
+	)
 }
 
-func newPasswordTestServer(store *entity.MockStore) *Server {
-	esrv := &entityserver.EntityServer{
-		Log:   slog.Default(),
-		Store: store,
-	}
-	eac := &entityserver_v1alpha.EntityAccessClient{
-		Client: rpc.LocalClient(entityserver_v1alpha.AdaptEntityAccess(esrv)),
-	}
-
+func newPasswordTestServer() *Server {
 	signingKey := make([]byte, 32)
 
 	return &Server{
 		Log:                slog.Default(),
-		eac:                eac,
 		oidcSessionManager: oidc.NewSessionManager(false, "", signingKey),
 		oidcHandlers:       make(map[string]*oidcHandler),
 		passwordHandlers:   make(map[string]*passwordHandler),
@@ -86,19 +74,19 @@ func TestPasswordProviderMatches(t *testing.T) {
 }
 
 func TestGetOrCreatePasswordHandlerCacheInvalidation(t *testing.T) {
-	store := entity.NewMockStore()
-	srv := newPasswordTestServer(store)
+	srv := newPasswordTestServer()
 
 	providerIdent := "test/pw-provider"
 	hash1, _ := bcrypt.GenerateFromPassword([]byte("secret1"), bcrypt.MinCost)
-	storePasswordProvider(store, providerIdent, string(hash1))
 
 	route := &ingress_v1alpha.HttpRoute{
 		Host:         "app.example.com",
 		AuthProvider: entity.Id(providerIdent),
 	}
 
-	h1, err := srv.getOrCreatePasswordHandler(context.Background(), route, "https://app.example.com")
+	entA := makePasswordProviderEntity(providerIdent, string(hash1))
+
+	h1, err := srv.getOrCreatePasswordHandler(route, "https://app.example.com", entA)
 	if err != nil {
 		t.Fatalf("first call: %v", err)
 	}
@@ -106,8 +94,8 @@ func TestGetOrCreatePasswordHandlerCacheInvalidation(t *testing.T) {
 		t.Fatalf("expected hash=%s, got %s", string(hash1), h1.provider.PasswordHash)
 	}
 
-	// Same call should return cached handler
-	h2, err := srv.getOrCreatePasswordHandler(context.Background(), route, "https://app.example.com")
+	// Same entity should return cached handler
+	h2, err := srv.getOrCreatePasswordHandler(route, "https://app.example.com", entA)
 	if err != nil {
 		t.Fatalf("second call: %v", err)
 	}
@@ -115,11 +103,11 @@ func TestGetOrCreatePasswordHandlerCacheInvalidation(t *testing.T) {
 		t.Error("expected same handler instance on cache hit")
 	}
 
-	// Update the password hash
+	// Pass a new entity with updated hash
 	hash2, _ := bcrypt.GenerateFromPassword([]byte("secret2"), bcrypt.MinCost)
-	storePasswordProvider(store, providerIdent, string(hash2))
+	entB := makePasswordProviderEntity(providerIdent, string(hash2))
 
-	h3, err := srv.getOrCreatePasswordHandler(context.Background(), route, "https://app.example.com")
+	h3, err := srv.getOrCreatePasswordHandler(route, "https://app.example.com", entB)
 	if err != nil {
 		t.Fatalf("third call: %v", err)
 	}
@@ -128,43 +116,6 @@ func TestGetOrCreatePasswordHandlerCacheInvalidation(t *testing.T) {
 	}
 	if h1 == h3 {
 		t.Error("expected different handler instance after provider change")
-	}
-}
-
-func TestGetOrCreatePasswordHandlerFailClosed(t *testing.T) {
-	store := entity.NewMockStore()
-	srv := newPasswordTestServer(store)
-
-	providerIdent := "test/pw-provider"
-	hash, _ := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.MinCost)
-	storePasswordProvider(store, providerIdent, string(hash))
-
-	route := &ingress_v1alpha.HttpRoute{
-		Host:         "app.example.com",
-		AuthProvider: entity.Id(providerIdent),
-	}
-
-	// Warm the cache
-	_, err := srv.getOrCreatePasswordHandler(context.Background(), route, "https://app.example.com")
-	if err != nil {
-		t.Fatalf("initial call: %v", err)
-	}
-
-	// Remove provider to simulate unavailability
-	store.RemoveEntity(entity.Id(providerIdent))
-
-	// Should fail closed and clear cached handler
-	_, err = srv.getOrCreatePasswordHandler(context.Background(), route, "https://app.example.com")
-	if err == nil {
-		t.Error("expected error when entity store fails, not cached fallback")
-	}
-
-	// Cache entry should have been removed
-	srv.passwordMu.RLock()
-	_, cached := srv.passwordHandlers["app.example.com|https://app.example.com"]
-	srv.passwordMu.RUnlock()
-	if cached {
-		t.Error("expected cached handler to be removed after lookup failure")
 	}
 }
 
