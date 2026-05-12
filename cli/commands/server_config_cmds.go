@@ -63,6 +63,7 @@ func ServerConfigValidate(ctx *Context, opts struct {
 	if err := cfg.ValidateIngressCoherence(); err != nil {
 		return fmt.Errorf("configuration is invalid: %w", err)
 	}
+	cfg.WarnDeprecatedConfig(ctx.Log)
 
 	ctx.UILog.Info("Configuration is valid", "file", opts.ConfigFile)
 

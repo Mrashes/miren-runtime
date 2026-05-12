@@ -70,6 +70,7 @@ func Server(ctx *Context, opts serverconfig.CLIFlags) error {
 	if err := cfg.ValidateIngressCoherence(); err != nil {
 		return fmt.Errorf("configuration validation failed: %w", err)
 	}
+	cfg.WarnDeprecatedConfig(ctx.Log)
 
 	// Initialize Miren Labs feature flags
 	labs.Init(ctx.Log, cfg.Labs)

@@ -88,6 +88,7 @@ func DefaultTLSConfig() TLSConfig {
 		AdditionalIPs:   []string{},
 		AdditionalNames: []string{},
 		SelfSigned:      boolPtr(false),
+		StandardTLS:     nil,
 	}
 }
 

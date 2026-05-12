@@ -40,6 +40,7 @@ type CLIFlags struct {
 	TLSConfigAdditionalIPs               []string `long:"ips" description:"Additional IPs assigned to the server cert"`
 	TLSConfigAdditionalNames             []string `long:"dns-names" description:"Additional DNS names assigned to the server cert"`
 	TLSConfigSelfSigned                  *bool    `long:"self-signed-tls" description:"Use self-signed certificates for TLS (for development/testing only)"`
+	TLSConfigStandardTLS                 *bool    `long:"serve-tls" description:"Deprecated and ignored. Retained as a no-op so existing systemd unit files, env vars, and config files from pre-RFD-84 installs still parse. Use ingress.mode to pick the deployment shape." hidden:"yes"`
 	VictoriaLogsConfigAddress            *string  `long:"victorialogs-addr" description:"VictoriaLogs address (when not using embedded)"`
 	VictoriaLogsConfigHTTPPort           *int     `long:"victorialogs-http-port" description:"VictoriaLogs HTTP port in embedded mode"`
 	VictoriaLogsConfigRetentionPeriod    *string  `long:"victorialogs-retention" description:"VictoriaLogs retention period (e.g. 30d, 2w, 1y)"`

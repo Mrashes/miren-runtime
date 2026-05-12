@@ -425,6 +425,7 @@ type TLSConfig struct {
 	AdditionalIPs   []string `toml:"additional_ips" env:"MIREN_TLS_ADDITIONAL_IPS"`
 	AdditionalNames []string `toml:"additional_names" env:"MIREN_TLS_ADDITIONAL_NAMES"`
 	SelfSigned      *bool    `toml:"self_signed" env:"MIREN_TLS_SELF_SIGNED"`
+	StandardTLS     *bool    `toml:"standard_tls" env:"MIREN_TLS_STANDARD_TLS"`
 }
 
 // GetAcmeDNSProvider returns the value of AcmeDNSProvider or its zero value if nil
@@ -464,6 +465,19 @@ func (c *TLSConfig) GetSelfSigned() bool {
 // SetSelfSigned sets the value of SelfSigned
 func (c *TLSConfig) SetSelfSigned(v bool) {
 	c.SelfSigned = &v
+}
+
+// GetStandardTLS returns the value of StandardTLS or its zero value if nil
+func (c *TLSConfig) GetStandardTLS() bool {
+	if c.StandardTLS != nil {
+		return *c.StandardTLS
+	}
+	return false
+}
+
+// SetStandardTLS sets the value of StandardTLS
+func (c *TLSConfig) SetStandardTLS(v bool) {
+	c.StandardTLS = &v
 }
 
 // VictoriaLogsConfig VictoriaLogs configuration

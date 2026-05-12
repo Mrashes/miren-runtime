@@ -2,6 +2,7 @@ package serverconfig
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"strings"
 )
@@ -57,4 +58,17 @@ func (c *Config) ValidateIngressCoherence() error {
 	}
 
 	return nil
+}
+
+// WarnDeprecatedConfig logs warnings for any deprecated configuration fields
+// that have been explicitly set by the operator. Call after Load so the
+// warnings surface at startup. Currently only tls.standard_tls is treated this
+// way: it's retained as a no-op for backwards compatibility (existing systemd
+// unit files, env vars, and config files from pre-RFD-84 installs) but the
+// operator should migrate to ingress.mode.
+func (c *Config) WarnDeprecatedConfig(log *slog.Logger) {
+	if c.TLS.StandardTLS != nil {
+		log.Warn("tls.standard_tls (also --serve-tls / MIREN_TLS_STANDARD_TLS) is deprecated and ignored; use ingress.mode to pick the deployment shape. See RFD-84 at rfd.miren.garden/rfd/84.",
+			"value", *c.TLS.StandardTLS)
+	}
 }

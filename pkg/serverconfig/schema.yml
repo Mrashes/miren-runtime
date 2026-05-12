@@ -214,6 +214,15 @@ configs:
   TLSConfig:
     description: TLS certificate settings. Consulted only when ingress.mode is tls-autoprovision or behind-proxy-https.
     fields:
+      standard_tls:
+        type: bool
+        cli:
+          long: serve-tls
+          description: "Deprecated and ignored. Retained as a no-op so existing systemd unit files, env vars, and config files from pre-RFD-84 installs still parse. Use ingress.mode to pick the deployment shape."
+          hidden: true
+        env: MIREN_TLS_STANDARD_TLS
+        toml: standard_tls
+
       additional_names:
         type: "[]string"
         default: []

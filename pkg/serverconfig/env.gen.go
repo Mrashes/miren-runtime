@@ -384,6 +384,18 @@ func applyEnvironmentVariables(cfg *Config, log *slog.Logger) error {
 
 	}
 
+	// Apply MIREN_TLS_STANDARD_TLS
+	if val := os.Getenv("MIREN_TLS_STANDARD_TLS"); val != "" {
+
+		if b, err := strconv.ParseBool(val); err == nil {
+			cfg.TLS.StandardTLS = &b
+			log.Debug("applied env var", "key", "MIREN_TLS_STANDARD_TLS")
+		} else {
+			log.Warn("invalid MIREN_TLS_STANDARD_TLS value", "value", val, "error", err)
+		}
+
+	}
+
 	// Apply MIREN_VICTORIALOGS_ADDRESS
 	if val := os.Getenv("MIREN_VICTORIALOGS_ADDRESS"); val != "" {
 

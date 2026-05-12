@@ -286,6 +286,10 @@ func applyCLIFlags(cfg *Config, flags *CLIFlags) {
 		cfg.TLS.SelfSigned = flags.TLSConfigSelfSigned
 	}
 
+	if flags.TLSConfigStandardTLS != nil {
+		cfg.TLS.StandardTLS = flags.TLSConfigStandardTLS
+	}
+
 	if flags.VictoriaLogsConfigAddress != nil && *flags.VictoriaLogsConfigAddress != "" {
 		cfg.Victorialogs.Address = flags.VictoriaLogsConfigAddress
 	}
