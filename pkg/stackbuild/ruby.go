@@ -102,6 +102,10 @@ type RubyStack struct {
 	requiredEnvVars []EnvVarRequirement
 }
 
+func (s *RubyStack) BaseDistro() string {
+	return "debian"
+}
+
 func (s *RubyStack) Name() string {
 	return "ruby"
 }
@@ -221,6 +225,8 @@ func (s *RubyStack) GenerateLLB(dir string, opts BuildOptions) (*llb.State, erro
 
 	// My kingdom for a pipe operator.
 	base = h.aptInstall(base, "build-essential", "libpq-dev", "nodejs", "libyaml-dev", "postgresql-client", "git", "curl", "ssh")
+
+	base = h.applyAugmentations(base, localCtx, s.BaseDistro(), s.Augmentations(), s.SkipJSInstall())
 
 	base = base.
 		AddEnv("SECRET_KEY_BASE_DUMMY", "1").

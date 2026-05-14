@@ -69,6 +69,10 @@ type Stack interface {
 
 	// RequiredEnvVars returns environment variables detected as required/recommended
 	RequiredEnvVars() []EnvVarRequirement
+
+	// BaseDistro returns the package manager family of the stack's base image
+	// ("debian" or "alpine"). Used to dispatch apt vs apk for augmentations.
+	BaseDistro() string
 }
 
 // DetectStack identifies the programming stack in the given directory
@@ -87,6 +91,7 @@ func DetectStack(dir string, opts BuildOptions) (Stack, error) {
 	for _, stack := range stacks {
 		if stack.Detect() {
 			stack.Init(opts)
+			attachAugmentations(stack, dir)
 			return stack, nil
 		}
 	}
@@ -94,11 +99,58 @@ func DetectStack(dir string, opts BuildOptions) (Stack, error) {
 	return nil, fmt.Errorf("no supported stack detected in %s", dir)
 }
 
+// attachAugmentations detects and records augmentations for the given primary
+// stack so that Events() reports them and GenerateLLB() can apply them.
+func attachAugmentations(stack Stack, dir string) {
+	augs, skipInstall, events := DetectAugmentations(dir, stack.Name())
+	if ms, ok := metaStackOf(stack); ok {
+		ms.augmentations = augs
+		ms.skipJSInstall = skipInstall
+		ms.events = append(ms.events, events...)
+	}
+}
+
+// metaStackOf returns the embedded *MetaStack from a Stack implementation.
+// All concrete stacks in this package embed MetaStack, so this should always
+// succeed for stacks created by DetectStack.
+func metaStackOf(stack Stack) (*MetaStack, bool) {
+	switch s := stack.(type) {
+	case *RubyStack:
+		return &s.MetaStack, true
+	case *PythonStack:
+		return &s.MetaStack, true
+	case *NodeStack:
+		return &s.MetaStack, true
+	case *BunStack:
+		return &s.MetaStack, true
+	case *GoStack:
+		return &s.MetaStack, true
+	case *RustStack:
+		return &s.MetaStack, true
+	}
+	return nil, false
+}
+
 // MetaStack provides shared functionality for all stack implementations
 type MetaStack struct {
-	dir    string
-	result ocispecs.Image
-	events []DetectionEvent
+	dir           string
+	result        ocispecs.Image
+	events        []DetectionEvent
+	augmentations []Augmentation
+	skipJSInstall bool
+}
+
+// Augmentations returns the secondary tooling layers (npm, bun, ...) attached
+// to this stack by DetectStack.
+func (s *MetaStack) Augmentations() []Augmentation {
+	return s.augmentations
+}
+
+// SkipJSInstall reports whether the app already ships a node_modules directory,
+// in which case the JS package install (npm install / bun install) should be
+// skipped — the tool itself is still installed so onBuild commands can use it.
+func (s *MetaStack) SkipJSInstall() bool {
+	return s.skipJSInstall
 }
 
 func (s *MetaStack) Init(opts BuildOptions) {
