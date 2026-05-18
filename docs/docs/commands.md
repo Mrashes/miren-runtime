@@ -29,7 +29,7 @@ Complete reference for all `miren` CLI commands.
 
 | Command | Description |
 |---------|-------------|
-| [`miren alias`](/command/alias) |  |
+| [`miren alias`](/command/alias) | CLI alias management |
 | [`miren alias list`](/command/alias-list) | List configured CLI aliases |
 
 ## app
@@ -98,7 +98,7 @@ Complete reference for all `miren` CLI commands.
 
 | Command | Description |
 |---------|-------------|
-| [`miren disk`](/command/disk) |  |
+| [`miren disk`](/command/disk) | Disk backup and recovery |
 | [`miren disk backup`](/command/disk-backup) | Backup a disk to a snapshot file |
 | [`miren disk list-deleted`](/command/disk-list-deleted) | List deleted disks available for recovery |
 | [`miren disk restore`](/command/disk-restore) | Restore a disk from a snapshot file |
@@ -135,7 +135,6 @@ Complete reference for all `miren` CLI commands.
 | Command | Description |
 |---------|-------------|
 | [`miren help`](/command/help) | Show help for one or more commands |
-| [`miren help alias`](/command/help-alias) | Learn how to define and use CLI aliases |
 
 ## init
 
@@ -184,6 +183,7 @@ Complete reference for all `miren` CLI commands.
 | [`miren route show`](/command/route-show) | Show details of an HTTP route |
 | [`miren route unprotect`](/command/route-unprotect) | Remove identity-provider protection from an HTTP route _(`routeoidc`)_ |
 | [`miren route unset-default`](/command/route-unset-default) | Remove the default route |
+| [`miren route waf`](/command/route-waf) | Manage WAF protection on an HTTP route |
 
 ## runner
 
@@ -272,6 +272,7 @@ These commands are intended for advanced debugging and troubleshooting. They may
 | Command | Description |
 |---------|-------------|
 | [`miren debug`](/command/debug) | Debug and troubleshooting commands |
+| [`miren debug advertise`](/command/debug-advertise) | Show which addresses the server would advertise and why |
 | [`miren debug bundle`](/command/debug-bundle) | Create a support bundle with system debug information |
 | [`miren debug colors`](/command/debug-colors) | Print some colors |
 | [`miren debug connection`](/command/debug-connection) | Test connectivity and authentication with a server |
