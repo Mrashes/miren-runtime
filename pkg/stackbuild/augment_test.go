@@ -81,7 +81,19 @@ func TestDetectAugmentations_BunFromLock(t *testing.T) {
 	})
 
 	augs, _, _ := DetectAugmentations(dir, "ruby")
-	require.Equal(t, []Augmentation{AugNpm, AugBun}, augs)
+	require.Equal(t, []Augmentation{AugBun}, augs, "bun owns install when bun.lock is present; npm should not also run")
+}
+
+func TestDetectAugmentations_BunWinsOverPackageLock(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"package.json":      `{"name":"frontend"}`,
+		"package-lock.json": `{}`,
+		"bun.lockb":         ``,
+	})
+
+	augs, _, _ := DetectAugmentations(dir, "ruby")
+	require.Equal(t, []Augmentation{AugBun}, augs, "bun should win even when package-lock.json is present")
 }
 
 func TestDetectAugmentations_BunFromLockb(t *testing.T) {

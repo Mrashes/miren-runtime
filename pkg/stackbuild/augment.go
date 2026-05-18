@@ -42,8 +42,13 @@ func DetectAugmentations(dir, primaryStack string) (augs []Augmentation, skipIns
 		return nil, false, nil
 	}
 
+	hasBunLock := hasRegularFile(dir, "bun.lock") || hasRegularFile(dir, "bun.lockb")
+
 	if hasRegularFile(dir, "package.json") {
 		switch {
+		case hasBunLock:
+			// Bun owns the install path below; don't also run npm install on
+			// a bun-managed manifest.
 		case hasRegularFile(dir, "yarn.lock"):
 			augs = append(augs, AugYarn)
 			events = append(events, DetectionEvent{
@@ -68,7 +73,7 @@ func DetectAugmentations(dir, primaryStack string) (augs []Augmentation, skipIns
 		}
 	}
 
-	if hasRegularFile(dir, "bun.lock") || hasRegularFile(dir, "bun.lockb") {
+	if hasBunLock {
 		augs = append(augs, AugBun)
 		events = append(events, DetectionEvent{
 			Kind:    "augmentation",
@@ -215,8 +220,16 @@ func (h *highlevelBuilder) runNpmInstall(cur, mnt llb.State) llb.State {
 func (h *highlevelBuilder) runYarnInstall(cur, mnt llb.State) llb.State {
 	cur = h.ensureAppDir(cur)
 
+	// Yarn Berry projects pin a yarn release via `yarnPath` in .yarnrc.yml,
+	// and yarnPath takes precedence over corepack. Include .yarn/releases,
+	// plugins, and patches so pinned binaries / plugins / patches are
+	// present during install.
 	cur = cur.File(llb.Copy(mnt, "/", "/app", &llb.CopyInfo{
-		IncludePatterns:    []string{"package.json", "yarn.lock", ".yarnrc", ".yarnrc.yml"},
+		IncludePatterns: []string{
+			"package.json", "yarn.lock",
+			".yarnrc", ".yarnrc.yml",
+			".yarn/releases/**", ".yarn/plugins/**", ".yarn/patches/**",
+		},
 		CreateDestPath:     true,
 		AllowWildcard:      true,
 		AllowEmptyWildcard: true,
