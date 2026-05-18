@@ -6,7 +6,6 @@ import (
 
 	"miren.dev/runtime/api/ingress"
 	"miren.dev/runtime/api/ingress/ingress_v1alpha"
-	"miren.dev/runtime/pkg/labs"
 	"miren.dev/runtime/pkg/ui"
 )
 
@@ -19,9 +18,6 @@ func AuthProviderAdd(ctx *Context, opts struct {
 	Update       bool     `long:"update" description:"Overwrite an existing provider with the same name (rotates client secret)"`
 	ConfigCentric
 }) error {
-	if !labs.RouteOIDC() {
-		return fmt.Errorf("route protection is disabled. Enable with MIREN_LABS=routeoidc")
-	}
 
 	if opts.Name == "" {
 		return fmt.Errorf("provider name is required")
@@ -92,9 +88,6 @@ func AuthProviderList(ctx *Context, opts struct {
 	FormatOptions
 	ConfigCentric
 }) error {
-	if !labs.RouteOIDC() {
-		return fmt.Errorf("route protection is disabled. Enable with MIREN_LABS=routeoidc")
-	}
 
 	client, err := ctx.RPCClient("entities")
 	if err != nil {
@@ -155,9 +148,6 @@ func AuthProviderShow(ctx *Context, opts struct {
 	FormatOptions
 	ConfigCentric
 }) error {
-	if !labs.RouteOIDC() {
-		return fmt.Errorf("route protection is disabled. Enable with MIREN_LABS=routeoidc")
-	}
 
 	if opts.Name == "" {
 		return fmt.Errorf("provider name is required")
@@ -211,9 +201,6 @@ func AuthProviderRemove(ctx *Context, opts struct {
 	Force bool   `long:"force" description:"Remove the provider even if it is attached to routes"`
 	ConfigCentric
 }) error {
-	if !labs.RouteOIDC() {
-		return fmt.Errorf("route protection is disabled. Enable with MIREN_LABS=routeoidc")
-	}
 
 	if opts.Name == "" {
 		return fmt.Errorf("provider name is required")

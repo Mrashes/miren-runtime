@@ -515,6 +515,23 @@ miren deploy --analyze
 		}),
 	))
 
+	d.Dispatch("route protect", Infer("route protect", "Protect an HTTP route with an identity provider", RouteProtect,
+		WithExample(mflags.Example{
+			Name: "Protect a route with an identity provider",
+			Body: "miren route protect example.com --provider my-google-oidc --claim-header email:X-User-Email",
+		}),
+		WithExample(mflags.Example{
+			Name: "Protect the default route",
+			Body: "miren route protect --default --provider my-google-oidc",
+		}),
+	))
+	d.Dispatch("route unprotect", Infer("route unprotect", "Remove identity-provider protection from an HTTP route", RouteUnprotect,
+		WithExample(mflags.Example{
+			Name: "Remove protection from a route",
+			Body: "miren route unprotect example.com",
+		}),
+	))
+
 	d.Dispatch("route waf", Infer("route waf", "Manage WAF protection on an HTTP route", RouteWaf,
 		WithExample(mflags.Example{
 			Name: "Enable WAF on a route with default paranoia level",
@@ -534,26 +551,22 @@ miren deploy --analyze
 		}),
 	))
 
-	if labs.RouteOIDC() {
-		d.Dispatch("route protect", Infer("route protect", "Protect an HTTP route with an identity provider", RouteProtect,
-			WithLabsFeature(labs.FeatureRouteOIDC),
-			WithExample(mflags.Example{
-				Name: "Protect a route with an identity provider",
-				Body: "miren route protect example.com --provider my-google-oidc --claim-header email:X-User-Email",
-			}),
-			WithExample(mflags.Example{
-				Name: "Protect the default route",
-				Body: "miren route protect --default --provider my-google-oidc",
-			}),
-		))
-		d.Dispatch("route unprotect", Infer("route unprotect", "Remove identity-provider protection from an HTTP route", RouteUnprotect,
-			WithLabsFeature(labs.FeatureRouteOIDC),
-			WithExample(mflags.Example{
-				Name: "Remove protection from a route",
-				Body: "miren route unprotect example.com",
-			}),
-		))
-	}
+	d.Dispatch("route protect", Infer("route protect", "Protect an HTTP route with an identity provider", RouteProtect,
+		WithExample(mflags.Example{
+			Name: "Protect a route with an identity provider",
+			Body: "miren route protect example.com --provider my-google-oidc --claim-header email:X-User-Email",
+		}),
+		WithExample(mflags.Example{
+			Name: "Protect the default route",
+			Body: "miren route protect --default --provider my-google-oidc",
+		}),
+	))
+	d.Dispatch("route unprotect", Infer("route unprotect", "Remove identity-provider protection from an HTTP route", RouteUnprotect,
+		WithExample(mflags.Example{
+			Name: "Remove protection from a route",
+			Body: "miren route unprotect example.com",
+		}),
+	))
 
 	// Config commands
 	d.Dispatch("config", Section("config", "Configuration file management", "", WithSectionGroup(GroupClient)))
@@ -884,29 +897,20 @@ miren deploy --analyze
 	d.Dispatch("auth ci list", Infer("auth ci list", "List CI authentication bindings for an application", AuthCIList))
 	d.Dispatch("auth ci remove", Infer("auth ci remove", "Remove a CI authentication binding", AuthCIRemove))
 
-	if labs.RouteOIDC() {
-		d.Dispatch("auth provider", Section("auth provider", "Identity provider management", ""))
-		d.Dispatch("auth provider add", Infer("auth provider add", "Add an identity provider for route protection", AuthProviderAdd,
-			WithLabsFeature(labs.FeatureRouteOIDC),
-			WithExample(mflags.Example{
-				Name: "Add a Google OIDC provider",
-				Body: `miren auth provider add my-google \
+	d.Dispatch("auth provider", Section("auth provider", "Identity provider management", ""))
+	d.Dispatch("auth provider add", Infer("auth provider add", "Add an identity provider for route protection", AuthProviderAdd,
+		WithExample(mflags.Example{
+			Name: "Add a Google OIDC provider",
+			Body: `miren auth provider add my-google \
   --provider-url https://accounts.google.com \
   --client-id $CLIENT_ID \
   --client-secret $CLIENT_SECRET \
   --scope email --scope profile`,
-			}),
-		))
-		d.Dispatch("auth provider list", Infer("auth provider list", "List identity providers", AuthProviderList,
-			WithLabsFeature(labs.FeatureRouteOIDC),
-		))
-		d.Dispatch("auth provider show", Infer("auth provider show", "Show an identity provider", AuthProviderShow,
-			WithLabsFeature(labs.FeatureRouteOIDC),
-		))
-		d.Dispatch("auth provider remove", Infer("auth provider remove", "Remove an identity provider", AuthProviderRemove,
-			WithLabsFeature(labs.FeatureRouteOIDC),
-		))
-	}
+		}),
+	))
+	d.Dispatch("auth provider list", Infer("auth provider list", "List identity providers", AuthProviderList))
+	d.Dispatch("auth provider show", Infer("auth provider show", "Show an identity provider", AuthProviderShow))
+	d.Dispatch("auth provider remove", Infer("auth provider remove", "Remove an identity provider", AuthProviderRemove))
 
 	// Admin commands
 	d.Dispatch("admin", Infer("admin", "Call an admin method on an application", Admin,

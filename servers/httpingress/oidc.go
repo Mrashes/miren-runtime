@@ -13,7 +13,6 @@ import (
 
 	"miren.dev/runtime/api/ingress/ingress_v1alpha"
 	"miren.dev/runtime/pkg/entity"
-	"miren.dev/runtime/pkg/labs"
 	"miren.dev/runtime/pkg/oidc"
 )
 
@@ -390,10 +389,6 @@ func (s *Server) getOrCreateOIDCHandler(ctx context.Context, route *ingress_v1al
 
 // oidcMiddleware wraps the request handling with OIDC authentication
 func (s *Server) oidcMiddleware(route *ingress_v1alpha.HttpRoute, next http.HandlerFunc) http.HandlerFunc {
-	if !labs.RouteOIDC() {
-		return next
-	}
-
 	if entity.Empty(route.OidcProvider) {
 		return next
 	}

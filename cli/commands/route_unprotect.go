@@ -6,7 +6,6 @@ import (
 	"miren.dev/runtime/api/ingress"
 	"miren.dev/runtime/api/ingress/ingress_v1alpha"
 	"miren.dev/runtime/pkg/entity"
-	"miren.dev/runtime/pkg/labs"
 )
 
 func RouteUnprotect(ctx *Context, opts struct {
@@ -14,10 +13,6 @@ func RouteUnprotect(ctx *Context, opts struct {
 	Default bool   `long:"default" description:"Remove protection from the default route (instead of a hostname)"`
 	ConfigCentric
 }) error {
-	if !labs.RouteOIDC() {
-		return fmt.Errorf("route protection is disabled. Enable with MIREN_LABS=routeoidc")
-	}
-
 	if opts.Host == "" && !opts.Default {
 		return fmt.Errorf("either a hostname or --default must be specified")
 	}
