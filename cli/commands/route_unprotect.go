@@ -51,12 +51,12 @@ func RouteUnprotect(ctx *Context, opts struct {
 		routeLabel = opts.Host
 	}
 
-	if entity.Empty(route.OidcProvider) {
+	if entity.Empty(route.AuthProvider) {
 		ctx.Printf("Route is not protected: %s\n", routeLabel)
 		return nil
 	}
 
-	_, err = ic.DetachOIDCProviderFromRoute(ctx, route)
+	_, err = ic.DetachAuthProviderFromRoute(ctx, route)
 	if err != nil {
 		return fmt.Errorf("failed to remove route protection: %w", err)
 	}

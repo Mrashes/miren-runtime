@@ -348,72 +348,119 @@ func (c *Client) DeleteOIDCProvider(ctx context.Context, name string) error {
 	return nil
 }
 
-// AttachOIDCProvider associates an OIDC provider with a route and sets claim mappings
-func (c *Client) AttachOIDCProvider(ctx context.Context, host string, providerName string, claimMappings []ingress_v1alpha.ClaimMappings) (*ingress_v1alpha.HttpRoute, error) {
-	route, err := c.Lookup(ctx, host)
-	if err != nil {
-		return nil, err
-	}
-
-	if route == nil {
-		return nil, fmt.Errorf("route not found: %s", host)
-	}
-
-	return c.AttachOIDCProviderToRoute(ctx, route, providerName, claimMappings)
+// AttachAuthProviderToRoute associates an auth provider with an already-resolved route.
+// The providerID should be the entity ID of either an OIDC or password provider.
+func (c *Client) AttachAuthProviderToRoute(ctx context.Context, route *ingress_v1alpha.HttpRoute, providerID entity.Id, claimMappings []ingress_v1alpha.ClaimMappings) (*ingress_v1alpha.HttpRoute, error) {
+	return c.mutateAndReplaceRoute(ctx, route.EntityId(), func(r *ingress_v1alpha.HttpRoute) {
+		r.AuthProvider = providerID
+		r.ClaimMappings = claimMappings
+	})
 }
 
-// AttachOIDCProviderToRoute associates an OIDC provider with an already-resolved route
-func (c *Client) AttachOIDCProviderToRoute(ctx context.Context, route *ingress_v1alpha.HttpRoute, providerName string, claimMappings []ingress_v1alpha.ClaimMappings) (*ingress_v1alpha.HttpRoute, error) {
-	// Look up provider
-	provider, err := c.GetOIDCProvider(ctx, providerName)
+// DetachAuthProviderFromRoute removes auth provider association from a route
+func (c *Client) DetachAuthProviderFromRoute(ctx context.Context, route *ingress_v1alpha.HttpRoute) (*ingress_v1alpha.HttpRoute, error) {
+	return c.mutateAndReplaceRoute(ctx, route.EntityId(), func(r *ingress_v1alpha.HttpRoute) {
+		r.AuthProvider = ""
+		r.ClaimMappings = nil
+	})
+}
+
+// mutateAndReplaceRoute performs a read-modify-write on a route entity.
+// It fetches the latest version from the store, applies the mutate function,
+// and replaces the entity at the current revision. This avoids overwriting
+// concurrent changes that a stale route instance would miss.
+func (c *Client) mutateAndReplaceRoute(ctx context.Context, routeID entity.Id, mutate func(*ingress_v1alpha.HttpRoute)) (*ingress_v1alpha.HttpRoute, error) {
+	gr, err := c.eac.Get(ctx, string(routeID))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get route entity for replace: %w", err)
+	}
+
+	var route ingress_v1alpha.HttpRoute
+	route.Decode(gr.Entity().Entity())
+
+	mutate(&route)
+
+	attrs := entity.New(
+		route.Encode,
+		entity.DBId, routeID,
+	).Attrs()
+
+	_, err = c.eac.Replace(ctx, attrs, gr.Entity().Revision())
+	if err != nil {
+		return nil, fmt.Errorf("failed to replace route entity: %w", err)
+	}
+
+	return &route, nil
+}
+
+// CreateOrUpdatePasswordProvider creates or updates a password provider
+func (c *Client) CreateOrUpdatePasswordProvider(ctx context.Context, provider *ingress_v1alpha.PasswordProvider) (*ingress_v1alpha.PasswordProvider, error) {
+	if provider.Name == "" {
+		return nil, fmt.Errorf("provider name is required")
+	}
+
+	_, err := c.ec.CreateOrUpdate(ctx, provider.Name, provider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create/update password provider: %w", err)
+	}
+
+	return provider, nil
+}
+
+// GetPasswordProvider looks up a password provider by name
+func (c *Client) GetPasswordProvider(ctx context.Context, name string) (*ingress_v1alpha.PasswordProvider, error) {
+	ia := entity.String(ingress_v1alpha.PasswordProviderNameId, name)
+
+	var provider ingress_v1alpha.PasswordProvider
+	err := c.ec.OneAtIndex(ctx, ia, &provider)
+	if err != nil {
+		if errors.Is(err, cond.ErrNotFound{}) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to lookup password provider %s: %w", name, err)
+	}
+
+	return &provider, nil
+}
+
+// ListPasswordProviders returns all password providers
+func (c *Client) ListPasswordProviders(ctx context.Context) ([]*ingress_v1alpha.PasswordProvider, error) {
+	kindRes, err := c.eac.LookupKind(ctx, "password_provider")
+	if err != nil {
+		return nil, fmt.Errorf("failed to lookup password_provider kind: %w", err)
+	}
+
+	res, err := c.eac.List(ctx, kindRes.Attr())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list password providers: %w", err)
+	}
+
+	var providers []*ingress_v1alpha.PasswordProvider
+	for _, e := range res.Values() {
+		var provider ingress_v1alpha.PasswordProvider
+		provider.Decode(e.Entity())
+		providers = append(providers, &provider)
+	}
+
+	return providers, nil
+}
+
+// DeletePasswordProvider deletes a password provider by name
+func (c *Client) DeletePasswordProvider(ctx context.Context, name string) error {
+	provider, err := c.GetPasswordProvider(ctx, name)
+	if err != nil {
+		return err
 	}
 
 	if provider == nil {
-		return nil, fmt.Errorf("OIDC provider not found: %s", providerName)
+		return fmt.Errorf("password provider not found: %s", name)
 	}
 
-	// Update route with provider reference and claim mappings
-	route.OidcProvider = provider.ID
-	route.ClaimMappings = claimMappings
-
-	// Update the route
-	err = c.ec.Update(ctx, route)
-	if err != nil {
-		return nil, fmt.Errorf("failed to attach OIDC provider to route: %w", err)
+	if err := c.ec.Delete(ctx, provider.ID); err != nil {
+		return fmt.Errorf("failed to delete password provider: %w", err)
 	}
 
-	return route, nil
-}
-
-// DetachOIDCProvider removes OIDC provider association from a route
-func (c *Client) DetachOIDCProvider(ctx context.Context, host string) (*ingress_v1alpha.HttpRoute, error) {
-	route, err := c.Lookup(ctx, host)
-	if err != nil {
-		return nil, err
-	}
-
-	if route == nil {
-		return nil, fmt.Errorf("route not found: %s", host)
-	}
-
-	return c.DetachOIDCProviderFromRoute(ctx, route)
-}
-
-// DetachOIDCProviderFromRoute removes OIDC provider association from an already-resolved route
-func (c *Client) DetachOIDCProviderFromRoute(ctx context.Context, route *ingress_v1alpha.HttpRoute) (*ingress_v1alpha.HttpRoute, error) {
-	// Clear provider reference and claim mappings
-	route.OidcProvider = ""
-	route.ClaimMappings = nil
-
-	// Update the route
-	err := c.ec.Update(ctx, route)
-	if err != nil {
-		return nil, fmt.Errorf("failed to detach OIDC provider from route: %w", err)
-	}
-
-	return route, nil
+	return nil
 }
 
 func (c *Client) CreateWAFProfile(ctx context.Context, level int) (*ingress_v1alpha.WafProfile, error) {

@@ -100,6 +100,9 @@ type Server struct {
 	wafEngine       *waf.Engine
 	wafProfileMu    sync.RWMutex
 	wafProfileCache map[entity.Id]*wafProfileEntry
+
+	passwordMu       sync.RWMutex
+	passwordHandlers map[string]*passwordHandler
 }
 
 type appUsage struct {
@@ -162,6 +165,7 @@ func NewServer(
 		oidcHandlers:       make(map[string]*oidcHandler),
 		wafEngine:          waf.NewEngine(log.With("component", "waf")),
 		wafProfileCache:    make(map[entity.Id]*wafProfileEntry),
+		passwordHandlers:   make(map[string]*passwordHandler),
 	}
 
 	if httpMetrics == nil {
@@ -543,14 +547,12 @@ func (h *Server) serveHTTPWithMetrics(w http.ResponseWriter, req *http.Request, 
 		h.Log.Debug("using default route", "host", onlyHost, "app", targetAppId)
 	}
 
-	// Compose middleware chain: WAF → OIDC → serve
+	// Compose middleware chain: WAF → auth → serve
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		h.serveAuthenticatedRequest(w, r, targetAppId, routeType, ephemeralLabel, appName)
 	}
 
-	if !entity.Empty(route.OidcProvider) {
-		handler = h.oidcMiddleware(route, handler)
-	}
+	handler = h.authMiddleware(route, handler)
 
 	handler = h.wafMiddleware(route, handler)
 
@@ -582,6 +584,33 @@ func (h *Server) lookupEphemeralRoute(ctx context.Context, host string) (string,
 	}
 
 	return label, route, nil
+}
+
+func (h *Server) authMiddleware(route *ingress_v1alpha.HttpRoute, next http.HandlerFunc) http.HandlerFunc {
+	if entity.Empty(route.AuthProvider) {
+		return next
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		resp, err := h.eac.Get(r.Context(), string(route.AuthProvider))
+		if err != nil {
+			h.Log.Error("failed to get auth provider entity", "error", err, "provider", route.AuthProvider)
+			http.Error(w, "Authentication service unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
+		ent := resp.Entity().Entity()
+
+		switch {
+		case entity.Is(ent, ingress_v1alpha.KindOidcProvider):
+			h.oidcMiddleware(route, ent, next)(w, r)
+		case entity.Is(ent, ingress_v1alpha.KindPasswordProvider):
+			h.passwordMiddleware(route, ent, next)(w, r)
+		default:
+			h.Log.Error("unknown auth provider kind", "provider", route.AuthProvider)
+			http.Error(w, "Authentication service unavailable", http.StatusServiceUnavailable)
+		}
+	}
 }
 
 // serveAuthenticatedRequest handles the request after authentication (if any)
@@ -1168,11 +1197,8 @@ func (h *Server) AcquireTunnel(ctx context.Context, hostname, path string) (*Tun
 	if route != nil {
 		targetAppId = route.App
 
-		// Reject tunnels to apps that require OIDC authentication.
-		// OIDC auth flows require browser redirects which can't work
-		// over a tunneled WebSocket connection.
-		if !entity.Empty(route.OidcProvider) {
-			return nil, fmt.Errorf("tunneling not supported for OIDC-protected routes (host: %s)", onlyHost)
+		if !entity.Empty(route.AuthProvider) {
+			return nil, fmt.Errorf("tunneling not supported for auth-protected routes (host: %s)", onlyHost)
 		}
 	} else {
 		defaultRoute, err := h.ingressClient.LookupDefault(ctx)
@@ -1182,8 +1208,8 @@ func (h *Server) AcquireTunnel(ctx context.Context, hostname, path string) (*Tun
 		if defaultRoute == nil {
 			return nil, fmt.Errorf("no route found for %s", onlyHost)
 		}
-		if !entity.Empty(defaultRoute.OidcProvider) {
-			return nil, fmt.Errorf("tunneling not supported for OIDC-protected routes (host: %s)", onlyHost)
+		if !entity.Empty(defaultRoute.AuthProvider) {
+			return nil, fmt.Errorf("tunneling not supported for auth-protected routes (host: %s)", onlyHost)
 		}
 		targetAppId = defaultRoute.App
 	}
