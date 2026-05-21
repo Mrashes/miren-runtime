@@ -200,7 +200,7 @@ func RouteShow(ctx *Context, opts struct {
 			ctx.Printf("  Provider:  <missing — provider has been deleted>\n")
 		}
 
-		if oidcProvider != nil && len(route.ClaimMappings) > 0 {
+		if len(route.ClaimMappings) > 0 {
 			var rows []ui.Row
 			for _, m := range route.ClaimMappings {
 				rows = append(rows, ui.Row{m.Claim, m.Header})
