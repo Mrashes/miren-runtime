@@ -188,10 +188,7 @@ func (h *connectorHandler) handleCallback(w http.ResponseWriter, r *http.Request
 	h.sessionManager.ClearState(w)
 	h.sessionManager.ClearNamedCookie(w, connDataCookieName)
 
-	returnPath := state.ReturnPath
-	if returnPath == "" {
-		returnPath = "/"
-	}
+	returnPath := safeReturnPath(state.ReturnPath)
 
 	h.logger.Info("connector authentication successful", "user_id", identity.UserID, "return_path", returnPath)
 	http.Redirect(w, r, returnPath, http.StatusFound)
