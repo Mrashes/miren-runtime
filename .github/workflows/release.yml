@@ -627,6 +627,7 @@ jobs:
           private-key: ${{ secrets.HOMEBREW_TAP_APP_KEY }}
           owner: mirendev
           repositories: homebrew-tap
+          permission-actions: write
 
       - name: Trigger homebrew-tap update
         env:
