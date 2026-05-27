@@ -8,7 +8,7 @@ import CliCommand from '@site/src/components/CliCommand';
 
 # Pull Request Environments
 
-A pull request environment is a labeled build of your app — called an **ephemeral version** in Miren — that runs alongside the active version on its own subdomain. It runs separetely from your normal deploys and is deleted automatically when its TTL expires. The typical use is one preview per PR, reachable at something like `pr-123.myapp.example.com`.
+A pull request environment is a labeled build of your app — called an **ephemeral version** in Miren — that runs alongside the active version on its own subdomain. It runs separately from your normal deploys and is deleted automatically when its TTL expires. The typical use is one preview per PR, reachable at something like `pr-123.myapp.example.com`.
 
 ## How It Works
 
@@ -101,7 +101,7 @@ The preview is reachable at `pr-123.staging.myapp.example.com`, isolated from pr
 
 In CI, set `MIREN_APP=myapp-staging` (or pass `app: myapp-staging` to the deploy action) so PR workflows always target staging.
 
-#### Using a Staging Cluster
+### Using a Staging Cluster
 
 Another pattern is to setup a separate staging cluster that you deploy the PRs to, rather than your production cluster. This lets you isolate the preview even more.
 
