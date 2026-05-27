@@ -193,23 +193,25 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Deploy preview
+        id: deploy
         uses: mirendev/actions/deploy@main
         with:
           cluster: ${{ secrets.MIREN_CLUSTER }}
           app: myapp-staging
-          args: --ephemeral pr-${{ github.event.pull_request.number }} --ttl 48h
+          ephemeral: pr-${{ github.event.pull_request.number }}
+          ttl: 48h
 ```
 
 Each push replaces the previous preview at the same label. When the PR is merged or closed, the version expires on its own — no teardown step needed.
 
-The preview URL follows the pattern `pr-<number>.staging.<your-host>`, so a follow-up step can post it as a PR comment:
+The deploy action exposes the preview URL as a step output, so a follow-up step can post it as a PR comment:
 
 ```yaml
       - name: Comment preview URL
         uses: actions/github-script@v7
         with:
           script: |
-            const url = `https://pr-${context.issue.number}.staging.myapp.example.com`;
+            const url = '${{ steps.deploy.outputs.url }}';
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
