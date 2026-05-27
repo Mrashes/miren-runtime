@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -444,7 +445,10 @@ func Deploy(ctx *Context, opts struct {
 		ctx.Printf("  Setting %d environment variable(s)...\n", len(envVars))
 	}
 
-	// Initialize build error/log/warning tracking
+	// Initialize build error/log/warning tracking. buildStateMu guards the
+	// three slices below; the build status callback appends to them from
+	// RPC stream-handler goroutines, and updateDeploymentOnError reads them.
+	var buildStateMu sync.Mutex
 	var buildErrors []string
 	var buildLogs []string
 	var deployWarnings []*build_v1alpha.LogEntry
@@ -459,6 +463,15 @@ func Deploy(ctx *Context, opts struct {
 		}
 	}
 
+	// snapshotBuildState returns copies of the build state slices under the
+	// mutex so readers don't race with append in createBuildStatusCallback's
+	// stream-handler goroutines.
+	snapshotBuildState := func() ([]string, []string, []*build_v1alpha.LogEntry) {
+		buildStateMu.Lock()
+		defer buildStateMu.Unlock()
+		return slices.Clone(buildErrors), slices.Clone(buildLogs), slices.Clone(deployWarnings)
+	}
+
 	// Helper function to update deployment status on failure
 	updateDeploymentOnError := func(errMsg string) {
 		if deploymentId != "" {
@@ -467,10 +480,10 @@ func Deploy(ctx *Context, opts struct {
 			statusCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
-			// Collect build logs if available
-			logs := strings.Join(buildLogs, "\n")
-			if logs == "" && len(buildErrors) > 0 {
-				logs = strings.Join(buildErrors, "\n")
+			errsSnap, logsSnap, _ := snapshotBuildState()
+			logs := strings.Join(logsSnap, "\n")
+			if logs == "" && len(errsSnap) > 0 {
+				logs = strings.Join(errsSnap, "\n")
 			}
 
 			_, updateErr := depClient.UpdateFailedDeployment(statusCtx, deploymentId, errMsg, logs)
@@ -483,6 +496,21 @@ func Deploy(ctx *Context, opts struct {
 			}
 		}
 	}
+
+	// If the deploy panics during the build phase (e.g. a stream-callback
+	// race), mark the deployment failed so the server-side lock is released
+	// immediately instead of waiting for its 30-minute TTL. Once the
+	// deployment has been marked active, we no longer want to flip it back to
+	// failed on panic — the build succeeded and traffic is already moving.
+	var deploymentFinalized bool
+	defer func() {
+		if r := recover(); r != nil {
+			if !deploymentFinalized {
+				updateDeploymentOnError(fmt.Sprintf("CLI panic: %v", r))
+			}
+			panic(r)
+		}
+	}()
 
 	// Load AppConfig to get include patterns
 	var includePatterns []string
@@ -627,6 +655,8 @@ func Deploy(ctx *Context, opts struct {
 		if err != nil {
 			return err
 		}
+		safeStatus := newSafeStatusCh(pw.Status())
+		defer safeStatus.Close()
 
 		// Add upload progress tracking in explain mode
 		uploadStartTime := time.Now()
@@ -675,16 +705,10 @@ func Deploy(ctx *Context, opts struct {
 				uploadBytes = 0 // Only print once
 			}
 
-			select {
-			case <-buildCtx.Done():
-				return buildCtx.Err()
-			case pw.Status() <- status:
-				// ok
-			}
-			return nil
+			return safeStatus.Send(buildCtx, status)
 		}
 
-		cb = createBuildStatusCallback(buildCtx, nil, nil, &buildErrors, nil, &deployWarnings, progressHandler)
+		cb = createBuildStatusCallback(buildCtx, nil, nil, &buildStateMu, &buildErrors, nil, &deployWarnings, progressHandler)
 
 		results, err = buildCall(buildCtx, r, cb)
 		if err != nil {
@@ -713,12 +737,13 @@ func Deploy(ctx *Context, opts struct {
 			}
 
 			ctx.Printf("\n\nBuild failed with the following errors:\n")
-			printBuildErrors(ctx, buildErrors, nil)
+			errsSnap, _, _ := snapshotBuildState()
+			printBuildErrors(ctx, errsSnap, nil)
 			updateDeploymentOnError(fmt.Sprintf("Build failed: %v", err))
 			return err
 		}
 
-		close(pw.Status())
+		safeStatus.Close()
 		<-pw.Done()
 
 		if pw.Err() != nil {
@@ -778,7 +803,7 @@ func Deploy(ctx *Context, opts struct {
 			return nil
 		}
 
-		cb = createBuildStatusCallback(deployCtx, updateCh, buildCh, &buildErrors, &buildLogs, &deployWarnings, progressHandler)
+		cb = createBuildStatusCallback(deployCtx, updateCh, buildCh, &buildStateMu, &buildErrors, &buildLogs, &deployWarnings, progressHandler)
 
 		results, err = buildCall(deployCtx, r, cb)
 
@@ -836,7 +861,8 @@ func Deploy(ctx *Context, opts struct {
 			}
 
 			ctx.Printf("\n\nBuild failed.\n")
-			printBuildErrors(ctx, buildErrors, buildLogs)
+			errsSnap, logsSnap, _ := snapshotBuildState()
+			printBuildErrors(ctx, errsSnap, logsSnap)
 			updateDeploymentOnError(fmt.Sprintf("Build failed: %v", err))
 			return err
 		}
@@ -849,7 +875,8 @@ func Deploy(ctx *Context, opts struct {
 		uploadSpan.SetStatus(codes.Error, noVersionErr.Error())
 		uploadSpan.End()
 		ctx.Printf("\n\nError detected in building %s. No version returned.\n", name)
-		printBuildErrors(ctx, buildErrors, buildLogs)
+		errsSnap, logsSnap, _ := snapshotBuildState()
+		printBuildErrors(ctx, errsSnap, logsSnap)
 		updateDeploymentOnError("Build failed: no version returned")
 		return noVersionErr
 	}
@@ -911,15 +938,17 @@ func Deploy(ctx *Context, opts struct {
 			ctx.Log.Error("Failed to update deployment status", "error", err)
 		}
 		finalizeSpan.End()
+		deploymentFinalized = true
 
 		versionDisplay := ui.DisplayShortID(results.VersionShortId(), results.Version())
 		ctx.Printf("\n\nUpdated version %s deployed. All traffic moved to new version.\n", versionDisplay)
 	}
 
-	if len(deployWarnings) > 0 {
+	_, _, warnsSnap := snapshotBuildState()
+	if len(warnsSnap) > 0 {
 		warnHeaderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true)
 		ctx.Printf("\n%s\n", warnHeaderStyle.Render("Warnings:"))
-		for _, entry := range deployWarnings {
+		for _, entry := range warnsSnap {
 			renderDeployWarning(ctx, entry)
 		}
 	}
@@ -971,11 +1000,69 @@ func printBuildErrors(ctx *Context, buildErrors []string, buildLogs []string) {
 	}
 }
 
-// createBuildStatusCallback creates a callback for handling build status updates
+// safeStatusCh coordinates concurrent Send and Close on a buildkit status
+// channel so the build status callback (invoked from RPC stream-handler
+// goroutines that can outlive the parent RPC call — see pkg/rpc/client.go
+// callInline) cannot race with the deploy command closing the channel.
+//
+// Close uses a stop channel to wake any in-flight Send rather than holding a
+// mutex across the blocking channel send, so Close cannot deadlock even if
+// the channel's consumer has stopped draining.
+type safeStatusCh struct {
+	ch     chan *client.SolveStatus
+	stop   chan struct{}
+	mu     sync.Mutex
+	wg     sync.WaitGroup
+	closed bool
+}
+
+func newSafeStatusCh(ch chan *client.SolveStatus) *safeStatusCh {
+	return &safeStatusCh{ch: ch, stop: make(chan struct{})}
+}
+
+func (s *safeStatusCh) Send(ctx context.Context, v *client.SolveStatus) error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil
+	}
+	s.wg.Add(1)
+	s.mu.Unlock()
+	defer s.wg.Done()
+
+	select {
+	case <-s.stop:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case s.ch <- v:
+		return nil
+	}
+}
+
+func (s *safeStatusCh) Close() {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.closed = true
+	close(s.stop)
+	s.mu.Unlock()
+
+	s.wg.Wait()
+	close(s.ch)
+}
+
+// createBuildStatusCallback creates a callback for handling build status updates.
+// stateMu must be non-nil and guards buildErrors, buildLogs, and deployWarnings
+// — the callback runs from RPC stream-handler goroutines that race with
+// readers in Deploy.
 func createBuildStatusCallback(
 	ctx context.Context,
 	updateCh chan<- string,
 	buildCh chan<- buildProgress,
+	stateMu *sync.Mutex,
 	buildErrors *[]string,
 	buildLogs *[]string,
 	deployWarnings *[]*build_v1alpha.LogEntry,
@@ -1031,14 +1118,12 @@ func createBuildStatusCallback(
 				}
 			}
 
-			// Extract error messages from status
+			stateMu.Lock()
 			for _, vertex := range status.Vertexes {
 				if vertex.Error != "" {
 					*buildErrors = append(*buildErrors, vertex.Error)
 				}
 			}
-
-			// Collect all logs for potential output on failure
 			if buildLogs != nil {
 				for _, log := range status.Logs {
 					if log.Data != nil {
@@ -1049,10 +1134,11 @@ func createBuildStatusCallback(
 					}
 				}
 			}
+			errCount := len(*buildErrors)
+			stateMu.Unlock()
 
-			// Fail the build if we detected any errors
-			if len(*buildErrors) > 0 {
-				return fmt.Errorf("build failed with %d error(s)", len(*buildErrors))
+			if errCount > 0 {
+				return fmt.Errorf("build failed with %d error(s)", errCount)
 			}
 
 			return nil
@@ -1067,13 +1153,17 @@ func createBuildStatusCallback(
 				}
 			}
 		case "error":
+			stateMu.Lock()
 			*buildErrors = append(*buildErrors, update.Error())
+			stateMu.Unlock()
 		case "log":
 			if entry := update.Log(); entry != nil {
 				switch entry.Level() {
 				case "warn":
 					if deployWarnings != nil {
+						stateMu.Lock()
 						*deployWarnings = append(*deployWarnings, entry)
+						stateMu.Unlock()
 					}
 				case "info":
 					if updateCh != nil {
