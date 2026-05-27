@@ -130,13 +130,16 @@ func Admin(ctx *Context, opts struct {
 		params[key] = parsed
 	}
 
-	// If the method declares params but none were supplied, render method help
-	// instead of letting an empty call fall through to a raw JSON-RPC error.
+	// If the method declares params but none were supplied, error out with the
+	// method help block instead of letting an empty call fall through to a raw
+	// JSON-RPC error. Returning an error keeps the exit code non-zero so shell
+	// chains (e.g. `&&`) don't treat a help-rendered call as success — matching
+	// the missing-required-params branch in validateAdminCall.
 	// Skipped under --no-validate so power users can still issue empty calls.
 	if !opts.NoValidate && len(params) == 0 && methodInfo != nil &&
 		methodInfo.HasParams() && len(methodInfo.Params()) > 0 {
-		renderMethodHelp(ctx, opts.App, methodInfo)
-		return nil
+		return fmt.Errorf("no parameters supplied\n\n%s",
+			renderMethodHelpString(opts.App, methodInfo))
 	}
 
 	// Validate method and parameters against introspection (unless --no-validate)
@@ -371,13 +374,15 @@ func parseUnknownFlags(unknown []string, params map[string]any, paramSources map
 	return nil
 }
 
-// hasHelpFlag reports whether the unknown-flag slice contains a standalone
-// help token — --help, -h, --help=true, or bare "help" — so it can be
-// intercepted before parseUnknownFlags rejects it as an unknown parameter.
+// hasHelpFlag reports whether the unknown-flag slice contains a help flag
+// (--help, -h, or --help=…/-h=…) so it can be intercepted before
+// parseUnknownFlags rejects it as an unknown parameter. Bare "help" is
+// intentionally not matched — it could be a legitimate value for another
+// flag (e.g. --topic help).
 func hasHelpFlag(unknown []string) bool {
 	for _, arg := range unknown {
 		switch arg {
-		case "--help", "-h", "help":
+		case "--help", "-h":
 			return true
 		}
 		if strings.HasPrefix(arg, "--help=") || strings.HasPrefix(arg, "-h=") {
