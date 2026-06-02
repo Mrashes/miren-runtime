@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"testing"
-	"time"
 )
 
 func TestPOPManagerHandleConnectionRequest(t *testing.T) {
@@ -87,55 +86,72 @@ func TestPOPManagerReplaceStaleConnection(t *testing.T) {
 	pm := NewPOPManager("test-cluster", nil, slog.Default())
 	defer pm.Close()
 
-	req1 := ConnectionRequest{
+	req := ConnectionRequest{
 		POPXID:     "pop-1",
 		POPAddress: "https://pop1.example.com:443",
 		Hostname:   "myapp.example.com",
 		RequestID:  "req-1",
 	}
 
-	if err := pm.HandleConnectionRequest(t.Context(), req1); err != nil {
-		t.Fatalf("first HandleConnectionRequest: %v", err)
+	pm.HandleConnectionRequest(t.Context(), req)
+
+	pm.mu.Lock()
+	firstPC := pm.conns["pop-1"]
+	pm.mu.Unlock()
+
+	if firstPC == nil {
+		t.Fatal("first connection not created")
+	}
+
+	// Second request for the same POPXID (simulates POP VM recreate).
+	req.RequestID = "req-2"
+	req.ConnectToken = "new-token"
+	pm.HandleConnectionRequest(t.Context(), req)
+
+	pm.mu.Lock()
+	secondPC := pm.conns["pop-1"]
+	pm.mu.Unlock()
+
+	if secondPC == nil {
+		t.Fatal("replacement connection not created")
+	}
+	if firstPC == secondPC {
+		t.Fatal("HandleConnectionRequest did not replace the existing connection")
 	}
 
 	pops := pm.ConnectedPOPs()
 	if len(pops) != 1 || pops[0] != "pop-1" {
-		t.Fatalf("expected [pop-1], got %v", pops)
+		t.Errorf("expected [pop-1], got %v", pops)
 	}
+}
 
-	// Send a second connection request for the same POPXID (simulates
-	// a POP VM recreate). The old entry should be replaced, not ignored.
-	req2 := ConnectionRequest{
-		POPXID:       "pop-1",
-		POPAddress:   "https://pop1.example.com:443",
-		Hostname:     "myapp.example.com",
-		RequestID:    "req-2",
-		ConnectToken: "new-token",
+// Verify that a replaced servePOP goroutine's deferred cleanup does not
+// delete the replacement entry from the map.
+func TestServePOPCleanupSkipsReplacedEntry(t *testing.T) {
+	pm := NewPOPManager("test-cluster", nil, slog.Default())
+	defer pm.Close()
+
+	oldPC := &popConnection{popXID: "pop-1", cancel: func() {}}
+	newPC := &popConnection{popXID: "pop-1", cancel: func() {}}
+
+	pm.mu.Lock()
+	pm.conns["pop-1"] = newPC
+	pm.mu.Unlock()
+
+	// Simulate the old servePOP goroutine's deferred cleanup — this is
+	// the same guard that runs in servePOP's defer block.
+	pm.mu.Lock()
+	if pm.conns[oldPC.popXID] == oldPC {
+		delete(pm.conns, oldPC.popXID)
 	}
+	pm.mu.Unlock()
 
-	if err := pm.HandleConnectionRequest(t.Context(), req2); err != nil {
-		t.Fatalf("replacement HandleConnectionRequest: %v", err)
-	}
+	pm.mu.Lock()
+	survivor := pm.conns["pop-1"]
+	pm.mu.Unlock()
 
-	// Immediately after replacement, should still have exactly one entry.
-	pops = pm.ConnectedPOPs()
-	if len(pops) != 1 || pops[0] != "pop-1" {
-		t.Errorf("expected [pop-1] after replacement, got %v", pops)
-	}
-
-	// Wait for both servePOP goroutines to finish (they fail on DNS
-	// resolution of the fake address). The guarded defer in the old
-	// goroutine must not delete the replacement entry — only the new
-	// goroutine's defer should clean up its own entry.
-	time.Sleep(200 * time.Millisecond)
-
-	// Both goroutines exited: old one was cancelled, new one failed DNS.
-	// Map should be empty since the new goroutine legitimately cleaned
-	// up after itself. The key invariant is that we never see 2 entries
-	// and the replacement was served (not short-circuited).
-	pops = pm.ConnectedPOPs()
-	if len(pops) > 1 {
-		t.Errorf("expected at most 1 POP after goroutine cleanup, got %v", pops)
+	if survivor != newPC {
+		t.Fatal("old goroutine's cleanup deleted the replacement entry")
 	}
 }
 

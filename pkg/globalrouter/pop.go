@@ -274,6 +274,15 @@ func (m *POPManager) servePOP(ctx context.Context, pc *popConnection, cr Connect
 		}),
 	}
 
+	// Close the data-plane connection when our context is cancelled
+	// (e.g., this POP entry is replaced by a new connection request).
+	// Without this, ServeQUICConn blocks until the peer drops the
+	// connection, leaking the old goroutine.
+	go func() {
+		<-ctx.Done()
+		dataConn.CloseWithError(0, "connection replaced")
+	}()
+
 	if err := h3srv.ServeQUICConn(dataConn); err != nil && ctx.Err() == nil {
 		m.log.Error("POP data plane server error",
 			"pop_xid", pc.popXID, "error", err)
