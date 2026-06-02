@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/golang-jwt/jwt/v5"
@@ -179,6 +180,96 @@ func TestJWKSDocument(t *testing.T) {
 	pubKey, ok := jwks.Keys[0].Key.(ed25519.PublicKey)
 	require.True(t, ok)
 	assert.Equal(t, iss.publicKey, pubKey)
+}
+
+func TestIssueTokenWithOptions_CustomAudience(t *testing.T) {
+	dir := t.TempDir()
+
+	iss, err := NewIssuer(IssuerConfig{
+		DataPath:  dir,
+		IssuerURL: "https://example.miren.cloud",
+	})
+	require.NoError(t, err)
+
+	tokenStr, err := iss.IssueTokenWithOptions("myapp", "sb-1", TokenOptions{
+		Audience: []string{"sts.amazonaws.com"},
+	})
+	require.NoError(t, err)
+
+	token, err := jwt.ParseWithClaims(tokenStr, &WorkloadClaims{}, func(tok *jwt.Token) (interface{}, error) {
+		return iss.publicKey, nil
+	})
+	require.NoError(t, err)
+
+	claims := token.Claims.(*WorkloadClaims)
+	assert.Equal(t, jwt.ClaimStrings{"sts.amazonaws.com"}, claims.Audience)
+}
+
+func TestIssueTokenWithOptions_CustomTTL(t *testing.T) {
+	dir := t.TempDir()
+
+	iss, err := NewIssuer(IssuerConfig{
+		DataPath:  dir,
+		IssuerURL: "https://example.miren.cloud",
+	})
+	require.NoError(t, err)
+
+	tokenStr, err := iss.IssueTokenWithOptions("myapp", "sb-1", TokenOptions{
+		TTL: 5 * time.Minute,
+	})
+	require.NoError(t, err)
+
+	token, err := jwt.ParseWithClaims(tokenStr, &WorkloadClaims{}, func(tok *jwt.Token) (interface{}, error) {
+		return iss.publicKey, nil
+	})
+	require.NoError(t, err)
+
+	claims := token.Claims.(*WorkloadClaims)
+	ttl := claims.ExpiresAt.Sub(claims.IssuedAt.Time)
+
+	assert.Equal(t, 5*time.Minute, ttl)
+}
+
+func TestIssueTokenWithOptions_TTLClamping(t *testing.T) {
+	dir := t.TempDir()
+
+	iss, err := NewIssuer(IssuerConfig{
+		DataPath:  dir,
+		IssuerURL: "https://example.miren.cloud",
+	})
+	require.NoError(t, err)
+
+	// Max TTL clamped to 24h
+	tokenStr, err := iss.IssueTokenWithOptions("myapp", "sb-1", TokenOptions{
+		TTL: 48 * time.Hour,
+	})
+	require.NoError(t, err)
+
+	token, err := jwt.ParseWithClaims(tokenStr, &WorkloadClaims{}, func(tok *jwt.Token) (interface{}, error) {
+		return iss.publicKey, nil
+	})
+	require.NoError(t, err)
+
+	claims := token.Claims.(*WorkloadClaims)
+	ttl := claims.ExpiresAt.Sub(claims.IssuedAt.Time)
+
+	assert.Equal(t, 24*time.Hour, ttl)
+
+	// Min TTL clamped to 60s
+	tokenStr2, err := iss.IssueTokenWithOptions("myapp", "sb-1", TokenOptions{
+		TTL: 5 * time.Second,
+	})
+	require.NoError(t, err)
+
+	token2, err := jwt.ParseWithClaims(tokenStr2, &WorkloadClaims{}, func(tok *jwt.Token) (interface{}, error) {
+		return iss.publicKey, nil
+	})
+	require.NoError(t, err)
+
+	claims2 := token2.Claims.(*WorkloadClaims)
+	ttl2 := claims2.ExpiresAt.Sub(claims2.IssuedAt.Time)
+
+	assert.Equal(t, 60*time.Second, ttl2)
 }
 
 func TestBuildSubject(t *testing.T) {

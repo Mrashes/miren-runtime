@@ -66,8 +66,43 @@ func (iss *Issuer) IssuerURL() string {
 	return iss.issuerURL
 }
 
+func (iss *Issuer) PublicKey() any {
+	return iss.publicKey
+}
+
+const (
+	DefaultTTL = 1 * time.Hour
+	MaxTTL     = 24 * time.Hour
+	MinTTL     = 60 * time.Second
+)
+
+type TokenOptions struct {
+	Audience []string
+	TTL      time.Duration
+}
+
 func (iss *Issuer) IssueToken(app, sandboxID string) (string, error) {
+	return iss.IssueTokenWithOptions(app, sandboxID, TokenOptions{})
+}
+
+func (iss *Issuer) IssueTokenWithOptions(app, sandboxID string, opts TokenOptions) (string, error) {
 	now := time.Now()
+
+	aud := opts.Audience
+	if len(aud) == 0 {
+		aud = []string{"miren"}
+	}
+
+	ttl := opts.TTL
+	if ttl <= 0 {
+		ttl = DefaultTTL
+	}
+	if ttl > MaxTTL {
+		ttl = MaxTTL
+	}
+	if ttl < MinTTL {
+		ttl = MinTTL
+	}
 
 	sub := buildSubject(iss.organizationID, app, sandboxID)
 
@@ -75,10 +110,10 @@ func (iss *Issuer) IssueToken(app, sandboxID string) (string, error) {
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    iss.issuerURL,
 			Subject:   sub,
-			Audience:  jwt.ClaimStrings{"miren"},
+			Audience:  jwt.ClaimStrings(aud),
 			IssuedAt:  jwt.NewNumericDate(now),
 			NotBefore: jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(1 * time.Hour)),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 			ID:        uuid.New().String(),
 		},
 		OrganizationID: iss.organizationID,

@@ -510,10 +510,11 @@ func (c *SandboxController) Init(ctx context.Context) error {
 	}
 	c.imageWatchdog.Start(c.topCtx)
 
-	// Start workload identity token refresh loop
+	// Start workload identity token refresh loop and token request server
 	if c.WorkloadIssuer != nil {
 		c.tokenRefresher = newTokenRefresher()
 		go c.runTokenRefresh(c.topCtx)
+		go c.startTokenServer(c.topCtx)
 	}
 
 	return nil
@@ -2074,7 +2075,7 @@ func (c *SandboxController) buildSubContainerSpec(
 			c.Log.Warn("failed to generate workload identity token", "sandbox", sb.ID, "error", tokenErr)
 		} else {
 			tokenPath := c.sandboxPath(sb, "identity-token")
-			if writeErr := os.WriteFile(tokenPath, []byte(token), 0444); writeErr != nil {
+			if writeErr := os.WriteFile(tokenPath, []byte(token), 0644); writeErr != nil {
 				c.Log.Warn("failed to write workload identity token", "sandbox", sb.ID, "error", writeErr)
 			} else {
 				mounts = append(mounts, specs.Mount{
@@ -2104,6 +2105,7 @@ func (c *SandboxController) buildSubContainerSpec(
 		envVars = append(envVars,
 			"MIREN_IDENTITY_TOKEN_PATH=/var/run/miren/identity-token",
 			fmt.Sprintf("MIREN_OIDC_ISSUER_URL=%s", c.WorkloadIssuer.IssuerURL()),
+			fmt.Sprintf("MIREN_IDENTITY_TOKEN_URL=http://%s:%d/v1/token", c.Subnet.Router().Addr(), tokenServerPort),
 		)
 	}
 

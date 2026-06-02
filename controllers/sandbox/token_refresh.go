@@ -78,7 +78,7 @@ func (c *SandboxController) refreshTokens() {
 			c.Log.Warn("failed to refresh workload identity token", "sandbox", e.sandboxID, "error", err)
 			continue
 		}
-		if err := os.WriteFile(e.filePath, []byte(token), 0444); err != nil {
+		if err := os.WriteFile(e.filePath, []byte(token), 0644); err != nil {
 			c.Log.Warn("failed to write refreshed workload identity token", "sandbox", e.sandboxID, "error", err)
 		}
 	}

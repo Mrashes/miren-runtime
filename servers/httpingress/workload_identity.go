@@ -3,6 +3,10 @@ package httpingress
 import "net/http"
 
 func (h *Server) handleOIDCDiscovery(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	if h.workloadIssuer == nil {
 		http.NotFound(w, req)
 		return
@@ -13,6 +17,10 @@ func (h *Server) handleOIDCDiscovery(w http.ResponseWriter, req *http.Request) {
 }
 
 func (h *Server) handleJWKS(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	if h.workloadIssuer == nil {
 		http.NotFound(w, req)
 		return
