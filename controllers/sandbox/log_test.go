@@ -146,9 +146,9 @@ func TestSandboxLogs(t *testing.T) {
 		entityID := identity.NewID()
 
 		attrs := map[string]string{
-			"sandbox":   "test-sandbox",
-			"container": "test-container",
-			"version":   "v1.0.0",
+			"miren.sandbox":   "test-sandbox",
+			"miren.container": "test-container",
+			"miren.version":   "v1.0.0",
 		}
 
 		logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -246,6 +246,117 @@ func BenchmarkSandboxLogs(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		sl.Write(input)
+	}
+}
+
+func TestParseStructuredJSON(t *testing.T) {
+	t.Run("valid JSON with msg", func(t *testing.T) {
+		body, extra, stream, ok := parseStructuredJSON(`{"time":"2026-01-01T00:00:00Z","level":"INFO","msg":"hello","key":"val"}`)
+		if !ok {
+			t.Fatal("expected ok=true")
+		}
+		if body != "hello" {
+			t.Errorf("body = %q, want %q", body, "hello")
+		}
+		if extra["key"] != "val" {
+			t.Errorf("extra[key] = %q, want %q", extra["key"], "val")
+		}
+		for _, skip := range []string{"time", "level", "msg"} {
+			if _, exists := extra[skip]; exists {
+				t.Errorf("field %q should be stripped", skip)
+			}
+		}
+		if stream != "" {
+			t.Errorf("stream = %q, want empty for INFO", stream)
+		}
+	})
+
+	t.Run("valid JSON with message field", func(t *testing.T) {
+		body, _, _, ok := parseStructuredJSON(`{"time":"2026-01-01T00:00:00Z","level":"INFO","message":"hello"}`)
+		if !ok {
+			t.Fatal("expected ok=true")
+		}
+		if body != "hello" {
+			t.Errorf("body = %q, want %q", body, "hello")
+		}
+	})
+
+	t.Run("ERROR level sets stderr stream", func(t *testing.T) {
+		_, _, stream, ok := parseStructuredJSON(`{"level":"ERROR","msg":"fail"}`)
+		if !ok {
+			t.Fatal("expected ok=true")
+		}
+		if stream != observability.Stderr {
+			t.Errorf("stream = %q, want stderr", stream)
+		}
+	})
+
+	t.Run("WARN level sets stderr stream", func(t *testing.T) {
+		_, _, stream, ok := parseStructuredJSON(`{"level":"WARN","msg":"warning"}`)
+		if !ok {
+			t.Fatal("expected ok=true")
+		}
+		if stream != observability.Stderr {
+			t.Errorf("stream = %q, want stderr", stream)
+		}
+	})
+
+	t.Run("non-JSON returns false", func(t *testing.T) {
+		_, _, _, ok := parseStructuredJSON("plain text")
+		if ok {
+			t.Error("expected ok=false for plain text")
+		}
+	})
+
+	t.Run("JSON without msg field returns false", func(t *testing.T) {
+		_, _, _, ok := parseStructuredJSON(`{"key":"value","other":"data"}`)
+		if ok {
+			t.Error("expected ok=false for JSON without msg")
+		}
+	})
+
+	t.Run("non-string values are formatted", func(t *testing.T) {
+		_, extra, _, ok := parseStructuredJSON(`{"msg":"hi","count":42,"flag":true}`)
+		if !ok {
+			t.Fatal("expected ok=true")
+		}
+		if extra["count"] != "42" {
+			t.Errorf("extra[count] = %q, want %q", extra["count"], "42")
+		}
+		if extra["flag"] != "true" {
+			t.Errorf("extra[flag] = %q, want %q", extra["flag"], "true")
+		}
+	})
+}
+
+func TestProcessLineJSON(t *testing.T) {
+	mock := &mockLogWriter{}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	entityID := "test-entity"
+	baseAttrs := map[string]string{"miren.sandbox": "sandbox/test-abc"}
+
+	sl := NewSandboxLogs(logger, entityID, baseAttrs, mock)
+	sl.Write([]byte(`{"time":"2026-01-01T00:00:00Z","level":"INFO","msg":"processing step","component":"provisioner","cluster_id":"ZA8"}` + "\n"))
+
+	if len(mock.entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(mock.entries))
+	}
+
+	entry := mock.entries[0].log
+	if entry.Body != "processing step" {
+		t.Errorf("body = %q, want %q", entry.Body, "processing step")
+	}
+	if entry.Attributes["component"] != "provisioner" {
+		t.Errorf("attrs[component] = %q, want %q", entry.Attributes["component"], "provisioner")
+	}
+	if entry.Attributes["cluster_id"] != "ZA8" {
+		t.Errorf("attrs[cluster_id] = %q, want %q", entry.Attributes["cluster_id"], "ZA8")
+	}
+	if entry.Attributes["miren.sandbox"] != "sandbox/test-abc" {
+		t.Errorf("base attrs should be preserved: attrs[miren.sandbox] = %q", entry.Attributes["miren.sandbox"])
+	}
+	if _, hasTime := entry.Attributes["time"]; hasTime {
+		t.Error("time field should be stripped from attributes")
 	}
 }
 

@@ -280,8 +280,10 @@ func (l *LogReader) ReadBySandbox(ctx context.Context, sandboxID string, opts ..
 		limit = DefaultLogReadLimit
 	}
 
-	// Build LogsQL query filtering by sandbox attribute
-	query := `sandbox:` + logsQLQuote(sandboxID)
+	// Build LogsQL query filtering by sandbox attribute.
+	// Query both old and new field names for backwards compatibility.
+	quoted := logsQLQuote(sandboxID)
+	query := `(sandbox:` + quoted + ` OR miren.sandbox:` + quoted + `)`
 
 	// Victoria Logs often requires a time range
 	startTime := o.From
@@ -303,7 +305,8 @@ type LogTarget struct {
 func (t LogTarget) Query() string {
 	var base string
 	if t.SandboxID != "" {
-		base = `sandbox:` + logsQLQuote(t.SandboxID)
+		quoted := logsQLQuote(t.SandboxID)
+		base = `(sandbox:` + quoted + ` OR miren.sandbox:` + quoted + `)`
 	} else {
 		base = `entity:` + logsQLQuote(t.EntityID)
 	}
