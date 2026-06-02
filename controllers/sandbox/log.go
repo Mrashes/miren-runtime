@@ -102,7 +102,7 @@ func (s *SandboxLogs) processLine(line string) {
 		if lvlStream != "" {
 			stream = lvlStream
 		}
-		attrs = make(map[string]string, len(s.attrs)+len(extra))
+		attrs = make(map[string]string)
 		for k, v := range s.attrs {
 			attrs[k] = v
 		}
