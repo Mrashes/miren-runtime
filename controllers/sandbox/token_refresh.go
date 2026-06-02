@@ -2,7 +2,9 @@ package sandbox
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -78,7 +80,7 @@ func (c *SandboxController) refreshTokens() {
 			c.Log.Warn("failed to refresh workload identity token", "sandbox", e.sandboxID, "error", err)
 			continue
 		}
-		if err := os.WriteFile(e.filePath, []byte(token), 0644); err != nil {
+		if err := atomicWriteFile(e.filePath, []byte(token), 0644); err != nil {
 			c.Log.Warn("failed to write refreshed workload identity token", "sandbox", e.sandboxID, "error", err)
 		}
 	}
@@ -86,4 +88,33 @@ func (c *SandboxController) refreshTokens() {
 	if len(entries) > 0 {
 		c.Log.Debug("refreshed workload identity tokens", "count", len(entries))
 	}
+}
+
+func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".token-*")
+	if err != nil {
+		return fmt.Errorf("creating temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("writing temp file: %w", err)
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("setting permissions: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("closing temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("renaming temp file: %w", err)
+	}
+	return nil
 }

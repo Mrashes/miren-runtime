@@ -2075,7 +2075,7 @@ func (c *SandboxController) buildSubContainerSpec(
 			c.Log.Warn("failed to generate workload identity token", "sandbox", sb.ID, "error", tokenErr)
 		} else {
 			tokenPath := c.sandboxPath(sb, "identity-token")
-			if writeErr := os.WriteFile(tokenPath, []byte(token), 0644); writeErr != nil {
+			if writeErr := atomicWriteFile(tokenPath, []byte(token), 0644); writeErr != nil {
 				c.Log.Warn("failed to write workload identity token", "sandbox", sb.ID, "error", writeErr)
 			} else {
 				mounts = append(mounts, specs.Mount{

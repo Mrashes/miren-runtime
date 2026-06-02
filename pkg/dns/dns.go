@@ -597,7 +597,22 @@ func NewTestServer() *Server {
 }
 
 // LookupSandboxByIP returns the sandbox entity ID and app name for a given IP.
+// On a cache miss, falls back to an entity store lookup to handle watcher lag.
 func (s *Server) LookupSandboxByIP(ip string) (sandboxID, appName string, ok bool) {
+	s.mu.RLock()
+	sandboxID, ok = s.ipToSandbox[ip]
+	if ok {
+		appName = s.ipToApp[ip]
+		s.mu.RUnlock()
+		return sandboxID, appName, true
+	}
+	s.mu.RUnlock()
+
+	// Cache miss — try resolving via entity store (populates the maps on success)
+	if !s.resolveUnknownIP(ip) {
+		return "", "", false
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	sandboxID, ok = s.ipToSandbox[ip]
