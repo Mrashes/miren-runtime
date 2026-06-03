@@ -1165,6 +1165,12 @@ func (a *localActivator) Invalidations() <-chan SandboxInvalidation {
 // though a healthy sandbox exists for it (MIR-1198). recoverPools and
 // recoverSandboxes are additive (create-only / dedupe by sandbox ID) and lock per
 // item, so this is safe to run repeatedly against live state and from either watch.
+//
+// Both watchSandboxes and watchPools call this on their own reconnect, so a single
+// etcd blip (which usually trips both watches at once) runs the reconcile twice,
+// roughly concurrently. That's intentional: the redundant pass is idempotent and
+// bounded, and accepting it is cheaper than adding cross-goroutine debounce state
+// to coordinate the two watchers.
 func (a *localActivator) resyncFromStore(ctx context.Context) {
 	a.log.Info("re-syncing activator state from store after watch reconnect")
 	if err := a.recoverPools(ctx); err != nil {
@@ -1172,6 +1178,32 @@ func (a *localActivator) resyncFromStore(ctx context.Context) {
 	}
 	if err := a.recoverSandboxes(ctx); err != nil {
 		a.log.Error("failed to re-sync sandboxes after watch reconnect", "error", err)
+	}
+
+	// Recovery adopts sandboxes by appending to poolSandboxes directly, bypassing
+	// the per-sandbox notify the watcher does, so wake parked waiters to re-check
+	// rather than making them wait out the 60s fallback ticker.
+	a.wakeAllWaiters()
+}
+
+// wakeAllWaiters signals every parked waitForSandbox goroutine to re-check its
+// pool. resyncFromStore calls this after a reconnect reconcile: recoverSandboxes
+// adopts sandboxes by appending to poolSandboxes directly, bypassing the
+// per-sandbox notify the watcher does (see watchSandboxes), so without this an
+// already-parked waiter wouldn't see an adopted sandbox until the 60s fallback
+// ticker — and would log a misleading "channel notification may have failed" when
+// it finally woke. A spurious wake is harmless: the waiter re-scans and re-parks
+// if its sandbox still isn't there.
+func (a *localActivator) wakeAllWaiters() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, chans := range a.newSandboxChans {
+		for _, ch := range chans {
+			select {
+			case ch <- struct{}{}:
+			default:
+			}
+		}
 	}
 }
 
@@ -1683,6 +1715,14 @@ func (a *localActivator) recoverPools(ctx context.Context) error {
 		// not clobber an in-progress creation sentinel or a freshly-patched
 		// revision held by a concurrent requestPoolCapacity. watchPools keeps
 		// existing entries' DesiredInstances fresh; here we only fill gaps.
+		//
+		// Deliberately we do NOT refresh an already-cached entry here, even though
+		// the missed-event window is exactly when its DesiredInstances/revision
+		// could have gone stale. A refresh is unsafe: this re-sync's store read can
+		// itself be older than an in-memory revision a concurrent requestPoolCapacity
+		// just patched, so overwriting could move the cache backward. The stale case
+		// self-heals instead — the next increment hits a revision conflict on Patch,
+		// clears the entry, and re-reads (see the ErrConflict path above).
 		key := verKey{versionID.String(), pool.Service}
 		if _, ok := a.pools[key]; !ok {
 			a.pools[key] = &poolState{

@@ -3365,3 +3365,139 @@ func TestReSyncRecoversUntrackedEphemeralSandbox(t *testing.T) {
 	require.NotNil(t, lease)
 	assert.Equal(t, "http://10.0.0.7:3000", lease.URL)
 }
+
+// TestWakeAllWaitersNonBlocking verifies wakeAllWaiters signals an empty
+// notification channel and does not block on one that is already full (the
+// buffered channel a parked waiter registers). This is the mechanism
+// resyncFromStore relies on to nudge parked waiters after a reconnect reconcile.
+func TestWakeAllWaitersNonBlocking(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	activator := &localActivator{
+		log:             log,
+		newSandboxChans: make(map[verKey][]chan struct{}),
+	}
+
+	empty := make(chan struct{}, 1)
+	full := make(chan struct{}, 1)
+	full <- struct{}{} // pre-fill so a second send would block without the default
+
+	activator.newSandboxChans[verKey{"ver-a", "web"}] = []chan struct{}{empty}
+	activator.newSandboxChans[verKey{"ver-b", "web"}] = []chan struct{}{full}
+
+	done := make(chan struct{})
+	go func() {
+		activator.wakeAllWaiters()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("wakeAllWaiters blocked on a full channel")
+	}
+
+	select {
+	case <-empty:
+	default:
+		t.Fatal("wakeAllWaiters did not signal the empty channel")
+	}
+}
+
+// TestResyncWakesParkedWaiter is the regression test for the parked-waiter gap:
+// recoverSandboxes adopts sandboxes by appending to poolSandboxes directly,
+// bypassing the per-sandbox notify the watcher does. A request already parked in
+// waitForSandbox when a reconnect happens would therefore not see its adopted
+// sandbox until the 60s fallback ticker. resyncFromStore now calls wakeAllWaiters
+// to nudge it immediately; this test parks a real waiter, then drives the re-sync
+// and asserts the lease is delivered far faster than the ticker would allow.
+func TestResyncWakesParkedWaiter(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	server, cleanup := testutils.NewInMemEntityServer(t)
+	defer cleanup()
+
+	testVer := newEphemeralVersion(t, server, ctx)
+
+	pool := &compute_v1alpha.SandboxPool{
+		Service:              "web",
+		SandboxSpec:          compute_v1alpha.SandboxSpec{Version: testVer.ID},
+		ReferencedByVersions: []entity.Id{testVer.ID},
+		DesiredInstances:     1,
+	}
+	poolID, err := server.Client.Create(ctx, "test-pool", pool)
+	require.NoError(t, err)
+
+	activator := &localActivator{
+		log:             log,
+		eac:             server.EAC,
+		versions:        make(map[verKey]*versionPoolRef),
+		poolSandboxes:   make(map[entity.Id]*poolSandboxes),
+		pools:           make(map[verKey]*poolState),
+		newSandboxChans: make(map[verKey][]chan struct{}),
+	}
+
+	key := verKey{testVer.ID.String(), "web"}
+
+	// Park a real waiter. The pool exists at cap (desired=1, MaxInstances=1) but no
+	// sandbox does yet, so AcquireLease resolves the pool, tracks the version, finds
+	// no sandbox, and parks in waitForSandbox.
+	type result struct {
+		lease *Lease
+		err   error
+	}
+	resCh := make(chan result, 1)
+	go func() {
+		lease, err := activator.AcquireLease(ctx, testVer, "web")
+		resCh <- result{lease, err}
+	}()
+
+	// Wait until the waiter has registered its notification channel (i.e. it has
+	// parked). The channel is buffered, so a wake delivered after this point lands
+	// even if the waiter hasn't reached its select yet.
+	require.Eventually(t, func() bool {
+		activator.mu.RLock()
+		defer activator.mu.RUnlock()
+		return len(activator.newSandboxChans[key]) > 0
+	}, 2*time.Second, 5*time.Millisecond, "waiter never parked")
+
+	// Now a RUNNING sandbox appears in the store, as it would after the pool scaled
+	// up during a watch gap.
+	sb := &compute_v1alpha.Sandbox{
+		Status: compute_v1alpha.RUNNING,
+		Spec: compute_v1alpha.SandboxSpec{
+			Version: testVer.ID,
+			Container: []compute_v1alpha.SandboxSpecContainer{
+				{Port: []compute_v1alpha.SandboxSpecContainerPort{{Port: 3000, Name: "http", Type: "http"}}},
+			},
+		},
+		Network: []compute_v1alpha.Network{{Address: "10.0.0.7"}},
+	}
+	var rpcE entityserver_v1alpha.Entity
+	rpcE.SetAttrs(entity.New(
+		(&core_v1alpha.Metadata{
+			Name:   "eph-sandbox",
+			Labels: types.LabelSet("service", "web", "pool", poolID.String()),
+		}).Encode,
+		entity.Ident, entity.MustKeyword("sandbox/eph-sb"),
+		sb.Encode,
+	).Attrs())
+	_, err = server.EAC.Put(ctx, &rpcE)
+	require.NoError(t, err)
+
+	// The reconnect re-sync adopts the sandbox and wakes the parked waiter.
+	start := time.Now()
+	activator.resyncFromStore(ctx)
+
+	select {
+	case res := <-resCh:
+		require.NoError(t, res.err)
+		require.NotNil(t, res.lease)
+		assert.Equal(t, "http://10.0.0.7:3000", res.lease.URL)
+		// The fallback ticker is 60s; the wake must deliver far sooner.
+		assert.Less(t, time.Since(start), 10*time.Second, "waiter was woken by the wake, not the fallback ticker")
+	case <-time.After(15 * time.Second):
+		t.Fatal("parked waiter was never woken after re-sync")
+	}
+}
