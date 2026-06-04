@@ -91,7 +91,6 @@ func (s *SandboxLogs) processLine(line string) {
 
 	var extra map[string]string
 	if body, lvlStream, ok := s.scanJSON(line); ok {
-		s.extra["user.orig_msg"] = line
 		line = body
 		if lvlStream != "" {
 			stream = lvlStream

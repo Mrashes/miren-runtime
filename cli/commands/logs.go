@@ -339,8 +339,7 @@ func printLogEntry(ctx *Context, l *app_v1alpha.LogEntry) {
 }
 
 var hiddenAttributes = map[string]bool{
-	"source":        true,
-	"user.orig_msg": true,
+	"source": true,
 }
 
 func formatAttributes(m map[string]string) string {
