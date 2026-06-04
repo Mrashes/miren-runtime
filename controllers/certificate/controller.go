@@ -154,7 +154,25 @@ func (c *Controller) initializeLego(ctx context.Context) error {
 	return nil
 }
 
+const clusterHostnameRenewInterval = 12 * time.Hour
+
 func (c *Controller) provisionClusterHostnames(ctx context.Context) {
+	c.renewClusterHostnames(ctx)
+
+	ticker := time.NewTicker(clusterHostnameRenewInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			c.renewClusterHostnames(ctx)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (c *Controller) renewClusterHostnames(ctx context.Context) {
 	for _, hostname := range c.clusterHostnames {
 		if ctx.Err() != nil {
 			return
@@ -164,7 +182,7 @@ func (c *Controller) provisionClusterHostnames(ctx context.Context) {
 			continue
 		}
 		if err := c.provisionCertificate(ctx, hostname); err != nil {
-			c.Log.Warn("failed to provision cluster hostname certificate (will provision inline on first TLS handshake)", "hostname", hostname, "error", err)
+			c.Log.Warn("failed to provision cluster hostname certificate (will retry next cycle)", "hostname", hostname, "error", err)
 		} else {
 			c.Log.Info("cluster hostname certificate provisioned", "hostname", hostname)
 		}
