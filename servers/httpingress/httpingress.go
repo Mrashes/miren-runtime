@@ -437,13 +437,10 @@ func (h *Server) handleRequest(w http.ResponseWriter, req *http.Request) {
 	defer span.End()
 	req = req.WithContext(ctx)
 
-	// Handle OIDC discovery endpoints for workload identity verification
-	if req.URL.Path == "/.well-known/openid-configuration" {
+	// Handle OIDC discovery — only on the issuer's own hostname to avoid
+	// shadowing apps that serve their own /.well-known/openid-configuration
+	if req.URL.Path == "/.well-known/openid-configuration" && h.isIssuerHost(req.Host) {
 		h.handleOIDCDiscovery(w, req)
-		return
-	}
-	if req.URL.Path == "/.well-known/jwks" {
-		h.handleJWKS(w, req)
 		return
 	}
 
@@ -451,6 +448,10 @@ func (h *Server) handleRequest(w http.ResponseWriter, req *http.Request) {
 	// Using .well-known per RFC 8615 to avoid collision with app routes
 	if req.URL.Path == "/.well-known/miren/health" {
 		h.handleHealth(w, req)
+		return
+	}
+	if req.URL.Path == "/.well-known/miren/jwks" {
+		h.handleJWKS(w, req)
 		return
 	}
 

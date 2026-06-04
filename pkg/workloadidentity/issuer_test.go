@@ -151,7 +151,7 @@ func TestDiscoveryDocument(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "https://example.miren.cloud", parsed["issuer"])
-	assert.Equal(t, "https://example.miren.cloud/.well-known/jwks", parsed["jwks_uri"])
+	assert.Equal(t, "https://example.miren.cloud/.well-known/miren/jwks", parsed["jwks_uri"])
 	assert.Contains(t, parsed["id_token_signing_alg_values_supported"], "EdDSA")
 }
 

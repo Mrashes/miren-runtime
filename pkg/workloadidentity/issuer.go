@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,6 +71,14 @@ func (iss *Issuer) PublicKey() any {
 	return iss.publicKey
 }
 
+func (iss *Issuer) Hostname() string {
+	u, err := url.Parse(iss.issuerURL)
+	if err != nil {
+		return ""
+	}
+	return u.Host
+}
+
 const (
 	DefaultTTL = 1 * time.Hour
 	MaxTTL     = 24 * time.Hour
@@ -131,7 +140,7 @@ func (iss *Issuer) IssueTokenWithOptions(app, sandboxID string, opts TokenOption
 func (iss *Issuer) DiscoveryDocument() []byte {
 	doc := map[string]any{
 		"issuer":                                iss.issuerURL,
-		"jwks_uri":                              iss.issuerURL + "/.well-known/jwks",
+		"jwks_uri":                              iss.issuerURL + "/.well-known/miren/jwks",
 		"response_types_supported":              []string{"id_token"},
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{"EdDSA"},

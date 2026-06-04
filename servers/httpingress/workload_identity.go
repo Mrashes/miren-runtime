@@ -1,6 +1,25 @@
 package httpingress
 
-import "net/http"
+import (
+	"net"
+	"net/http"
+)
+
+func (h *Server) isIssuerHost(reqHost string) bool {
+	if h.workloadIssuer == nil {
+		return false
+	}
+	host, _, err := net.SplitHostPort(reqHost)
+	if err != nil {
+		host = reqHost
+	}
+	issuerHost := h.workloadIssuer.Hostname()
+	issuerHostOnly, _, err := net.SplitHostPort(issuerHost)
+	if err != nil {
+		issuerHostOnly = issuerHost
+	}
+	return host == issuerHostOnly
+}
 
 func (h *Server) handleOIDCDiscovery(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodGet {
