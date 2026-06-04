@@ -72,6 +72,9 @@ jobs:
       with:
         version: v2.6.1
 
+    - name: go vet (exhaustive switch checking)
+      run: make vet
+
     - name: Check go.mod tidiness
       run: |
         # Run go mod tidy and check if there are any changes

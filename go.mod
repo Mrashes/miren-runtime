@@ -148,6 +148,7 @@ require (
 	github.com/kaptinlin/go-i18n v0.1.4 // indirect
 	github.com/kaptinlin/jsonschema v0.4.6 // indirect
 	github.com/magefile/mage v1.17.0 // indirect
+	github.com/nishanths/exhaustive v0.12.0 // indirect
 	github.com/petar-dambovaliev/aho-corasick v0.0.0-20250424160509-463d218d4745 // indirect
 	github.com/shibumi/go-pathspec v1.3.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
@@ -430,3 +431,5 @@ require (
 	tags.cncf.io/container-device-interface v0.8.0 // indirect
 	tags.cncf.io/container-device-interface/specs-go v0.8.0 // indirect
 )
+
+tool github.com/nishanths/exhaustive/cmd/exhaustive

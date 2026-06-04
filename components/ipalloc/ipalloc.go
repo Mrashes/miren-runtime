@@ -169,6 +169,9 @@ func (a *Allocator) Watch(ctx context.Context, eac *entityserver_v1alpha.EntityA
 		switch op.OperationType() {
 		case entityserver_v1alpha.EntityOperationCreate, entityserver_v1alpha.EntityOperationUpdate:
 			// fine
+		case entityserver_v1alpha.EntityOperationDelete:
+			// Nothing to assign on delete.
+			fallthrough
 		default:
 			return nil
 		}
