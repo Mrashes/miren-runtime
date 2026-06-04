@@ -471,6 +471,36 @@ func TestScanJSON(t *testing.T) {
 			t.Errorf("extra[bbb] = %q, want %q", sl.extra["bbb"], "2")
 		}
 	})
+
+	t.Run("unescapes string escapes and unicode", func(t *testing.T) {
+		sl := newScanner()
+		body, _, ok := sl.scanJSON(`{"msg":"line1\nline2\t\"q\"","path":"a\/b","emoji":"☃"}`)
+		if !ok {
+			t.Fatal("expected ok=true")
+		}
+		if body != "line1\nline2\t\"q\"" {
+			t.Errorf("body = %q, want escapes decoded", body)
+		}
+		// \/ is a valid JSON escape that Go's strconv.Unquote rejects; gjson
+		// handles it, which is part of why we don't hand-roll unescaping.
+		if sl.extra["path"] != "a/b" {
+			t.Errorf("extra[path] = %q, want %q", sl.extra["path"], "a/b")
+		}
+		if sl.extra["emoji"] != "☃" {
+			t.Errorf("extra[emoji] = %q, want snowman (multibyte UTF-8 passthrough)", sl.extra["emoji"])
+		}
+	})
+
+	t.Run("float literal preserved", func(t *testing.T) {
+		sl := newScanner()
+		_, _, ok := sl.scanJSON(`{"msg":"hi","responseTime":0.6435079574584961}`)
+		if !ok {
+			t.Fatal("expected ok=true")
+		}
+		if sl.extra["responseTime"] != "0.6435079574584961" {
+			t.Errorf("extra[responseTime] = %q, want exact float literal", sl.extra["responseTime"])
+		}
+	})
 }
 
 func TestProcessLineJSON(t *testing.T) {

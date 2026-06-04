@@ -2,13 +2,12 @@ package sandbox
 
 import (
 	"bytes"
-	"encoding/json"
 	"log/slog"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/tidwall/gjson"
 	"miren.dev/runtime/observability"
 )
 
@@ -113,20 +112,24 @@ func (s *SandboxLogs) processLine(line string) {
 	}
 }
 
-// scanJSON uses the json tokenizer to extract structured fields from a JSON log
-// line directly into s.extra, avoiding a full unmarshal. Returns the message,
-// an optional stream override, and whether parsing succeeded.
+// scanJSON extracts structured fields from a JSON log line into s.extra,
+// promoting scalar fields and skipping nested objects/arrays. Returns the
+// message, an optional stream override derived from the level, and whether
+// parsing succeeded. Lines that aren't a JSON object, carry no string msg, or
+// have trailing content fall through to be logged verbatim.
 func (s *SandboxLogs) scanJSON(line string) (string, observability.LogStream, bool) {
 	if len(line) == 0 || line[0] != '{' {
 		return "", "", false
 	}
 
-	dec := json.NewDecoder(strings.NewReader(line))
-	dec.UseNumber()
+	// gjson.Parse ignores trailing content, so validate the whole line first
+	// to keep logging malformed or trailing-junk lines verbatim.
+	if !gjson.Valid(line) {
+		return "", "", false
+	}
 
-	// Expect opening brace
-	t, err := dec.Token()
-	if err != nil || t != json.Delim('{') {
+	root := gjson.Parse(line)
+	if !root.IsObject() {
 		return "", "", false
 	}
 
@@ -135,96 +138,43 @@ func (s *SandboxLogs) scanJSON(line string) (string, observability.LogStream, bo
 	var msg string
 	var stream observability.LogStream
 
-	for dec.More() {
-		keyTok, err := dec.Token()
-		if err != nil {
-			return "", "", false
-		}
-		key, ok := keyTok.(string)
-		if !ok {
-			return "", "", false
-		}
-
-		valTok, err := dec.Token()
-		if err != nil {
-			return "", "", false
-		}
-
-		// If value is a nested object or array, skip it
-		if delim, ok := valTok.(json.Delim); ok {
-			if !skipNestedJSON(dec, delim) {
-				return "", "", false
-			}
-			continue
-		}
-
-		switch key {
+	root.ForEach(func(key, value gjson.Result) bool {
+		switch key.Str {
 		case "msg", "message":
-			if v, ok := valTok.(string); ok {
-				msg = v
+			if value.Type == gjson.String {
+				msg = value.Str
 			}
 		case "level":
-			if v, ok := valTok.(string); ok {
-				stream = jsonLevelToStream[v]
+			if value.Type == gjson.String {
+				stream = jsonLevelToStream[value.Str]
 			}
 		case "time":
 			// skip
 		default:
-			if strings.HasPrefix(key, "miren.") {
-				key = "-" + key
+			// Escape user fields that would collide with internal miren.*
+			// attribution so app logs can't shadow it.
+			k := key.Str
+			if strings.HasPrefix(k, "miren.") {
+				k = "-" + k
 			}
-			switch v := valTok.(type) {
-			case string:
-				s.extra[key] = v
-			case json.Number:
-				s.extra[key] = v.String()
-			case bool:
-				s.extra[key] = strconv.FormatBool(v)
-			case nil:
-				// skip nulls
+			switch value.Type {
+			case gjson.String:
+				s.extra[k] = value.Str
+			case gjson.Number, gjson.True, gjson.False:
+				// Raw preserves the original numeric literal (large integers
+				// included) and renders bools as "true"/"false".
+				s.extra[k] = value.Raw
 			}
+			// gjson.Null and nested objects/arrays (gjson.JSON) are skipped.
 		}
-	}
-
-	// Consume closing brace
-	closeTok, err := dec.Token()
-	if err != nil || closeTok != json.Delim('}') {
-		return "", "", false
-	}
-
-	// Reject if there's trailing content after the JSON object
-	if dec.More() {
-		return "", "", false
-	}
-	if _, err := dec.Token(); err == nil {
-		return "", "", false
-	}
+		return true
+	})
 
 	if msg == "" {
 		return "", "", false
 	}
 
 	return msg, stream, true
-}
-
-// skipNestedJSON consumes a balanced JSON object or array from the decoder.
-func skipNestedJSON(dec *json.Decoder, open json.Delim) bool {
-	depth := 1
-	for depth > 0 {
-		t, err := dec.Token()
-		if err != nil {
-			return false
-		}
-		if d, ok := t.(json.Delim); ok {
-			switch d {
-			case '{', '[':
-				depth++
-			case '}', ']':
-				depth--
-			}
-		}
-	}
-	return true
 }
 
 func (s *SandboxLogs) Stderr() *SandboxLogs {
