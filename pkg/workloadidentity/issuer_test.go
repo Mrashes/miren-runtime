@@ -182,6 +182,68 @@ func TestJWKSDocument(t *testing.T) {
 	assert.Equal(t, iss.publicKey, pubKey)
 }
 
+func TestJWKSDocument_WithPreviousKey(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create initial issuer (generates key)
+	iss1, err := NewIssuer(IssuerConfig{
+		DataPath:  dir,
+		IssuerURL: "https://example.miren.cloud",
+	})
+	require.NoError(t, err)
+	oldKID := iss1.kid
+
+	// Simulate key rotation: move current key to .prev
+	keyPath := filepath.Join(dir, "server", "workload-identity.key")
+	err = os.Rename(keyPath, keyPath+".prev")
+	require.NoError(t, err)
+
+	// Create new issuer (generates new key, loads old as previous)
+	iss2, err := NewIssuer(IssuerConfig{
+		DataPath:  dir,
+		IssuerURL: "https://example.miren.cloud",
+	})
+	require.NoError(t, err)
+	assert.NotEqual(t, oldKID, iss2.kid)
+	require.NotNil(t, iss2.previousKey)
+
+	// JWKS should contain both keys
+	data, err := iss2.JWKSDocument()
+	require.NoError(t, err)
+
+	var jwks jose.JSONWebKeySet
+	err = json.Unmarshal(data, &jwks)
+	require.NoError(t, err)
+
+	require.Len(t, jwks.Keys, 2)
+	assert.Equal(t, iss2.kid, jwks.Keys[0].KeyID)
+	assert.Equal(t, oldKID, jwks.Keys[1].KeyID)
+
+	// Token signed by the new key should be verifiable via JWKS
+	tokenStr, err := iss2.IssueToken("myapp", "sb-1")
+	require.NoError(t, err)
+
+	_, err = jwt.Parse(tokenStr, func(tok *jwt.Token) (interface{}, error) {
+		kid := tok.Header["kid"].(string)
+		keys := jwks.Key(kid)
+		require.NotEmpty(t, keys)
+		return keys[0].Key, nil
+	})
+	require.NoError(t, err)
+
+	// Token signed by the OLD key (simulated via iss1) should also verify via JWKS
+	oldTokenStr, err := iss1.IssueToken("myapp", "sb-2")
+	require.NoError(t, err)
+
+	_, err = jwt.Parse(oldTokenStr, func(tok *jwt.Token) (interface{}, error) {
+		kid := tok.Header["kid"].(string)
+		keys := jwks.Key(kid)
+		require.NotEmpty(t, keys)
+		return keys[0].Key, nil
+	})
+	require.NoError(t, err)
+}
+
 func TestIssueTokenWithOptions_CustomAudience(t *testing.T) {
 	dir := t.TempDir()
 

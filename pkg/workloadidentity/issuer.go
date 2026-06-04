@@ -33,6 +33,7 @@ type Issuer struct {
 	issuerURL      string
 	organizationID string
 	clusterID      string
+	previousKey    *jose.JSONWebKey
 }
 
 type WorkloadClaims struct {
@@ -53,14 +54,33 @@ func NewIssuer(cfg IssuerConfig) (*Issuer, error) {
 
 	kid := computeKID(kp.PublicKey)
 
-	return &Issuer{
+	iss := &Issuer{
 		privateKey:     kp.PrivateKey,
 		publicKey:      kp.PublicKey,
 		kid:            kid,
 		issuerURL:      cfg.IssuerURL,
 		organizationID: cfg.OrganizationID,
 		clusterID:      cfg.ClusterID,
-	}, nil
+	}
+
+	// Load previous signing key for rotation overlap. During key rotation,
+	// the operator moves workload-identity.key → workload-identity.key.prev
+	// and restarts. Both keys are published in JWKS so tokens signed by the
+	// old key remain verifiable until they expire.
+	prevPath := keyPath + ".prev"
+	if prevData, err := os.ReadFile(prevPath); err == nil {
+		if prevKP, err := cloudauth.LoadKeyPairFromPEM(string(prevData)); err == nil {
+			prevKID := computeKID(prevKP.PublicKey)
+			iss.previousKey = &jose.JSONWebKey{
+				Key:       prevKP.PublicKey,
+				KeyID:     prevKID,
+				Algorithm: "EdDSA",
+				Use:       "sig",
+			}
+		}
+	}
+
+	return iss, nil
 }
 
 func (iss *Issuer) IssuerURL() string {
@@ -158,11 +178,12 @@ func (iss *Issuer) JWKSDocument() ([]byte, error) {
 		Use:       "sig",
 	}
 
-	jwks := jose.JSONWebKeySet{
-		Keys: []jose.JSONWebKey{jwk},
+	keys := []jose.JSONWebKey{jwk}
+	if iss.previousKey != nil {
+		keys = append(keys, *iss.previousKey)
 	}
 
-	return json.Marshal(jwks)
+	return json.Marshal(jose.JSONWebKeySet{Keys: keys})
 }
 
 func loadOrGenerateKey(keyPath string) (*cloudauth.KeyPair, error) {
