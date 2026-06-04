@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"bytes"
+	"io"
 	"log/slog"
 	"os"
 	"testing"
@@ -246,6 +247,67 @@ func BenchmarkSandboxLogs(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		sl.Write(input)
+	}
+}
+
+// nopLogWriter discards entries so benchmarks measure the ingest/parse path
+// without the allocation noise of mockLogWriter's growing slice.
+type nopLogWriter struct{}
+
+func (nopLogWriter) WriteEntry(string, observability.LogEntry) error { return nil }
+
+// BenchmarkSandboxLogsByLineKind isolates the cost of the JSON ingest path
+// added for structured-log parsing. The plain case hits the early scanJSON
+// bail; the JSON cases exercise the json.Decoder tokenizer, which allocates a
+// decoder plus per-token strings on the hottest path in the system. Run with
+// -benchmem to see allocs/op.
+//
+// The JSON shapes are modeled on a real sample of garden/club app logs: Go
+// slog lines (string time/level) carry 1-2 fields in the common case and ~5
+// for HTTP access logs, while pino/Node lines (numeric time/level) wrap nested
+// req/res objects that exercise skipNestedJSON. In that sample only ~0.5% of
+// total volume was JSON at all, so the plain fast-path dominates in aggregate;
+// these cases measure the per-line cost an app pays when it does log structured.
+func BenchmarkSandboxLogsByLineKind(b *testing.B) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	entityID := identity.NewID()
+
+	cases := []struct {
+		name string
+		line string
+	}{
+		{"plain", "a plain unstructured log line\n"},
+		// Go slog, msg+level+time plus 1-2 fields — the ~93% common case.
+		{
+			"slog_narrow",
+			`{"time":"2026-06-04T16:05:55Z","level":"INFO","msg":"Inactive player cleanup completed",` +
+				`"totalPlayers":0,"cleanedPlayers":0}` + "\n",
+		},
+		// Go slog HTTP access log — the realistic flat "wide" case (~5 fields).
+		{
+			"slog_request",
+			`{"time":"2026-06-04T14:11:05Z","level":"INFO","msg":"request","method":"GET",` +
+				`"path":"/.well-known/openid-configuration","status":200,"duration_ms":0,"remote_addr":"10.0.0.1:41436"}` + "\n",
+		},
+		// pino/Node, numeric level/time plus a nested req object — exercises skipNestedJSON.
+		{
+			"pino_nested",
+			`{"level":30,"time":1780585649689,"pid":1,"hostname":"node-1","name":"app",` +
+				`"req":{"id":27550,"method":"GET","url":"/wp-admin/install.php","query":{"step":"1"},` +
+				`"headers":{"host":"example.com","user-agent":"curl/8.0"}},"msg":"incoming request"}` + "\n",
+		},
+	}
+
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			sl := NewSandboxLogs(logger, entityID, map[string]string{}, nopLogWriter{})
+			input := []byte(tc.line)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				sl.Write(input)
+			}
+		})
 	}
 }
 
