@@ -11,6 +11,11 @@ All notable changes to Miren Runtime will be documented in this file.
 ## Unreleased
 *main*
 
+---
+
+## v0.10.0
+*2026-06-09*
+
 **Features**
 - **Workload identity tokens for sandboxes** - Every sandbox now receives a signed OIDC workload identity token (GitHub Actions-style) at `/var/run/miren/identity-token`, with `MIREN_IDENTITY_TOKEN_PATH`, `MIREN_OIDC_ISSUER_URL`, and `MIREN_IDENTITY_TOKEN_URL` injected into the environment. Your cluster publishes standard `/.well-known/openid-configuration` and JWKS endpoints, so external systems like AWS STS can verify tokens and federate access — no long-lived cloud credentials baked into your app. Tokens default to RS256 (universally supported by federation verifiers), auto-refresh on a background loop, and an on-demand endpoint lets a sandbox request tokens with a custom audience or TTL. Works on both embedded and distributed runners. ([#834](https://github.com/mirendev/runtime/pull/834), [#846](https://github.com/mirendev/runtime/pull/846), [#852](https://github.com/mirendev/runtime/pull/852))
 - **Admin API is now GA** - The admin API graduates out of Miren Labs and is always on — no more `--labs adminapi` flag needed. Expose and call admin methods on your app over JSON-RPC; see the [admin interface docs](https://miren.md/admin-interface) for the security model, auditing, and per-language examples. ([#832](https://github.com/mirendev/runtime/pull/832))
