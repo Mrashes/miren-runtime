@@ -463,6 +463,7 @@ Using Flask:
 
 ```python
 from flask import Flask, request, jsonify
+import hmac
 import os
 
 app = Flask(__name__)
@@ -472,7 +473,7 @@ ADMIN_TOKEN = os.environ.get('ADMIN_TOKEN', '')
 def admin_endpoint():
     # Validate token
     auth = request.headers.get('Authorization', '')
-    if ADMIN_TOKEN and auth != f'Bearer {ADMIN_TOKEN}':
+    if ADMIN_TOKEN and not hmac.compare_digest(auth, f'Bearer {ADMIN_TOKEN}'):
         return 'Unauthorized', 401
 
     data = request.json
