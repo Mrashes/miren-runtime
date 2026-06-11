@@ -120,7 +120,7 @@ A decoded token payload looks like:
 ```json
 {
   "iss": "https://cluster-aabbcc.miren.systems",
-  "sub": "org:acme:app:web:sandbox:sb_01HX...",
+  "sub": "org:org-demo-xyz:app:demo:sandbox:sandbox/demo-web-xxyyzz",
   "aud": "sts.amazonaws.com",
   "exp": 1718053200,
   "iat": 1718049600,
@@ -161,6 +161,11 @@ The canonical use case: let a sandbox assume an AWS IAM role and receive tempora
 ### GCP and Azure
 
 Both Google Cloud and Azure support OIDC-based **workload identity federation**. Configure a workload identity pool / federated credential that trusts your cluster's issuer URL and matches on the token's subject or audience, then exchange the Miren token for cloud credentials using each provider's federation flow. The mechanics differ per provider, but the trust relationship is the same: they verify the token against your cluster's JWKS.
+
+For the provider-specific setup, see:
+
+- [GCP Workload Identity Federation](https://cloud.google.com/iam/docs/workload-identity-federation) — create a workload identity pool with an OIDC provider pointing at your cluster's issuer URL.
+- [Azure workload identity federation](https://learn.microsoft.com/entra/workload-id/workload-identity-federation) — add a federated credential to an app registration or managed identity, using your cluster as the issuer.
 
 ### Internal Service-to-Service Auth
 
