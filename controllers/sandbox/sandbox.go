@@ -566,7 +566,7 @@ func (c *SandboxController) Init(ctx context.Context) error {
 			LiveIPs: func(ctx context.Context) (map[netip.Addr]bool, error) {
 				return c.liveBridgeIPs(ctx)
 			},
-			CheckInterval: 5 * time.Minute,
+			// CheckInterval is left at the IPReconciler default (see Start).
 		}
 		c.ipReconciler.Start(c.topCtx)
 	}
@@ -1389,11 +1389,16 @@ func (c *SandboxController) AllocateNetwork(
 }
 
 // liveBridgeIPs returns the set of bridge IP addresses currently assigned to
-// running sandbox containers, read from their containerd labels. It is the
-// authoritative in-use set used by AllocateOnBridge to avoid handing out an
-// address that netdb's lease bookkeeping has lost track of but a live sandbox is
-// still using (MIR-1238). The labels are the same source the watchdog trusts and
-// require no netns entry.
+// sandbox containers, read from their containerd labels. It is the in-use set
+// used by AllocateOnBridge to avoid handing out an address that netdb's lease
+// bookkeeping has lost track of but a sandbox is still using (MIR-1238). The
+// labels are the same source the watchdog trusts and require no netns entry.
+//
+// It does not inspect task state, so a container whose task has exited but whose
+// containerd record still exists (e.g. between SIGKILL and removeContainer)
+// still contributes its IP. This is deliberately conservative: counting a
+// not-quite-gone address as live at worst keeps it reserved for one extra
+// reconciler cycle, whereas missing a live address risks a duplicate assignment.
 func (c *SandboxController) liveBridgeIPs(ctx context.Context) (map[netip.Addr]bool, error) {
 	ctx = namespaces.WithNamespace(ctx, c.Namespace)
 

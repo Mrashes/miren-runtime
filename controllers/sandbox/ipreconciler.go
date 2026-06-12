@@ -142,6 +142,10 @@ func (r *IPReconciler) reconcile(ctx context.Context) error {
 
 		if err := r.Subnet.ReleaseAddr(addr); err != nil {
 			r.Log.Error("ip reconciler failed to release leaked address", "addr", addr, "error", err)
+			// Cap the counter so a persistently failing release retries every
+			// cycle without letting the miss count (and the map entry) grow
+			// without bound.
+			r.misses[addr] = r.ReleaseAfterMisses
 			continue
 		}
 		delete(r.misses, addr)

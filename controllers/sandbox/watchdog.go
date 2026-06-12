@@ -129,8 +129,13 @@ func (w *ContainerWatchdog) CleanupOrphanedContainers(ctx context.Context) (*Cle
 		return result, fmt.Errorf("failed to list containers: %w", err)
 	}
 
-	// Build a set of valid container IDs from sandboxes scheduled to this node.
+	// Build a set of valid container IDs from sandboxes scheduled to this node,
+	// plus the set of sandbox IDs the index returned at all (valid or expired) so
+	// we can tell "the index has no record of this sandbox" (which warrants a
+	// direct re-fetch) apart from "the index returned it but it is past grace"
+	// (already authoritative — no re-fetch needed).
 	validContainers := make(map[string]bool)
+	indexedSandboxes := make(map[string]bool)
 
 	resp, err := w.EAC.List(cleanupCtx, compute.Index(compute.KindSandbox, entity.Id("node/"+w.NodeId)))
 	if err != nil {
@@ -148,6 +153,8 @@ func (w *ContainerWatchdog) CleanupOrphanedContainers(ctx context.Context) (*Cle
 		sb.Decode(e.Entity())
 
 		ent := e.Entity()
+
+		indexedSandboxes[sb.ID.String()] = true
 
 		// Consider all non DEAD sandboes as valid.
 		isRunning := sb.Status != compute.DEAD
@@ -237,14 +244,17 @@ func (w *ContainerWatchdog) CleanupOrphanedContainers(ctx context.Context) (*Cle
 			continue
 		}
 
-		// The node-scoped list did not include this container's sandbox. That
-		// list is built from a node index that can transiently lag; before
-		// treating the container as orphaned, re-fetch the sandbox entity
-		// directly by ID — a linearizable key lookup, not an index read. If the
+		// If the index returned this sandbox at all, it was already evaluated
+		// above and found not valid (DEAD past the grace window) — that verdict
+		// is authoritative, so reclaim it without a redundant re-fetch.
+		//
+		// If the index has no record of it, the node index may simply be lagging.
+		// Re-fetch the sandbox entity directly by ID — a linearizable key lookup,
+		// not an index read — before treating the container as orphaned. If the
 		// sandbox still exists and is not DEAD past the grace window, the index
 		// merely missed it: never kill it or release its IP (MIR-1238).
-		if w.sandboxStillValid(cleanupCtx, sc.sandboxID, now, graceWindow) {
-			w.Log.Warn("watchdog: container missing from node list but sandbox entity is still valid; skipping (stale index)",
+		if !indexedSandboxes[sc.sandboxID] && w.sandboxStillValid(cleanupCtx, sc.sandboxID, now, graceWindow) {
+			w.Log.Warn("watchdog: container missing from node index but sandbox entity is still valid; skipping (stale index)",
 				"id", containerID, "sandbox_id", sc.sandboxID)
 			continue
 		}

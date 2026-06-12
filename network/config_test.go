@@ -46,6 +46,29 @@ func TestReserveConflictFree(t *testing.T) {
 		r.True(got["10.8.64.2"], "conflicting address must remain quarantined as reserved")
 	})
 
+	t.Run("errors when every candidate up to the attempt limit is live", func(t *testing.T) {
+		r := require.New(t)
+
+		n, err := netdb.New(filepath.Join(t.TempDir(), "net.db"))
+		r.NoError(err)
+		subnet, err := n.Subnet("10.8.64.0/24")
+		r.NoError(err)
+
+		// Mark the first allocBridgeMaxAttempts host addresses (.2 .. ) as live,
+		// so every reservation the loop makes collides and it gives up.
+		live := make(map[netip.Addr]bool)
+		addr := netip.MustParseAddr("10.8.64.2")
+		for i := 0; i < allocBridgeMaxAttempts; i++ {
+			live[addr] = true
+			addr = addr.Next()
+		}
+
+		ep, err := reserveConflictFree(discardLogger(), "rt0", subnet, live)
+		r.Error(err, "should fail rather than return a live address")
+		r.False(ep.IsValid())
+		r.Contains(err.Error(), "no conflict-free address")
+	})
+
 	t.Run("returns the first free address when nothing is live", func(t *testing.T) {
 		r := require.New(t)
 
