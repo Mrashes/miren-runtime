@@ -465,14 +465,19 @@ func (e *Executor) Recover(ctx context.Context) error {
 			continue
 		}
 
-		e.log.Info("recovering saga", "saga", exec.DefinitionName, "execution", exec.ID, "status", exec.Status)
-
 		def, ok := e.registry.Get(exec.DefinitionName)
 		if !ok {
-			e.log.Error("saga definition not found for recovery", "saga", exec.DefinitionName)
-			recoverErrors = append(recoverErrors, fmt.Errorf("definition %q not found", exec.DefinitionName))
+			// Storage is shared across executors (e.g. build and sandbox each
+			// run their own), but ListIncomplete returns every executor's
+			// sagas. A definition we don't recognize belongs to a different
+			// executor, which will recover it from its own registry. Skip
+			// quietly rather than treating it as our recovery error.
+			e.log.Debug("skipping saga with unregistered definition (owned by another executor)",
+				"saga", exec.DefinitionName, "execution", exec.ID)
 			continue
 		}
+
+		e.log.Info("recovering saga", "saga", exec.DefinitionName, "execution", exec.ID, "status", exec.Status)
 
 		// Check version compatibility
 		if def.Version != exec.DefinitionVersion {
