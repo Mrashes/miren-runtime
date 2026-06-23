@@ -2,8 +2,6 @@
 // This provides a single source of truth for image versions and makes updates easier.
 package imagerefs
 
-import "strings"
-
 // Infrastructure images
 const (
 	// etcd distributed key-value store
@@ -42,26 +40,13 @@ func GetPythonImage(version string) string {
 	return "oci.miren.cloud/python:" + version + "-slim"
 }
 
-// GetRubyImage returns a Ruby image reference with the specified version.
-// The version is truncated to major.minor (e.g., "3.3.7" becomes "3.3") since
-// the registry only mirrors major.minor Ruby tags.
+// GetRubyImage returns a Ruby image reference with the specified version
 func GetRubyImage(version string) string {
-	// Truncate to major.minor only
-	parts := strings.SplitN(version, ".", 3)
-	if len(parts) >= 2 {
-		version = parts[0] + "." + parts[1]
-	}
 	return "oci.miren.cloud/ruby:" + version + "-slim"
 }
 
-// GetGolangImage returns a Golang image reference with the specified version.
-// The version is truncated to major.minor (e.g., "1.21.5" becomes "1.21").
+// GetGolangImage returns a Golang image reference with the specified version
 func GetGolangImage(version string) string {
-	// Truncate to major.minor only
-	parts := strings.SplitN(version, ".", 3)
-	if len(parts) >= 2 {
-		version = parts[0] + "." + parts[1]
-	}
 	return "oci.miren.cloud/golang:" + version + "-alpine"
 }
 
