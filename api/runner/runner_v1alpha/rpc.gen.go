@@ -1458,6 +1458,7 @@ func AdaptRunnerRegistration(t RunnerRegistration) *rpc.Interface {
 			InterfaceName: "RunnerRegistration",
 			Index:         0,
 			Public:        false,
+			Params:        []string{"labels", "expires_in_hours", "name", "reusable", "ttl_seconds", "coordinator_addr"},
 			Handler: func(ctx context.Context, call rpc.Call) error {
 				return t.CreateInvite(ctx, &RunnerRegistrationCreateInvite{Call: call})
 			},
@@ -1467,6 +1468,7 @@ func AdaptRunnerRegistration(t RunnerRegistration) *rpc.Interface {
 			InterfaceName: "RunnerRegistration",
 			Index:         1,
 			Public:        true,
+			Params:        []string{"code", "runner_id", "listen_addr", "version", "labels", "name"},
 			Handler: func(ctx context.Context, call rpc.Call) error {
 				return t.Join(ctx, &RunnerRegistrationJoin{Call: call})
 			},
@@ -1476,6 +1478,7 @@ func AdaptRunnerRegistration(t RunnerRegistration) *rpc.Interface {
 			InterfaceName: "RunnerRegistration",
 			Index:         2,
 			Public:        false,
+			Params:        []string{},
 			Handler: func(ctx context.Context, call rpc.Call) error {
 				return t.ListInvites(ctx, &RunnerRegistrationListInvites{Call: call})
 			},
@@ -1485,6 +1488,7 @@ func AdaptRunnerRegistration(t RunnerRegistration) *rpc.Interface {
 			InterfaceName: "RunnerRegistration",
 			Index:         3,
 			Public:        false,
+			Params:        []string{"invite_id"},
 			Handler: func(ctx context.Context, call rpc.Call) error {
 				return t.RevokeInvite(ctx, &RunnerRegistrationRevokeInvite{Call: call})
 			},
@@ -1494,6 +1498,7 @@ func AdaptRunnerRegistration(t RunnerRegistration) *rpc.Interface {
 			InterfaceName: "RunnerRegistration",
 			Index:         4,
 			Public:        false,
+			Params:        []string{},
 			Handler: func(ctx context.Context, call rpc.Call) error {
 				return t.ListRunners(ctx, &RunnerRegistrationListRunners{Call: call})
 			},
@@ -1503,6 +1508,7 @@ func AdaptRunnerRegistration(t RunnerRegistration) *rpc.Interface {
 			InterfaceName: "RunnerRegistration",
 			Index:         5,
 			Public:        false,
+			Params:        []string{"query", "force"},
 			Handler: func(ctx context.Context, call rpc.Call) error {
 				return t.RemoveRunner(ctx, &RunnerRegistrationRemoveRunner{Call: call})
 			},
@@ -1512,6 +1518,7 @@ func AdaptRunnerRegistration(t RunnerRegistration) *rpc.Interface {
 			InterfaceName: "RunnerRegistration",
 			Index:         6,
 			Public:        false,
+			Params:        []string{},
 			Handler: func(ctx context.Context, call rpc.Call) error {
 				return t.WorkloadIssuerInfo(ctx, &RunnerRegistrationWorkloadIssuerInfo{Call: call})
 			},
@@ -1521,6 +1528,7 @@ func AdaptRunnerRegistration(t RunnerRegistration) *rpc.Interface {
 			InterfaceName: "RunnerRegistration",
 			Index:         7,
 			Public:        false,
+			Params:        []string{"sandbox_id", "audience", "ttl_seconds"},
 			Handler: func(ctx context.Context, call rpc.Call) error {
 				return t.IssueWorkloadToken(ctx, &RunnerRegistrationIssueWorkloadToken{Call: call})
 			},
@@ -1530,6 +1538,7 @@ func AdaptRunnerRegistration(t RunnerRegistration) *rpc.Interface {
 			InterfaceName: "RunnerRegistration",
 			Index:         8,
 			Public:        true,
+			Params:        []string{"listen_addr"},
 			Handler: func(ctx context.Context, call rpc.Call) error {
 				return t.RefreshCertificate(ctx, &RunnerRegistrationRefreshCertificate{Call: call})
 			},
