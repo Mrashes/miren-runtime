@@ -117,6 +117,11 @@ type Method struct {
 	// Public marks this method as accessible without TLS client certificate authentication.
 	// The RPC layer will reject unauthenticated calls to non-public methods automatically.
 	Public bool
+	// Params lists the method's parameter names in schema order. It powers
+	// parameter-level capability detection: a client can ask whether a server
+	// understands a specific parameter (e.g. one added after the method first
+	// shipped) instead of only whether the method exists. See HasMethodParam.
+	Params []string
 }
 
 type HasRestoreState interface {
@@ -534,6 +539,26 @@ type lookupResponse struct {
 type methodsResponse struct {
 	Methods []string `json:"methods,omitempty" cbor:"methods,omitempty"`
 	Error   string   `json:"error,omitempty" cbor:"error,omitempty"`
+	// Params maps each method name to its parameter names. Added after Methods,
+	// so older servers simply omit it and newer clients read a nil map as "this
+	// server can't report parameters" rather than "no parameters."
+	Params map[string][]string `json:"params,omitempty" cbor:"params,omitempty"`
+}
+
+// newMethodsResponse builds an introspection response from an interface's method
+// set. Shared by the network discovery endpoint and the in-process transport so
+// the two can't report different things.
+func newMethodsResponse(m map[string]Method) methodsResponse {
+	methods := make([]string, 0, len(m))
+	params := make(map[string][]string, len(m))
+	for name, mm := range m {
+		methods = append(methods, name)
+		if len(mm.Params) > 0 {
+			params[name] = mm.Params
+		}
+	}
+	sort.Strings(methods)
+	return methodsResponse{Methods: methods, Params: params}
 }
 
 func (s *Server) listMethods(w http.ResponseWriter, r *http.Request) {
@@ -553,13 +578,7 @@ func (s *Server) listMethods(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	methods := make([]string, 0, len(hc.methods))
-	for name := range hc.methods {
-		methods = append(methods, name)
-	}
-	sort.Strings(methods)
-
-	cbor.NewEncoder(w).Encode(methodsResponse{Methods: methods})
+	cbor.NewEncoder(w).Encode(newMethodsResponse(hc.methods))
 }
 
 func (s *Server) lookup(w http.ResponseWriter, r *http.Request) {
