@@ -41,6 +41,17 @@ const (
 
 	// Default Busybox image
 	BusyboxDefault = "oci.miren.cloud/busybox:1.37-musl"
+
+	// GoRuntimeStatic is the runtime base for pure-Go (cgo-disabled) builds:
+	// a fully static binary lands here, yielding the canonical tiny Go image.
+	// distroless/static ships ca-certificates, tzdata, and a nonroot user but
+	// no shell or libc (docker.io/... proxied to gcr.io/distroless).
+	GoRuntimeStatic = "oci.miren.cloud/distroless/static-debian12:nonroot"
+
+	// DebianSlim is the runtime base for builds that need glibc at runtime
+	// (cgo) or that carry a runtime filesystem the static image can't hold
+	// (e.g. JS-augmented assets). It has a shell, apt, and glibc.
+	DebianSlim = "oci.miren.cloud/debian:bookworm-slim"
 )
 
 // GetPythonImage returns a Python image reference with the specified version
@@ -53,9 +64,14 @@ func GetRubyImage(version string) string {
 	return "oci.miren.cloud/ruby:" + version + "-slim"
 }
 
-// GetGolangImage returns a Golang image reference with the specified version
+// GetGolangImage returns a Golang builder image reference with the specified
+// version. The Go stack builds on the glibc/bookworm variant (not alpine/musl)
+// so cgo works out of the box: bookworm ships a C toolchain, and glibc is the
+// lingua franca of the prebuilt-binary world (MIR-1248). The build then copies
+// the resulting binary onto a minimal runtime base (see GoRuntimeStatic /
+// DebianSlim) so the heavyweight toolchain never reaches the final image.
 func GetGolangImage(version string) string {
-	return "oci.miren.cloud/golang:" + version + "-alpine"
+	return "oci.miren.cloud/golang:" + version + "-bookworm"
 }
 
 // GetBunImage returns a Bun runtime image reference with the specified version

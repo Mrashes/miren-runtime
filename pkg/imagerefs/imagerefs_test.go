@@ -20,12 +20,13 @@ func TestGetRubyImage(t *testing.T) {
 
 func TestGetGolangImage(t *testing.T) {
 	cases := map[string]string{
-		// With our pull-through caching registry, patch-level versions
-		// are fully preserved instead of being truncated to major.minor.
-		"1.21.5": "oci.miren.cloud/golang:1.21.5-alpine",
-		"1.21.0": "oci.miren.cloud/golang:1.21.0-alpine",
-		"1.22":   "oci.miren.cloud/golang:1.22-alpine",
-		"1.23":   "oci.miren.cloud/golang:1.23-alpine",
+		// Go builds on the glibc/bookworm variant (MIR-1248), and the
+		// pull-through registry preserves full patch-level versions instead
+		// of truncating to major.minor.
+		"1.21.5": "oci.miren.cloud/golang:1.21.5-bookworm",
+		"1.21.0": "oci.miren.cloud/golang:1.21.0-bookworm",
+		"1.22":   "oci.miren.cloud/golang:1.22-bookworm",
+		"1.23":   "oci.miren.cloud/golang:1.23-bookworm",
 	}
 	for in, want := range cases {
 		if got := GetGolangImage(in); got != want {
