@@ -1251,6 +1251,294 @@ func TestBunWebCommand(t *testing.T) {
 	}
 }
 
+func TestDeno(t *testing.T) {
+	if !checkDocker() {
+		t.Skip("Docker not available")
+	}
+
+	root := t.TempDir()
+	dir := setupTestDir(root, t)
+
+	files := map[string]string{
+		"deno.json": `{"tasks": {"start": "deno run -A main.ts"}}`,
+		"main.ts":   "console.log('Hello, World!')",
+		"deno.lock": "{}",
+	}
+
+	for name, content := range files {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0644))
+	}
+
+	stack := &DenoStack{
+		MetaStack: MetaStack{
+			dir: dir,
+		},
+	}
+	state, err := stack.GenerateLLB(dir, BuildOptions{Version: "2"})
+	require.NoError(t, err)
+
+	buildLLB(t, dir, state, func(r io.Reader) {
+		m, err := tarx.TarToMap(r)
+		require.NoError(t, err)
+		data, ok := m["app/main.ts"]
+		require.True(t, ok)
+		require.NotEmpty(t, data)
+	})
+}
+
+func TestDenoDetect(t *testing.T) {
+	testCases := []struct {
+		name     string
+		files    map[string]string
+		expected bool
+	}{
+		{
+			name: "deno.json only",
+			files: map[string]string{
+				"deno.json": "{}",
+			},
+			expected: true,
+		},
+		{
+			name: "deno.jsonc only",
+			files: map[string]string{
+				"deno.jsonc": "{ /* comment */ }",
+			},
+			expected: true,
+		},
+		{
+			name: "deno.lock without deno.json",
+			files: map[string]string{
+				"deno.lock": "{}",
+			},
+			expected: true,
+		},
+		{
+			name: "Procfile with deno",
+			files: map[string]string{
+				"Procfile": "web: deno run -A main.ts",
+			},
+			expected: true,
+		},
+		{
+			name: "deno in package.json scripts",
+			files: map[string]string{
+				"package.json": `{"name": "app", "scripts": {"start": "deno run -A main.ts"}}`,
+			},
+			expected: true,
+		},
+		{
+			name: "deno.json with JSR imports",
+			files: map[string]string{
+				"deno.json": `{"imports": {"@std/http": "jsr:@std/http@1"}}`,
+			},
+			expected: true,
+		},
+		{
+			name: "deno.json with npm specifier",
+			files: map[string]string{
+				"deno.json": `{"imports": {"pg": "npm:pg@8"}}`,
+			},
+			expected: true,
+		},
+		{
+			name: "bare .ts file with no deno signal",
+			files: map[string]string{
+				"main.ts": "console.log('hi')",
+			},
+			expected: false,
+		},
+		{
+			name: "package.json with unrelated scripts, no deno signal",
+			files: map[string]string{
+				"package.json": `{"name": "app", "scripts": {"start": "node index.js"}}`,
+			},
+			expected: false,
+		},
+		{
+			name: "plain package.json no scripts",
+			files: map[string]string{
+				"package.json": `{"name": "app"}`,
+			},
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+
+			for name, content := range tc.files {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0644))
+			}
+
+			stack := &DenoStack{
+				MetaStack: MetaStack{
+					dir: dir,
+				},
+			}
+			require.Equal(t, tc.expected, stack.Detect())
+		})
+	}
+}
+
+func TestDenoWebCommand(t *testing.T) {
+	testCases := []struct {
+		name     string
+		files    map[string]string
+		expected string
+	}{
+		{
+			name: "deno with start task",
+			files: map[string]string{
+				"deno.json": `{"tasks": {"start": "deno run -A main.ts"}}`,
+				"main.ts":   "",
+			},
+			expected: "deno task start",
+		},
+		{
+			name: "deno with serve task",
+			files: map[string]string{
+				"deno.json": `{"tasks": {"serve": "deno run --allow-net server.ts"}}`,
+				"server.ts": "",
+			},
+			expected: "deno task serve",
+		},
+		{
+			name: "deno with main entry point, no tasks",
+			files: map[string]string{
+				"deno.json": "{}",
+				"main.ts":   "",
+			},
+			expected: "deno run -A main.ts",
+		},
+		{
+			name: "deno mod.ts entry point",
+			files: map[string]string{
+				"deno.json": "{}",
+				"mod.ts":    "",
+			},
+			expected: "deno run -A mod.ts",
+		},
+		{
+			name: "deno no tasks or entry point",
+			files: map[string]string{
+				"deno.json": "{}",
+			},
+			expected: "",
+		},
+		{
+			name: "deno.lock only, no deno.json, with index.ts",
+			files: map[string]string{
+				"deno.lock": "{}",
+				"index.ts":  "",
+			},
+			expected: "deno run -A index.ts",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+
+			for name, content := range tc.files {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0644))
+			}
+
+			stack := &DenoStack{
+				MetaStack: MetaStack{
+					dir: dir,
+				},
+			}
+			require.True(t, stack.Detect())
+			stack.Init(BuildOptions{})
+
+			require.Equal(t, tc.expected, stack.WebCommand())
+		})
+	}
+}
+
+func TestDenoEnvVars(t *testing.T) {
+	t.Run("Deno.env.get direct usage is required", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "deno.json"), []byte("{}"), 0644))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "main.ts"), []byte(
+			`const url = Deno.env.get("DATABASE_URL");`), 0644))
+
+		stack := &DenoStack{MetaStack: MetaStack{dir: dir}}
+		require.True(t, stack.Detect())
+		stack.Init(BuildOptions{})
+
+		found := false
+		for _, ev := range stack.RequiredEnvVars() {
+			if ev.Name == "DATABASE_URL" {
+				found = true
+				require.Equal(t, "required", ev.Confidence)
+				require.Equal(t, "code", ev.Source)
+			}
+		}
+		require.True(t, found, "expected DATABASE_URL to be detected")
+	})
+
+	t.Run("Deno.env.get with nullish default is optional", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "deno.json"), []byte("{}"), 0644))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "main.ts"), []byte(
+			`const level = Deno.env.get("LOG_LEVEL") ?? "info";`), 0644))
+
+		stack := &DenoStack{MetaStack: MetaStack{dir: dir}}
+		require.True(t, stack.Detect())
+		stack.Init(BuildOptions{})
+
+		found := false
+		for _, ev := range stack.RequiredEnvVars() {
+			if ev.Name == "LOG_LEVEL" {
+				found = true
+				require.Equal(t, "optional", ev.Confidence)
+			}
+		}
+		require.True(t, found, "expected LOG_LEVEL to be detected as optional")
+	})
+
+	t.Run("combined Deno.env.get and process.env usage both detected", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "deno.json"), []byte("{}"), 0644))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "main.ts"), []byte(
+			"const a = Deno.env.get(\"API_KEY\");\nconst b = process.env.LEGACY_TOKEN;"), 0644))
+
+		stack := &DenoStack{MetaStack: MetaStack{dir: dir}}
+		require.True(t, stack.Detect())
+		stack.Init(BuildOptions{})
+
+		names := map[string]bool{}
+		for _, ev := range stack.RequiredEnvVars() {
+			names[ev.Name] = true
+		}
+		require.True(t, names["API_KEY"])
+		require.True(t, names["LEGACY_TOKEN"])
+	})
+
+	t.Run(".env.sample entries are required config vars", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "deno.json"), []byte("{}"), 0644))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, ".env.sample"), []byte("API_KEY=\n"), 0644))
+
+		stack := &DenoStack{MetaStack: MetaStack{dir: dir}}
+		require.True(t, stack.Detect())
+		stack.Init(BuildOptions{})
+
+		found := false
+		for _, ev := range stack.RequiredEnvVars() {
+			if ev.Name == "API_KEY" {
+				found = true
+				require.Equal(t, "required", ev.Confidence)
+				require.Equal(t, "config", ev.Source)
+			}
+		}
+		require.True(t, found, "expected API_KEY to be detected from .env.sample")
+	})
+}
+
 func TestGoWebCommand(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test-app\n\ngo 1.23\n"), 0644))

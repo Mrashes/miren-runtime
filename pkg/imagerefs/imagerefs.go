@@ -88,3 +88,8 @@ func GetNodeImage(version string) string {
 func GetRustImage(version string) string {
 	return "oci.miren.cloud/rust:" + version
 }
+
+// GetDenoImage returns a Deno runtime image reference with the specified version
+func GetDenoImage(version string) string {
+	return "oci.miren.cloud/deno:" + version
+}

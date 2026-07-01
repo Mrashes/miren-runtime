@@ -24,10 +24,12 @@ const (
 // DetectAugmentations returns the set of augmentations needed for the app
 // located at dir, given the primary stack that was already selected.
 //
-// It returns nil (no augmentations) when the primary stack is "node" or "bun",
-// since those stacks already ship npm or bun in their base image. The returned
-// events describe what was detected so they can be surfaced alongside primary
-// stack detection events in the build output.
+// It returns nil (no augmentations) when the primary stack is "node", "bun",
+// or "deno", since those stacks already ship their own JS/TS dependency
+// tooling in their base image (deno ships its own npm-compatible dependency
+// resolution via npm: specifiers). The returned events describe what was
+// detected so they can be surfaced alongside primary stack detection events
+// in the build output.
 //
 // npm is triggered by the presence of package.json (not just package-lock.json),
 // to preserve compatibility with apps — most notably Rails — that ship a
@@ -38,7 +40,7 @@ const (
 // can use it, but the package install step is skipped because the user's
 // vendored node_modules will be brought in by copyApp.
 func DetectAugmentations(dir, primaryStack string) (augs []Augmentation, skipInstall bool, events []DetectionEvent) {
-	if primaryStack == "node" || primaryStack == "bun" {
+	if primaryStack == "node" || primaryStack == "bun" || primaryStack == "deno" {
 		return nil, false, nil
 	}
 
