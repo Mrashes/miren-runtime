@@ -135,6 +135,19 @@ func TestDetectAugmentations_SkipForBun(t *testing.T) {
 	require.Nil(t, events)
 }
 
+func TestDetectAugmentations_SkipForDeno(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"package.json": `{"name":"app"}`,
+		"deno.json":    `{}`,
+		"deno.lock":    `{}`,
+	})
+
+	augs, _, events := DetectAugmentations(dir, "deno")
+	require.Nil(t, augs)
+	require.Nil(t, events)
+}
+
 func TestDetectAugmentations_NoneWithoutLockfiles(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
@@ -261,6 +274,7 @@ func TestBaseDistros(t *testing.T) {
 		{&PythonStack{}, "debian"},
 		{&NodeStack{}, "debian"},
 		{&BunStack{}, "debian"},
+		{&DenoStack{}, "debian"},
 		{&RustStack{}, "debian"},
 		{&GoStack{}, "debian"},
 	}

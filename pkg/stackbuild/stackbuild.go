@@ -89,6 +89,7 @@ func DetectStack(dir string, opts BuildOptions) (Stack, error) {
 	stacks := []Stack{
 		&RubyStack{MetaStack: ms},
 		&PythonStack{MetaStack: ms},
+		&DenoStack{MetaStack: ms},
 		&BunStack{MetaStack: ms},
 		&NodeStack{MetaStack: ms},
 		&GoStack{MetaStack: ms},

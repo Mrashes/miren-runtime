@@ -1,7 +1,7 @@
 ---
 title: Supported Languages
 description: Languages and frameworks Miren detects automatically, including build and runtime configuration.
-keywords: [languages, ruby, node, python, go, rust, bun, framework, build]
+keywords: [languages, ruby, node, python, go, rust, bun, deno, framework, build]
 ---
 
 # Supported Languages
@@ -178,6 +178,39 @@ web: bun run src/server.ts
 
 # Background worker
 worker: bun run worker.ts
+```
+
+---
+
+## Deno
+
+**Detection:** `deno.json`, `deno.jsonc`, or `deno.lock` present, a Procfile with `web: deno`, or a `package.json` script invoking `deno run`/`task`/`serve`/`start`
+
+**Default Version:** 2
+
+Miren detects Deno applications by the presence of a `deno.json`/`deno.jsonc` config file or a `deno.lock` lockfile. Dependencies declared via the `imports` map (including `jsr:` and `npm:` specifiers) are resolved automatically — there's no separate lockfile-implies-package-manager ambiguity like with Node, since `deno.lock` always means Deno.
+
+### Build Process
+
+1. Copies `deno.json`, `deno.jsonc`, `deno.lock`, and `import_map.json` (if present) first for better layer caching
+2. Runs `deno install` to resolve and cache dependencies, using a persistent cache mount
+3. Copies the rest of the application code
+
+### Command Detection
+
+Miren looks for a `start`, `serve`, or `server` task in `deno.json`'s `tasks` map first (run via `deno task <name>`, so it keeps whatever permission flags the task already specifies). If none is found, Miren falls back to running a detected entry point (`main.ts`, `mod.ts`, `index.ts`, `server.ts`, or `app.ts`) directly with `deno run -A`.
+
+### Example Procfile
+
+```
+# Run a task defined in deno.json
+web: deno task start
+
+# Run an entry point directly with full permissions
+web: deno run -A main.ts
+
+# Run with explicit permission flags instead of -A
+web: deno run --allow-net --allow-env server.ts
 ```
 
 ---
